@@ -32,7 +32,7 @@ from .native import (native_doc_strikes, native_flag_strikes, native_markdown,
 from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di)
 from .scanned import ScanConfig, analyze_scanned_page
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     # high-level

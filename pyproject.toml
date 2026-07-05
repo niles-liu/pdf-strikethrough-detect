@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-strikethrough-detect"
-version = "0.4.0"
+version = "0.4.1"
 description = "Detect struck-through (deleted) text in PDFs and scanned document images."
 readme = "README.md"
 requires-python = ">=3.10"
