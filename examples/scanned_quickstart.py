@@ -42,10 +42,9 @@ def main() -> int:
     ocr = rapidocr_backend()
 
     scan = rasterize_to_scan(build_redline_pdf())
-    print("page sources:", st.detect_pdf(scan, ocr=ocr,
-                                         scan_config=ScanConfig.confidence_free())["page_sources"])
-
     res = st.detect_pdf(scan, ocr=ocr, scan_config=ScanConfig.confidence_free())
+    print("page sources:", res["page_sources"])
+
     struck = [w for w in res["words"] if w["final"]]
     print(f"\n{len(struck)} struck word(s) on the scan:")
     for w in struck:

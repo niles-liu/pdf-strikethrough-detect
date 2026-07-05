@@ -12,7 +12,7 @@ tier-specific keys as optional and branch on ``tier`` — or use ``.get(...)``.
 """
 from __future__ import annotations
 
-from typing import Any, List, Literal, Optional, Tuple, TypedDict
+from typing import List, Literal, Optional, Tuple, TypedDict
 
 # (x0, y0, x1, y1) as page fractions in [0, 1], origin top-left.
 BBoxFrac = Tuple[float, float, float, float]
@@ -68,5 +68,5 @@ class DetectResult(TypedDict, total=False):
 # Re-exported so ``from pdf_strikethrough.types import ...`` covers the whole surface.
 __all__ = [
     "StruckWord", "Passage", "DetectResult",
-    "BBoxFrac", "CharSpan", "Tier", "Verdict", "Any",
+    "BBoxFrac", "CharSpan", "Tier", "Verdict",
 ]

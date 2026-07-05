@@ -24,15 +24,13 @@ from PIL import Image
 CROP_H, CROP_W = 32, 160          # net input: ink-positive [0,1], height-normalized isotropically
 PAD_X, PAD_Y = 5, 7               # crop margin around the word box, in PIXELS
 
-# --- Calibration note (see the F6 TODO / roadmap R-highdpi) -----------------------------------
-# The crop geometry above is calibrated for pages rendered at RENDER_DPI = 200 (detect.py). PAD_X/
-# PAD_Y are FIXED PIXEL margins, so their share of a word box changes with resolution — the pad is
-# a large fraction of a small 72-dpi glyph box and a tiny one at 600 dpi, which drifts the CNN input
-# off its training distribution at non-200 dpi. `detect_pdf` renders scanned pages at 200 by
-# default, so the shipped path is on-distribution; if you score crops from images rendered at a very
-# different dpi, expect degraded CNN confidence. The proper fix (dpi-proportional pads, or box-height-
-# relative pads, followed by a model RE-EXPORT so meta.json matches) is deferred and should be done
-# together with the high-DPI downsampling work (roadmap R-highdpi) so it isn't re-tuned twice.
+# --- Calibration note (roadmap R-highdpi) -----------------------------------------------------
+# PAD_X/PAD_Y are FIXED PIXEL margins calibrated for RENDER_DPI = 200 (detect.py). Their share of a
+# word box shifts with resolution — large around a 72-dpi glyph, tiny at 600 dpi — pushing the CNN
+# input off its training distribution away from 200 dpi. detect_pdf renders scanned pages at 200, so
+# the shipped path is on-distribution; scoring crops from very-different-dpi images degrades
+# confidence. The fix (dpi-proportional or box-height-relative pads + a model re-export so meta.json
+# matches) is deferred to the high-DPI downsampling work so the geometry isn't re-tuned twice.
 
 _MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env var
 _lock = threading.Lock()

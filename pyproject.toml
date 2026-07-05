@@ -42,7 +42,7 @@ rapidocr = ["rapidocr>=3.2", "onnxruntime>=1.16"]   # free, pip-only scanned-wor
                                                     # (>=3.2: nested word_results shape)
 tesseract = ["pytesseract>=0.3.10"]    # needs the tesseract system binary too
 torch = ["torch>=2.0"]                 # optional .pt fallback for the CNN
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.6"]     # tests + the linter CONTRIBUTING/CI run
 
 [project.scripts]
 pdf-strikethrough = "pdf_strikethrough.__main__:main"
