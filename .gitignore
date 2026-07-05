@@ -5,7 +5,11 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+.ruff_cache/
 .venv/
 venv/
 *.pt
 .DS_Store
+
+# benchmark corpus — public PDFs listed in benchmarks/manifest.json, downloaded locally
+/benchmarks/corpus/

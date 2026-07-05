@@ -11,6 +11,11 @@ estimated proportionally from the covered x-span.
 All output bbox_frac values are fractions of the ROTATED (as-rendered) page, so they map
 directly onto ``page.get_pixmap()`` output; detection itself runs in MuPDF's unrotated text
 space, where strikes stay horizontal regardless of /Rotate.
+
+Scope — HORIZONTAL (left-to-right) text only. The vector path (``horiz_strokes``) matches only
+near-horizontal strokes, and the flag path only axis-parallel spans; vertical writing modes and
+non-Latin scripts whose strikes run along a different axis are out of scope. Full support is
+roadmap R-cjk (add a CJK redline test doc + document the validated scripts).
 """
 import math
 import re
@@ -93,13 +98,19 @@ def _merged_intervals(wx0, wx1, ivals):
     return merged, tot
 
 
-def native_page_strikes(page, page_index):
+def native_page_strikes(page, page_index, words=None):
     """Struck-word records for one native page, in reading order.
 
     Each record: {page, text, chars, char_span, partial, bbox_frac, coverage, tier='vector',
     verdict='struck', final=True}. Vector geometry is exact, so there is no unsure tier.
+
+    ``words`` optionally supplies this page's ``get_text("words")`` output so a caller running
+    several detectors on the same page extracts it once instead of per detector (default None =
+    extract here).
     """
-    words = [w for w in page.get_text("words")
+    if words is None:
+        words = page.get_text("words")
+    words = [w for w in words
              if w[4].strip() and (w[3] - w[1]) >= 4 and (w[2] - w[0]) >= 3]
     if not words:
         return []
@@ -139,7 +150,7 @@ def native_page_strikes(page, page_index):
     return out
 
 
-def native_flag_strikes(page, page_index):
+def native_flag_strikes(page, page_index, words=None):
     """Struck words from MuPDF's own strikeout detection — the FZ_STEXT_STRIKEOUT char flag,
     enabled by extracting with COLLECT_STYLES|COLLECT_VECTORS (base PyMuPDF >= 1.26, no
     pymupdf4llm needed; this is the same signal pymupdf4llm renders as ``~~``).
@@ -149,10 +160,16 @@ def native_flag_strikes(page, page_index):
     ('Policy' of 'PolicyTo') becomes a partial strike with a proportional char range. Records:
     {page, text, chars, char_span, partial, bbox_frac, coverage, tier='flag',
     verdict='struck', final=True}.
+
+    ``words`` optionally supplies this page's ``get_text("words")`` output (see
+    :func:`native_page_strikes`); the ``get_text("dict", ...)`` styled-span pass this detector
+    also needs is separate and always runs.
     """
     flags = pymupdf.TEXTFLAGS_DICT | pymupdf.TEXT_COLLECT_STYLES | pymupdf.TEXT_COLLECT_VECTORS
     strike_bit = pymupdf.mupdf.FZ_STEXT_STRIKEOUT
-    page_words = [w for w in page.get_text("words") if w[4].strip()]
+    if words is None:
+        words = page.get_text("words")
+    page_words = [w for w in words if w[4].strip()]
     if not page_words:
         return []
 
@@ -215,26 +232,31 @@ def native_flag_strikes(page, page_index):
     return out
 
 
-def page_strikes(page, page_index, method="vector"):
+def page_strikes(page, page_index, method="vector", words=None):
     """Struck-word records for one native page by `method`:
       'vector' — this module's stroke-geometry detector (precise partial-char spans; default)
       'flag'   — MuPDF's own FZ_STEXT_STRIKEOUT span flag (also catches font-attribute
                  strikethroughs the vector path can miss)
       'both'   — union: all vector records, plus flag records for words no vector record
                  covers (maximum recall)
-    In validation on 12 public redline PDFs, 98%+ of vector detections are independently
-    confirmed by the flag signal; the flag signal typically marks additional words on top —
-    'both' captures them.
+    In validation on 12 public redline PDFs (33k struck words), 99.9-100% of vector detections
+    are independently confirmed by the flag signal; the flag signal typically marks additional
+    words on top — 'both' captures them. Reproduce with ``benchmarks/confirmation_rate.py``.
+
+    ``words`` optionally supplies this page's ``get_text("words")`` output; passing it means
+    'both' extracts the word list once instead of once per detector (default None = extract here).
     """
     if method == "vector":
-        return native_page_strikes(page, page_index)
+        return native_page_strikes(page, page_index, words)
     if method == "flag":
-        return native_flag_strikes(page, page_index)
+        return native_flag_strikes(page, page_index, words)
     if method != "both":
         raise ValueError(f"unknown native method {method!r} (use 'vector', 'flag', or 'both')")
-    vec = native_page_strikes(page, page_index)
+    if words is None:
+        words = page.get_text("words")
+    vec = native_page_strikes(page, page_index, words)
     out = list(vec)
-    for f in native_flag_strikes(page, page_index):
+    for f in native_flag_strikes(page, page_index, words):
         fx = (f["bbox_frac"][0] + f["bbox_frac"][2]) / 2
         fy = (f["bbox_frac"][1] + f["bbox_frac"][3]) / 2
         if not any(v["bbox_frac"][0] - 1e-3 <= fx <= v["bbox_frac"][2] + 1e-3
@@ -250,7 +272,8 @@ def native_doc_strikes(doc, method="vector"):
     See :func:`page_strikes` for the `method` options."""
     out = []
     for pno in range(doc.page_count):
-        out.extend(page_strikes(doc[pno], pno, method))
+        page = doc[pno]
+        out.extend(page_strikes(page, pno, method, words=page.get_text("words")))
     return out
 
 

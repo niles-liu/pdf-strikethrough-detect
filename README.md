@@ -32,7 +32,13 @@ ships inside the wheel. Extras:
 pip install "pdf-strikethrough-detect[markdown]"    # clean_markdown() via pymupdf4llm
 pip install "pdf-strikethrough-detect[rapidocr]"    # free scanned-word OCR backend (no binary)
 pip install "pdf-strikethrough-detect[tesseract]"   # word-level OCR (also needs the tesseract binary)
+pip install "pdf-strikethrough-detect[torch]"       # optional .pt CNN fallback for dev/retraining
 ```
+
+The CNN ships as ONNX and needs nothing extra. `[torch]` is only for development — the loader
+prefers `strike_verdict_cnn.onnx`, falling back to a `strike_verdict_cnn.pt` checkpoint if you
+point `PDF_STRIKETHROUGH_MODEL_DIR` at one. Regenerate the shipped ONNX from a trained checkpoint
+with [`tools/export_model.py`](tools/export_model.py).
 
 ## Native / born-digital PDFs — exact
 
@@ -48,9 +54,13 @@ for w in st.strikethroughs_in_pdf("contract.pdf"):
 print(st.clean_markdown("contract.pdf"))        # surviving text, deletions removed (needs [markdown])
 ```
 
-Each record: `{page, text, chars, char_span, partial, bbox_frac, coverage, verdict, final}`.
-Partial strikes (`semi-` of `semi-monthly`) are resolved to a char range. `bbox_frac` is in
-fractions of the rendered page (rotation-aware), so it maps directly onto a rendered pixmap.
+Each native record: `{page, text, chars, char_span, partial, bbox_frac, tier, coverage, verdict,
+final}` (`tier` is `"vector"` or `"flag"`). Scanned records replace `coverage` with the evidence
+that decided them — `score`, `cnn_prob`, `cnn_agrees`, `conf` — and `tier` is `"auto"`/`"review"`.
+The keys are documented as `TypedDict`s in `pdf_strikethrough.types` (`StruckWord`, `DetectResult`,
+`Passage`); the package ships `py.typed`, so type checkers see them. Partial strikes (`semi-` of
+`semi-monthly`) are resolved to a char range. `bbox_frac` is in fractions of the rendered page
+(rotation-aware), so it maps directly onto a rendered pixmap.
 
 Two native detectors, both **base-PyMuPDF only** (no pymupdf4llm), selected by `method`:
 
@@ -122,7 +132,7 @@ pipeline to **99.5%** (1477 vs 1484 struck words on the validation doc).
 ## Low-level building blocks
 
 ```python
-gray = st.render_page_gray(doc[0], dpi=200)     # HxW grayscale; RGB/float arrays are coerced
+gray = st.render_page_gray(doc[0], dpi=200)     # always returns a HxW uint8 grayscale array
 
 lines = st.strike_lines(gray, dpi=200)          # OCR-free stroke geometry (strike/underline/rule)
                                                 # pass the dpi the image was rendered/scanned at
@@ -131,6 +141,7 @@ lines = st.strike_lines(gray, dpi=200)          # OCR-free stroke geometry (stri
 p = st.score_word(gray, (0.12, 0.34, 0.38, 0.36))   # CNN strike probability (0..1)
 
 from pdf_strikethrough.ocr import Word
+# detect_scanned_image accepts your own image; RGB / float arrays are coerced to grayscale uint8
 recs = st.detect_scanned_image(gray, [Word("foo", (0.12, 0.34, 0.38, 0.36), 0.6)])
 ```
 
@@ -140,10 +151,30 @@ recs = st.detect_scanned_image(gray, [Word("foo", (0.12, 0.34, 0.38, 0.36), 0.6)
 pdf-strikethrough detect contract.pdf                       # native pages (scanned pages are
                                                             #   skipped with a warning)
 pdf-strikethrough detect scan.pdf --ocr rapidocr            # include scanned pages
+pdf-strikethrough detect scan.pdf --di-result di.json       # use a pre-fetched Azure DI result
 pdf-strikethrough detect doc.pdf --method both              # max-recall native detection
+pdf-strikethrough detect doc.pdf --pages 1-5,12             # only these pages (1-based)
 pdf-strikethrough detect doc.pdf --json out.json            # full struck words + passages
+pdf-strikethrough detect doc.pdf --json -                   # ...or stream JSON to stdout
 pdf-strikethrough detect doc.pdf --clean-text clean.txt     # surviving text, deletions removed
 pdf-strikethrough detect doc.pdf --markdown marked.md       # deletions as ~~struck~~
+pdf-strikethrough detect doc.pdf --fail-if-found            # exit 3 if any strike found (CI gate)
+cat doc.pdf | pdf-strikethrough detect -                    # read the PDF from stdin
+pdf-strikethrough --version
+```
+
+Other flags: `--dpi` (raster DPI for scanned pages, default 200), `--limit` (max words in plain
+output), `--scan-config auto|azure-di|confidence-free`. Exit codes: `0` ok, `1` usage/file error,
+`2` encrypted / OCR required, `3` `--fail-if-found` matched. Full help: `pdf-strikethrough detect -h`.
+
+## Examples
+
+Runnable, dependency-light scripts are in [`examples/`](examples/) — they generate their own
+sample PDFs (no assets to download) so every snippet is copy-paste runnable:
+
+```bash
+python examples/native_quickstart.py     # build a redline PDF, detect strikes, print clean text
+python examples/scanned_quickstart.py    # rasterize it to a "scan", run OCR + CNN  ([rapidocr])
 ```
 
 ## How it works
@@ -158,6 +189,28 @@ pdf-strikethrough detect doc.pdf --markdown marked.md       # deletions as ~~str
   apart. Ships as ONNX; set `PDF_STRIKETHROUGH_MODEL_DIR` to use your own weights.
 - **Attribution** (`scanned.py`): assigns strokes to OCR words with char spans and full/partial
   resolution, plus a visual-row "orphan" pass for words the detector's stroke evidence missed.
+
+## API surface
+
+The top-level package (`import pdf_strikethrough as st`) exports ~30 names; the most-used:
+
+| Group | Names |
+|---|---|
+| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `detect_pdf`, `detect_scanned_image`, `open_pdf`, `render_page_gray` |
+| Native detectors | `native_page_strikes`, `native_flag_strikes`, `native_doc_strikes`, `page_strikes`, `native_markdown`, `strip_struck_markdown` |
+| Scanned geometry + classifier | `strike_lines`, `ink_mask`, `to_gray_u8`, `analyze_scanned_page`, `ScanConfig`, `classify_page_source`, `apply_cnn_verdict` |
+| CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta` |
+| OCR | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di` |
+| Errors | `OcrRequiredError`, `EncryptedPdfError` |
+| Types | `StruckWord`, `DetectResult`, `Passage` (in `pdf_strikethrough.types`) |
+
+Everything is docstringed; `help(st.detect_pdf)` is the reference.
+
+## Contributing, security, citation
+
+- Development setup, running the tests, and regenerating the model: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- This package parses untrusted PDFs — reporting policy in [`SECURITY.md`](SECURITY.md).
+- Citing it in research: [`CITATION.cff`](CITATION.cff).
 
 ## License
 

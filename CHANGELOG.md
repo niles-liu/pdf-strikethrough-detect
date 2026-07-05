@@ -4,10 +4,10 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 0.5.0 (in progress)
+## [Unreleased] — 0.5.0
 
-Reachable & credible: new public API/CLI surface and inline typing. Remaining v0.5.0 tracks
-(detection-accuracy polish, benchmarks, docs/examples, CI hardening) are not yet in this entry.
+Reachable & credible: new public API/CLI surface, inline typing, runnable examples, a reproducible
+benchmark harness, and release/CI hardening.
 
 ### Added
 - **`pages=` and `progress=` on `detect_pdf`.** `pages=` restricts work to a subset of 0-based
@@ -29,10 +29,48 @@ Reachable & credible: new public API/CLI surface and inline typing. Remaining v0
   function still returns `[]` for it — but now emits a `UserWarning` naming the scanned pages
   (previously a silent `[]`, the package's most dangerous confusion).
 
+- **Examples.** `examples/native_quickstart.py` and `examples/scanned_quickstart.py` — each builds
+  its own sample PDF, so every quick-start snippet is copy-paste runnable with no assets to fetch.
+- **Benchmark harness.** `benchmarks/` with a manifest-driven, sha256-verified corpus loader and
+  three reproducible scripts: `confirmation_rate.py` (vector↔flag agreement — the headline native
+  claim), `ocr_backend_table.py` (per-backend struck-region coverage vs an Azure DI reference), and
+  `di_parity.py` (the "1477 vs 1484" DI-pipeline parity). The corpus (public PDFs) is downloaded
+  locally, not committed.
+- **Project meta.** `CONTRIBUTING.md`, `SECURITY.md` (the package parses untrusted PDFs),
+  `CITATION.cff`, an API-surface table in the README, and a `[torch]` install extra documented.
+
 ### Changed
 - **Version is single-sourced** from `pdf_strikethrough.__version__` via `dynamic = ["version"]`
   (no more lockstep bump of `pyproject.toml` + `__init__.py` at release time).
+- **Scanned auto-tier verdict is now consistent with the ship decision.** A geometrically-"auto"
+  word the CNN votes down (`final=False`) no longer keeps a misleading `verdict="struck"`; it
+  reports the CNN's read (`clean`/`unsure`). Kept words are unchanged. Invariant: `verdict=="struck"`
+  ⇒ `final is True`.
+- **CI hardening.** Added a lint job (ruff), a build job that installs the built wheel and runs the
+  tests against it, and an extras import-smoke job; the test matrix now spans Linux/macOS/Windows
+  and Python 3.10–3.14 (3.14 + `Development Status`/`OS Independent`/`3 :: Only` classifiers added).
+  `publish.yml` now tests the built wheel before publishing and adds a `workflow_dispatch` →
+  TestPyPI rehearsal with explicit attestations. Added Dependabot for actions + pip.
+- **Docs accuracy.** README record schema now lists `tier` and the scanned-only evidence fields;
+  the CLI section documents every flag and exit code; the "RGB/float coerced" note moved to the
+  function that actually coerces; `render_page_gray` documented as always-uint8.
 - `MANIFEST.in`: dropped the dead `recursive-exclude test_docs` line; added `py.typed`.
+- The `98%+` confirmation figure in `native.py` reconciled to the README's `99.9-100%` (12 PDFs,
+  33k words) and pointed at `benchmarks/confirmation_rate.py`.
+- **Native detection extracts each page's word list once.** Under `native_method="both"` a native
+  page ran `get_text("words")` up to four times (page-source classification + vector detector +
+  flag detector + the markdown word match). The detectors now take an optional `words=` argument
+  and `detect_pdf` threads a single per-page extraction through all of them (down to two: the
+  classifier's own probe plus one shared pass). `native_page_strikes`/`native_flag_strikes`/
+  `page_strikes` gain the `words=` parameter; behavior is unchanged when it's omitted.
+
+### Documented (not yet fixed)
+- CNN crop geometry (`PAD_X`/`PAD_Y`) is fixed-pixel and calibrated at 200 dpi; it drifts
+  off-distribution at other resolutions. The dpi-proportional fix needs a model re-export and is
+  deferred to be done with the high-DPI normalization work (roadmap R-highdpi).
+- Native detection is **horizontal (left-to-right) text only** — vertical writing modes and
+  non-Latin scripts whose strikes run along a different axis are out of scope (`native.py` module
+  docstring). Full support is roadmap R-cjk.
 
 ## [0.4.1] — 2026-07-05
 
@@ -72,6 +110,9 @@ Reachable & credible: new public API/CLI surface and inline typing. Remaining v0
 - `import fitz` replaced with `import pymupdf` throughout (the `fitz` alias is deprecated upstream
   and collides with the abandoned `fitz` PyPI package).
 
-## 0.4.0 — first public release
+## [0.4.0] — first public release
 
 - Detect struck-through (deleted) text in born-digital PDFs (exact vector/flag detection) and scanned pages (stroke geometry + OCR + ONNX CNN), with `~~struck~~` markdown, clean text, and grouped passages via a Python API and CLI.
+
+> Versions 0.1–0.3 were internal pre-release iterations and were never published to PyPI; 0.4.0 is
+> the first public release.

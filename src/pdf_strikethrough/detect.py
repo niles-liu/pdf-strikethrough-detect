@@ -100,14 +100,18 @@ def _text_visibility(page):
     return visible, invisible
 
 
-def classify_page_source(page):
+def classify_page_source(page, words=None):
     """'native' | 'scanned' | 'blank' for one fitz page.
 
     Heavy raster-image coverage alone is not a scan: a born-digital page can carry a full-bleed
     background image behind real, visible text. It is routed 'scanned' only when that coverage
     coincides with an invisible OCR text overlay (render mode 3) or with no visible text over
     real vector drawings. Away from heavy image coverage, ANY real text means 'native' — sparse
-    pages (signatures, cover sheets) stay native."""
+    pages (signatures, cover sheets) stay native.
+
+    ``words`` optionally supplies this page's ``get_text("words")`` output so a caller that also
+    detects on the page extracts it once (default None = extract here, only on the light-image
+    branch that needs it)."""
     img_cov = _image_coverage(page)
     if img_cov >= IMG_COVER_SCANNED:
         visible, invisible = _text_visibility(page)
@@ -116,7 +120,9 @@ def classify_page_source(page):
         if visible and has_drawings and not invisible:
             return "native"
         return "scanned"
-    if any(w[4].strip() for w in page.get_text("words")):
+    if words is None:
+        words = page.get_text("words")
+    if any(w[4].strip() for w in words):
         return "native"
     return "blank" if img_cov < 0.05 else "scanned"
 
@@ -158,9 +164,12 @@ def apply_cnn_verdict(struck, gray, meta=None):
         if h.get("tier") in ("vector", "flag"):            # native paths are exact; no CNN needed
             h["verdict"], h["final"] = "struck", True
         elif h["tier"] == "auto":
-            h["verdict"] = "struck"
             h["cnn_agrees"] = (p >= meta["p_hi"]) if p is not None else None
             h["final"] = h["cnn_agrees"] is not False
+            # verdict must not contradict final: a CNN-dropped 'auto' word used to keep
+            # verdict="struck" while final=False (misleading). Report the CNN's actual read on a
+            # drop; kept words (CNN confirmed, or crop too small to score) stay "struck".
+            h["verdict"] = "struck" if h["final"] else cnn.verdict_of(p, meta)
         else:                                              # review (incl. orphans)
             h["verdict"] = cnn.verdict_of(p, meta) if p is not None else "unsure"
             h["final"] = h["verdict"] == "struck"
@@ -177,23 +186,28 @@ def detect_scanned_image(gray, words, config=ScanConfig(), meta=None, dpi=RENDER
     return apply_cnn_verdict(struck, gray, meta)
 
 
-def _native_word_seq(page):
-    """Reading-order [(text, bbox_frac)] for a native page, boxes in rendered-page fractions."""
+def _native_word_seq(page, words=None):
+    """Reading-order [(text, bbox_frac)] for a native page, boxes in rendered-page fractions.
+    ``words`` optionally supplies this page's ``get_text("words")`` output (default None =
+    extract here)."""
+    if words is None:
+        words = page.get_text("words")
     seq = []
-    for (x0, y0, x1, y1, txt, *_r) in page.get_text("words"):
+    for (x0, y0, x1, y1, txt, *_r) in words:
         if txt.strip():
             seq.append((txt, native._bbox_frac(page, x0, y0, x1, y1)))
     return seq
 
 
-def _match_native_seq(page, recs):
+def _match_native_seq(page, recs, words=None):
     """Reading-order [(text, bbox_frac, rec_or_None)] for a native page. Both detectors emit
     get_text('words') boxes, so records match by exact (bbox, text) key; a same-text spatial
-    fallback (record center inside the word box) covers any residual float drift."""
+    fallback (record center inside the word box) covers any residual float drift. ``words``
+    optionally supplies this page's ``get_text("words")`` output (default None = extract here)."""
     by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
     matched = set()
     seq = []
-    for t, b in _native_word_seq(page):
+    for t, b in _native_word_seq(page, words):
         rec = by_key.get((b, t))
         if rec is None:
             for r in recs:
@@ -308,11 +322,12 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             page = doc[pno]
             recs, seq = [], []
             if sources[pno] == "native":
-                recs = native.page_strikes(page, pno, native_method)
+                nat_words = page.get_text("words")   # extract once; threaded through both detectors
+                recs = native.page_strikes(page, pno, native_method, words=nat_words)
                 for r in recs:
                     r["final"], r["verdict"] = True, "struck"
                 if include_markdown:
-                    seq = _match_native_seq(page, recs)
+                    seq = _match_native_seq(page, recs, words=nat_words)
             elif sources[pno] == "scanned":
                 page_words = None
                 if di_pages is not None and pno < len(di_pages):
@@ -332,18 +347,19 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
                         seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
                                for w in page_words if (w.text or "").strip()]
-                elif any(w[4].strip() for w in page.get_text("words")):
+                elif (nat_words := page.get_text("words")) and any(
+                        w[4].strip() for w in nat_words):
                     # classified scanned but has extractable text (text-bearing scan / OCR-overlay
                     # / full-bleed born-digital) — run the native detector instead of raising
                     msg = (f"page {pno} classified as scanned but has extractable text; ran the "
                            f"native detector on it (no OCR backend / di_result was provided)")
                     _warnings.warn(msg, stacklevel=2)
                     warns.append(msg)
-                    recs = native.page_strikes(page, pno, native_method)
+                    recs = native.page_strikes(page, pno, native_method, words=nat_words)
                     for r in recs:
                         r["final"], r["verdict"] = True, "struck"
                     if include_markdown:
-                        seq = _match_native_seq(page, recs)
+                        seq = _match_native_seq(page, recs, words=nat_words)
                 elif di_pages is not None and on_missing_ocr != "skip":
                     raise ValueError(
                         f"di_result has {len(di_pages)} pages but page {pno} of the "

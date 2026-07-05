@@ -14,11 +14,16 @@ authors = [{ name = "Niles Liu" }]
 keywords = ["strikethrough", "strikeout", "redline", "ocr", "pdf", "document-intelligence",
             "deleted-text", "scanned-documents"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Image Recognition",
     "Topic :: Text Processing",
 ]
@@ -50,6 +55,16 @@ Changelog = "https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/CHA
 
 [tool.setuptools.dynamic]
 version = { attr = "pdf_strikethrough.__version__" }
+
+[tool.ruff]
+line-length = 100        # the codebase targets ~99 cols
+
+[tool.ruff.lint]
+# ruff's default select is E4/E7/E9 + F. Allow the project's deliberate compact style:
+ignore = [
+    "E741",  # single-letter names (l = line) are intentional in the stroke-geometry math
+    "E702",  # a handful of compact "a; b" statements in tests/helpers
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

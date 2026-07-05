@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Keep GitHub Actions pinned and current. Dependabot can migrate `@vN` tags to commit SHAs and
+  # bump them; enable via the repo's Dependabot settings if you want SHA-pinning enforced.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Bump the pinned floors in pyproject.toml (numpy / pymupdf / onnxruntime / extras).
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]

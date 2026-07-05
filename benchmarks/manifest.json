@@ -1,0 +1,5 @@
+{
+  "description": "Public redline PDF corpus for pdf-strikethrough-detect benchmarks. The files are not committed; download them into benchmarks/corpus/ (git-ignored) and list them here. See benchmarks/README.md for the entry schema and how each field is used.",
+  "corpus_dir": "corpus",
+  "pdfs": []
+}

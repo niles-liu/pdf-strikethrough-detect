@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+title: "pdf-strikethrough-detect"
+abstract: >-
+  Detect struck-through (deleted) text in born-digital PDFs (exact vector/flag
+  detection) and scanned document images (stroke geometry plus a compact ONNX
+  CNN), with struck-aware markdown, surviving clean text, and grouped deletion
+  passages. Runs on CPU with no cloud calls.
+type: software
+authors:
+  - family-names: Liu
+    given-names: Niles
+repository-code: "https://github.com/niles-liu/pdf-strikethrough-detect"
+url: "https://pypi.org/project/pdf-strikethrough-detect/"
+license: MIT
+keywords:
+  - strikethrough
+  - strikeout
+  - redline
+  - deleted-text
+  - pdf
+  - ocr
+  - document-intelligence
+  - scanned-documents

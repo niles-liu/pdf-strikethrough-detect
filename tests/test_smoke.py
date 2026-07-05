@@ -97,6 +97,41 @@ def test_native_vector_flag_and_both_on_synthetic_pdf():
     doc.close()
 
 
+def test_native_words_arg_equivalent_to_extracting():
+    """F7: passing words= yields records identical to letting the detector extract them itself,
+    for vector, flag, and both."""
+    doc = _synthetic_native_pdf()
+    page = doc[0]
+    words = page.get_text("words")
+    assert st.native_page_strikes(page, 0) == st.native_page_strikes(page, 0, words=words)
+    assert st.native_flag_strikes(page, 0) == st.native_flag_strikes(page, 0, words=words)
+    for method in ("vector", "flag", "both"):
+        assert st.page_strikes(page, 0, method) == st.page_strikes(page, 0, method, words=words)
+    doc.close()
+
+
+def test_detect_pdf_extracts_words_once_per_native_page(monkeypatch):
+    """F7: under native_method='both', a native page extracts get_text('words') once and threads
+    it through the vector + flag detectors and the markdown match, instead of re-extracting per
+    call (was up to four extractions/page). classify's own light-image-branch extraction is the
+    only other one, so the page totals two — not four."""
+    import pymupdf
+    doc = _synthetic_native_pdf()
+    calls = {"words": 0}
+    orig = pymupdf.Page.get_text
+
+    def counting(self, *a, **k):
+        if (a and a[0] == "words") or k.get("option") == "words":
+            calls["words"] += 1
+        return orig(self, *a, **k)
+
+    monkeypatch.setattr(pymupdf.Page, "get_text", counting)
+    res = st.detect_pdf(doc, native_method="both")
+    assert res["n_struck_final"] == 2
+    assert calls["words"] == 2      # classify (1) + one threaded per-page extraction (1)
+    doc.close()
+
+
 def test_detect_pdf_native_end_to_end():
     doc = _synthetic_native_pdf()
     res = st.detect_pdf(doc, native_method="both")
@@ -446,7 +481,6 @@ def test_repeated_image_does_not_inflate_coverage():
 def test_partial_di_result_with_skip_does_not_raise():
     """A di_result covering fewer pages than the document used to abort with ValueError even under
     on_missing_ocr='skip'; it must skip the uncovered scanned page and keep the other results."""
-    import fitz
     doc = _synthetic_native_pdf()
     pix = doc[0].get_pixmap(dpi=72)
     scan = doc.new_page(width=595, height=842)
@@ -499,7 +533,6 @@ def test_authenticated_encrypted_pdf_detects():
 
 def test_missing_ocr_skip_keeps_native_results():
     """Mixed native+scanned without OCR used to abort and lose the native results."""
-    import fitz
     doc = _synthetic_native_pdf()
     pix = doc[0].get_pixmap(dpi=72)                    # add a scanned (image-only) page
     scan = doc.new_page(width=595, height=842)
@@ -537,7 +570,6 @@ def test_clean_text_immune_to_literal_tildes():
 
 def _mixed_native_scanned_pdf():
     """Page 0: native with a strike. Page 1: image-only (scanned)."""
-    import fitz
     doc = _synthetic_native_pdf()
     scan = doc.new_page(width=595, height=842)
     scan.insert_image(scan.rect, pixmap=doc[0].get_pixmap(dpi=72))
@@ -699,3 +731,38 @@ def test_confidence_free_ignores_confidence():
     b = st.detect_scanned_image(gray, [Word("gone", box, None)], config=cfg)
     assert [r["score"] for r in a] == [r["score"] for r in b]
     assert [r["tier"] for r in a] == [r["tier"] for r in b]
+
+
+# --------------------------------------------------------------------- F6: verdict consistency
+
+def test_auto_record_verdict_not_struck_when_cnn_drops(monkeypatch):
+    """F6: an 'auto' word the CNN votes down (final=False) must not keep verdict='struck' — that
+    contradicts the ship decision. Report the CNN's read instead; a confirmed word stays 'struck'."""
+    from pdf_strikethrough import cnn, detect
+    gray = _synthetic_struck_page(True)
+    H, W = gray.shape
+    meta = {"p_hi": 0.85, "p_lo": 0.15}
+    box = (100 / W, 182 / H, 500 / W, 210 / H)
+    base = {"tier": "auto", "text": "gone", "chars": "gone", "char_span": (0, 4),
+            "partial": False, "bbox_frac": box}
+
+    monkeypatch.setattr(cnn, "score_crops", lambda crops: [0.05] * len(crops))   # CNN says clean
+    dropped = detect.apply_cnn_verdict([dict(base)], gray, meta)[0]
+    assert dropped["cnn_agrees"] is False and dropped["final"] is False
+    assert dropped["verdict"] != "struck"                     # was misleadingly "struck" before
+
+    monkeypatch.setattr(cnn, "score_crops", lambda crops: [0.99] * len(crops))   # CNN confirms
+    kept = detect.apply_cnn_verdict([dict(base)], gray, meta)[0]
+    assert kept["cnn_agrees"] is True and kept["final"] is True and kept["verdict"] == "struck"
+
+
+def test_no_record_claims_struck_while_not_final():
+    """Invariant across the scanned path: verdict=='struck' implies final is True."""
+    for struck in (True, False):
+        gray = _synthetic_struck_page(struck)
+        H, W = gray.shape
+        words = [Word("gone", (100 / W, 182 / H, 500 / W, 210 / H), 0.6)]
+        recs = st.detect_scanned_image(gray, words, config=ScanConfig.confidence_free())
+        for r in recs:
+            if r.get("verdict") == "struck":
+                assert r["final"], r
