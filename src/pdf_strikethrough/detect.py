@@ -231,8 +231,29 @@ def _di_pages(di_result):
         f"(REST JSON or sdk_result.as_dict()), got {type(di_result).__name__}")
 
 
+def _normalize_pages(pages, page_count):
+    """Coerce a user ``pages=`` value to a sorted list of unique, in-range 0-based indices.
+    Accepts any iterable of ints (negatives index from the end, like list slicing). Out-of-range
+    indices raise IndexError so a typo fails loudly instead of silently detecting nothing."""
+    if pages is None:
+        return list(range(page_count))
+    if isinstance(pages, int):
+        pages = [pages]
+    out = set()
+    for p in pages:
+        q = int(p)
+        if q < 0:
+            q += page_count
+        if not (0 <= q < page_count):
+            raise IndexError(
+                f"page index {p} is out of range for a {page_count}-page document")
+        out.add(q)
+    return sorted(out)
+
+
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
-               include_markdown=True, native_method="vector", on_missing_ocr="raise"):
+               include_markdown=True, native_method="vector", on_missing_ocr="raise",
+               pages=None, progress=None):
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
@@ -254,24 +275,36 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         on_missing_ocr: what to do when a scanned page is hit with no `ocr`/`di_result`:
             'raise' (default) raises OcrRequiredError; 'skip' skips the page, records a warning
             in the result, and still returns everything from the other pages.
+        pages: restrict work to a subset — an iterable of 0-based page indices (negatives index
+            from the end). Only those pages are classified and processed; a 300-page scan need
+            not OCR every page. Out-of-range indices raise IndexError. When given, the result
+            gains a ``pages`` key (the processed indices) and ``page_sources`` is aligned to it;
+            ``di_result`` is still indexed by absolute page number. Default None = all pages.
+        progress: optional callback ``progress(completed, total, page_index)`` invoked after each
+            page is processed (`completed` counts from 1, `total` is the number of pages being
+            processed, `page_index` is the just-finished 0-based page). Long OCR+CNN runs are
+            otherwise silent and read as hangs; use this to drive a progress bar / stderr line.
 
     Returns a dict:
         {source, page_count, page_sources, words, n_struck_final, warnings,
-         markdown, clean_text, passages}   (last three only if include_markdown)
+         markdown, clean_text, passages}   (last three only if include_markdown;
+         plus ``pages`` when a subset was requested). See ``pdf_strikethrough.types.DetectResult``.
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
     records (not by stripping the markdown), so the two always agree.
     """
     doc, close = _open_doc(source)
     try:
-        sources = [classify_page_source(doc[p]) for p in range(doc.page_count)]
+        page_indices = _normalize_pages(pages, doc.page_count)
+        sources = {p: classify_page_source(doc[p]) for p in page_indices}
         di_pages = _di_pages(di_result)
         if scan_config is None:
             scan_config = ScanConfig.azure_di() if di_pages is not None else ScanConfig()
         meta = None
         words, warns = [], []
         page_md, page_clean, passages = [], [], []
-        for pno in range(doc.page_count):
+        total = len(page_indices)
+        for done, pno in enumerate(page_indices, start=1):
             page = doc[pno]
             recs, seq = [], []
             if sources[pno] == "native":
@@ -332,16 +365,20 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 for ps in _md.group_passages(seq):
                     ps["page"] = pno
                     passages.append(ps)
+            if progress is not None:
+                progress(done, total, pno)
 
         result = {
             "source": None if isinstance(source, (bytes, bytearray)) else (
                 str(source) if close else getattr(source, "name", None)),
             "page_count": doc.page_count,
-            "page_sources": sources,
+            "page_sources": [sources[p] for p in page_indices],
             "words": words,
             "n_struck_final": sum(1 for w in words if w.get("final")),
             "warnings": warns,
         }
+        if pages is not None:
+            result["pages"] = page_indices
         if include_markdown:
             result["markdown"] = "\n\n".join(page_md)
             result["clean_text"] = "\n\n".join(c for c in page_clean if c).strip()

@@ -533,6 +533,162 @@ def test_clean_text_immune_to_literal_tildes():
     assert md.page_clean_text(items) == "x~~y kept"     # strip_struck() would corrupt this
 
 
+# --------------------------------------------------------------------- v0.5.0 surface
+
+def _mixed_native_scanned_pdf():
+    """Page 0: native with a strike. Page 1: image-only (scanned)."""
+    import fitz
+    doc = _synthetic_native_pdf()
+    scan = doc.new_page(width=595, height=842)
+    scan.insert_image(scan.rect, pixmap=doc[0].get_pixmap(dpi=72))
+    return doc
+
+
+def test_strikethroughs_in_pdf_warns_on_scanned():
+    """F1: a scanned page yields a silent [] for that page — warn so the caller knows to route it
+    through detect_pdf(ocr=...)."""
+    import warnings
+    doc = _mixed_native_scanned_pdf()
+    assert st.classify_page_source(doc[1]) == "scanned"
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        out = st.strikethroughs_in_pdf(doc)
+    assert sorted(r["text"] for r in out) == ["deleted", "text"]      # native page still detected
+    assert rec and "scanned" in str(rec[0].message)
+    doc.close()
+
+
+def test_strikethroughs_in_pdf_no_warning_when_all_native():
+    import warnings
+    doc = _synthetic_native_pdf()
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        st.strikethroughs_in_pdf(doc)
+    assert not rec, [str(w.message) for w in rec]
+    doc.close()
+
+
+def _three_page_native_pdf():
+    """Pages 0 and 2 carry a strike; page 1 is clean."""
+    import fitz
+    doc = fitz.open()
+    for pno in range(3):
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((72, 100), "keep deleted text here", fontsize=12)
+        if pno != 1:
+            r = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}["deleted"]
+            page.draw_line(fitz.Point(r.x0, (r.y0 + r.y1) / 2),
+                           fitz.Point(r.x1, (r.y0 + r.y1) / 2))
+    return doc
+
+
+def test_detect_pdf_pages_subset_and_progress():
+    """F5: pages= processes only the requested pages, progress= fires once per processed page,
+    the result carries a `pages` key aligned to page_sources, and page_count stays the full doc."""
+    doc = _three_page_native_pdf()
+    seen = []
+    res = st.detect_pdf(doc, pages=[0, 2], progress=lambda d, t, p: seen.append((d, t, p)))
+    assert res["pages"] == [0, 2]
+    assert res["page_sources"] == ["native", "native"]
+    assert res["page_count"] == 3                       # full doc, not the subset size
+    assert res["n_struck_final"] == 2                   # only the two struck pages processed
+    assert {w["page"] for w in res["words"]} == {0, 2}
+    assert seen == [(1, 2, 0), (2, 2, 2)]
+    doc.close()
+
+
+def test_detect_pdf_pages_negative_index_and_dedup():
+    doc = _three_page_native_pdf()
+    res = st.detect_pdf(doc, pages=[-1, -1, 2])         # -1 == 2; duplicates collapse
+    assert res["pages"] == [2]
+    doc.close()
+
+
+def test_detect_pdf_pages_out_of_range_raises():
+    doc = _three_page_native_pdf()
+    for bad in ([9], [-9]):
+        try:
+            st.detect_pdf(doc, pages=bad)
+            assert False, f"expected IndexError for pages={bad}"
+        except IndexError:
+            pass
+    doc.close()
+
+
+def test_detect_pdf_no_pages_key_when_full():
+    """Backward compat: without pages=, the result has no `pages` key and page_sources spans all."""
+    doc = _three_page_native_pdf()
+    res = st.detect_pdf(doc)
+    assert "pages" not in res
+    assert len(res["page_sources"]) == 3
+    doc.close()
+
+
+def test_types_module_exports():
+    """F2: the typed shapes are importable from the package and the types submodule."""
+    from pdf_strikethrough import types as t
+    assert st.StruckWord is t.StruckWord
+    assert st.DetectResult is t.DetectResult and st.Passage is t.Passage
+    # TypedDicts carry their documented keys in __annotations__
+    assert {"page", "text", "tier", "final", "coverage", "cnn_prob"} <= set(t.StruckWord.__annotations__)
+    assert {"page_count", "page_sources", "words", "pages"} <= set(t.DetectResult.__annotations__)
+
+
+def test_py_typed_marker_shipped():
+    import os
+    import pdf_strikethrough
+    marker = os.path.join(os.path.dirname(pdf_strikethrough.__file__), "py.typed")
+    assert os.path.exists(marker)
+
+
+# --------------------------------------------------------------------- CLI (F4)
+
+def _write_three_page_pdf(tmp_path):
+    doc = _three_page_native_pdf()
+    p = tmp_path / "t.pdf"
+    p.write_bytes(doc.tobytes())
+    doc.close()
+    return str(p)
+
+
+def test_cli_version_flag():
+    from pdf_strikethrough import __main__ as cli
+    try:
+        cli.main(["--version"])
+        assert False, "expected SystemExit from --version"
+    except SystemExit as e:
+        assert e.code == 0
+
+
+def test_cli_pages_and_fail_if_found(tmp_path):
+    from pdf_strikethrough import __main__ as cli
+    pdf = _write_three_page_pdf(tmp_path)
+    # page 2 (1-based) is the clean middle page -> nothing found -> exit 0 even with --fail-if-found
+    assert cli.main(["detect", pdf, "--pages", "2", "--fail-if-found"]) == 0
+    # pages 1,3 both carry a strike -> --fail-if-found trips exit 3
+    assert cli.main(["detect", pdf, "--pages", "1,3", "--fail-if-found"]) == 3
+    # bad --pages spec -> usage error exit 1
+    assert cli.main(["detect", pdf, "--pages", "0"]) == 1
+
+
+def test_cli_json_has_schema_version_and_evidence(tmp_path):
+    import json
+    from pdf_strikethrough import __main__ as cli
+    pdf = _write_three_page_pdf(tmp_path)
+    out = tmp_path / "o.json"
+    assert cli.main(["detect", pdf, "--json", str(out)]) == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == cli.SCHEMA_VERSION
+    assert payload["n_struck_final"] == 2 and "warnings" in payload
+    w = payload["words"][0]
+    assert "coverage" in w and w["tier"] == "vector"        # native evidence field present
+
+
+def test_cli_missing_file_exits_1(tmp_path):
+    from pdf_strikethrough import __main__ as cli
+    assert cli.main(["detect", str(tmp_path / "nope.pdf")]) == 1
+
+
 def test_confidence_free_ignores_confidence():
     """Under confidence_free(), identical geometry must score identically w/ and w/o conf."""
     gray = _synthetic_struck_page(True)

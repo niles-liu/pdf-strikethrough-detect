@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 0.5.0 (in progress)
+
+Reachable & credible: new public API/CLI surface and inline typing. Remaining v0.5.0 tracks
+(detection-accuracy polish, benchmarks, docs/examples, CI hardening) are not yet in this entry.
+
+### Added
+- **`pages=` and `progress=` on `detect_pdf`.** `pages=` restricts work to a subset of 0-based
+  page indices (negatives index from the end; out-of-range raises `IndexError`), so a 300-page
+  scan no longer has to OCR every page or nothing; the result gains a `pages` key aligned to
+  `page_sources`. `progress=` is a `progress(completed, total, page_index)` callback fired after
+  each page, so long OCR+CNN runs aren't silent.
+- **CLI feature parity with the API.** `--version`; `--pages 1-5,12` (1-based); `--di-result PATH`
+  (use a pre-fetched Azure DI result from the CLI); `--scan-config auto|azure-di|confidence-free`;
+  `--fail-if-found` (exit 3 for CI gating); `-` for stdin PDF and for stdout on
+  `--json`/`--markdown`/`--clean-text`; per-page stderr progress on a TTY;
+  `ArgumentDefaultsHelpFormatter` and documented exit codes. JSON output now carries
+  `schema_version`, a `warnings` list, evidence fields (`coverage`/`score`/`cnn_prob`/`cnn_agrees`/
+  `conf`) alongside each word, and is written with `ensure_ascii=False`.
+- **Typed public surface.** New `pdf_strikethrough.types` module with `StruckWord`, `Passage`, and
+  `DetectResult` TypedDicts (tier-dependent keys documented); ships `py.typed` so downstream type
+  checkers see the annotations. Re-exported from the top-level package.
+- **`strikethroughs_in_pdf` warns on scanned input.** A scanned page has no vector strikes, so the
+  function still returns `[]` for it — but now emits a `UserWarning` naming the scanned pages
+  (previously a silent `[]`, the package's most dangerous confusion).
+
+### Changed
+- **Version is single-sourced** from `pdf_strikethrough.__version__` via `dynamic = ["version"]`
+  (no more lockstep bump of `pyproject.toml` + `__init__.py` at release time).
+- `MANIFEST.in`: dropped the dead `recursive-exclude test_docs` line; added `py.typed`.
+
 ## [0.4.1] — 2026-07-05
 
 ### Fixed

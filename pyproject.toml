@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-strikethrough-detect"
-version = "0.4.1"
+dynamic = ["version"]                       # single-sourced from pdf_strikethrough.__version__
 description = "Detect struck-through (deleted) text in PDFs and scanned document images."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -48,8 +48,11 @@ Repository = "https://github.com/niles-liu/pdf-strikethrough-detect"
 Issues = "https://github.com/niles-liu/pdf-strikethrough-detect/issues"
 Changelog = "https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/CHANGELOG.md"
 
+[tool.setuptools.dynamic]
+version = { attr = "pdf_strikethrough.__version__" }
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pdf_strikethrough = ["strike_verdict_cnn.onnx", "strike_verdict_cnn.meta.json"]
+pdf_strikethrough = ["strike_verdict_cnn.onnx", "strike_verdict_cnn.meta.json", "py.typed"]

@@ -22,7 +22,9 @@ Low-level, on your own image (no PDF):
     lines = st.strike_lines(gray, dpi=200)            # OCR-free stroke geometry
     p = st.score_word(gray, (x0, y0, x1, y1))         # CNN strike probability for a word box
 """
-from . import cnn, detect, lines, markdown, native, ocr, scanned
+import warnings as _warnings
+
+from . import cnn, detect, lines, markdown, native, ocr, scanned, types
 from .cnn import (get_model_meta, score_crops, score_word, std_crop, verdict_of, word_crop_px)
 from .detect import (EncryptedPdfError, OcrRequiredError, apply_cnn_verdict,
                      classify_page_source, detect_pdf, detect_scanned_image)
@@ -31,8 +33,9 @@ from .native import (native_doc_strikes, native_flag_strikes, native_markdown,
                      native_page_strikes, page_strikes, strip_struck_markdown)
 from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di)
 from .scanned import ScanConfig, analyze_scanned_page
+from .types import DetectResult, Passage, StruckWord
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 __all__ = [
     # high-level
@@ -50,8 +53,10 @@ __all__ = [
     "Word", "rapidocr_backend", "tesseract_backend", "words_from_azure_di",
     # CNN
     "score_word", "score_crops", "std_crop", "word_crop_px", "verdict_of", "get_model_meta",
+    # typing
+    "StruckWord", "DetectResult", "Passage",
     # submodules
-    "cnn", "lines", "native", "ocr", "scanned", "detect", "markdown",
+    "cnn", "lines", "native", "ocr", "scanned", "detect", "markdown", "types",
 ]
 
 
@@ -70,20 +75,35 @@ def render_page_gray(page, dpi=lines.RENDER_DPI):
     return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
 
 
-def strikethroughs_in_pdf(source, method="vector"):
+def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
     """Struck-word records for a born-digital PDF (path/bytes/fitz doc), all pages, reading order.
     Exact — driven by the PDF's own strike drawings. `method`: 'vector' (stroke geometry, precise
     partial-char spans; default), 'flag' (MuPDF's strikeout span flag), or 'both' (union, maximum
-    recall). Returns [] for a scanned PDF; use ``detect_pdf(..., ocr=...)`` for those."""
+    recall).
+
+    Scanned PDFs have no vector strikes, so this returns [] for them — and emits a
+    ``UserWarning`` naming the scanned pages, because a silent [] on a scan (the package's own
+    README opens with one) is the most dangerous confusion it can produce. Route scans through
+    ``detect_pdf(..., ocr=...)`` instead."""
     doc = open_pdf(source)
     try:
+        scanned_pages = [p for p in range(doc.page_count)
+                         if detect.classify_page_source(doc[p]) == "scanned"]
+        if scanned_pages:
+            shown = ", ".join(str(p) for p in scanned_pages[:10])
+            more = "" if len(scanned_pages) <= 10 else f" (+{len(scanned_pages) - 10} more)"
+            _warnings.warn(
+                f"strikethroughs_in_pdf found {len(scanned_pages)} scanned page(s) "
+                f"[{shown}{more}]: vector detection cannot see strikes on a scan and reports "
+                f"nothing for them. Use detect_pdf(source, ocr=rapidocr_backend()) for scanned "
+                f"pages.", stacklevel=2)
         return native.native_doc_strikes(doc, method)
     finally:
         if not hasattr(source, "page_count"):
             doc.close()
 
 
-def clean_markdown(source):
+def clean_markdown(source) -> str:
     """Markdown for a born-digital PDF with struck (deleted) spans removed — the surviving text.
     Requires the ``[markdown]`` extra (pymupdf4llm); raises ImportError with the pip command
     otherwise. For an extra-free equivalent use ``detect_pdf(source)["clean_text"]``."""
