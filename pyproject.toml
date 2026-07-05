@@ -44,6 +44,9 @@ pdf-strikethrough = "pdf_strikethrough.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/niles-liu/pdf-strikethrough-detect"
+Repository = "https://github.com/niles-liu/pdf-strikethrough-detect"
+Issues = "https://github.com/niles-liu/pdf-strikethrough-detect/issues"
+Changelog = "https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
