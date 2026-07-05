@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 0.5.0
+## [0.5.0] — 2026-07-05
 
 Reachable & credible: new public API/CLI surface, inline typing, runnable examples, a reproducible
 benchmark harness, and release/CI hardening.
