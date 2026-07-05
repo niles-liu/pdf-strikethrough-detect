@@ -1,0 +1,9 @@
+{
+ "version": "v3-corpus",
+ "p_hi": 0.85,
+ "p_lo": 0.15,
+ "crop_h": 32,
+ "crop_w": 160,
+ "pad_x": 5,
+ "pad_y": 7
+}

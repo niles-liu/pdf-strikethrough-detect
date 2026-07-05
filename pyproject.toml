@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-strikethrough-detect"
+version = "0.4.0"
+description = "Detect struck-through (deleted) text in PDFs and scanned document images."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Niles Liu" }]
+keywords = ["strikethrough", "strikeout", "redline", "ocr", "pdf", "document-intelligence",
+            "deleted-text", "scanned-documents"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Text Processing",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pillow>=9.0",
+    "scipy>=1.10",
+    "onnxruntime>=1.16",
+    "pymupdf>=1.26",         # >=1.26: TEXT_COLLECT_STYLES + FZ_STEXT_STRIKEOUT (flag detector)
+]
+
+[project.optional-dependencies]
+markdown = ["pymupdf4llm>=0.0.27"]     # clean_markdown(); >=0.0.22 introduced ~~ strike spans,
+                                       # >=0.0.27 matches the pymupdf>=1.26 base floor
+rapidocr = ["rapidocr>=3.2", "onnxruntime>=1.16"]   # free, pip-only scanned-word OCR backend
+                                                    # (>=3.2: nested word_results shape)
+tesseract = ["pytesseract>=0.3.10"]    # needs the tesseract system binary too
+torch = ["torch>=2.0"]                 # optional .pt fallback for the CNN
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+pdf-strikethrough = "pdf_strikethrough.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/niles-liu/pdf-strikethrough-detect"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pdf_strikethrough = ["strike_verdict_cnn.onnx", "strike_verdict_cnn.meta.json"]

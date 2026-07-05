@@ -1,0 +1,4 @@
+include LICENSE README.md CHANGELOG.md
+include src/pdf_strikethrough/strike_verdict_cnn.onnx
+include src/pdf_strikethrough/strike_verdict_cnn.meta.json
+recursive-exclude test_docs *
