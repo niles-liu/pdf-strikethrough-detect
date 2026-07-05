@@ -10,7 +10,9 @@ words (the geometry can't decide) the CNN is the decider.
 """
 from __future__ import annotations
 
-import fitz
+import warnings as _warnings
+
+import pymupdf
 
 from . import cnn, markdown as _md, native
 from .ocr import words_from_azure_di
@@ -28,39 +30,106 @@ class EncryptedPdfError(ValueError):
     """The PDF is password-protected; decrypt or authenticate before processing."""
 
 
-def _check_not_encrypted(doc):
-    if getattr(doc, "needs_pass", False):
+def _raise_if_encrypted(doc):
+    """The single encryption gate for the whole package (open_pdf and detect_pdf both route
+    through it). Gates on ``is_encrypted``, which a successful ``doc.authenticate(password)``
+    resets to False — NOT ``needs_pass``, which stays True forever after authenticate() and so
+    made the exact recover-and-retry workflow the error message recommends fail."""
+    if getattr(doc, "is_encrypted", False):
         raise EncryptedPdfError(
-            "PDF is password-protected; open it with fitz and call doc.authenticate(password) "
+            "PDF is password-protected; open it with pymupdf and call doc.authenticate(password) "
             "(or save a decrypted copy) before processing")
 
 
-def classify_page_source(page):
-    """'native' | 'scanned' | 'blank' for one fitz page. Raster images covering most of the page
-    mean scanned (an OCR text overlay over page images does not make a scan native); ANY real
-    text otherwise means native — sparse pages (signature pages, cover sheets) are still native."""
-    area = page.rect.get_area() or 1.0
-    img_area = 0.0
+def _open_doc(source):
+    """Open `source` (path, bytes, or already-open fitz document) as a fitz document, applying the
+    encryption gate. Returns ``(doc, owned)`` — `owned` is True when we opened it and the caller
+    must close it. On EncryptedPdfError a doc WE opened is closed before raising, so no handle
+    leaks (which would lock the file on Windows)."""
+    if hasattr(source, "page_count"):
+        doc, owned = source, False
+    elif isinstance(source, (bytes, bytearray)):
+        doc, owned = pymupdf.open(stream=bytes(source), filetype="pdf"), True
+    else:
+        doc, owned = pymupdf.open(source), True
+    try:
+        _raise_if_encrypted(doc)
+    except EncryptedPdfError:
+        if owned:
+            doc.close()
+        raise
+    return doc, owned
+
+
+def _image_coverage(page, grid=64):
+    """Fraction of the page covered by raster images, UNIONED on a coarse boolean grid. Summing
+    per-image bbox areas over-counts overlaps and repeats — the same 30%-of-page image placed
+    three times would read as 90% coverage and misroute a born-digital page to 'scanned'."""
+    import numpy as np
+    R = page.rect
+    pw, ph = R.width or 1.0, R.height or 1.0
+    if R.get_area() <= 0:
+        return 0.0
+    cells = np.zeros((grid, grid), dtype=bool)
     for info in page.get_image_info():
-        r = fitz.Rect(info["bbox"]) & page.rect
-        if not r.is_empty:
-            img_area += r.get_area()
-    if img_area / area >= IMG_COVER_SCANNED:
+        r = pymupdf.Rect(info["bbox"]) & R
+        if r.is_empty:
+            continue
+        cx0 = max(0, min(grid, int((r.x0 - R.x0) / pw * grid)))
+        cx1 = max(0, min(grid, int(np.ceil((r.x1 - R.x0) / pw * grid))))
+        cy0 = max(0, min(grid, int((r.y0 - R.y0) / ph * grid)))
+        cy1 = max(0, min(grid, int(np.ceil((r.y1 - R.y0) / ph * grid))))
+        cells[cy0:cy1, cx0:cx1] = True
+    return float(cells.mean())
+
+
+def _text_visibility(page):
+    """(has_visible_text, has_invisible_text) from the text render modes reported by
+    get_texttrace(). Render mode 3 (and zero opacity) is invisible — the hallmark of a scanned
+    page's OCR text overlay; modes 0/1/2/4/5/6 actually paint ink and mean born-digital text."""
+    visible = invisible = False
+    for span in page.get_texttrace():
+        if not any(chr(c[0]).strip() for c in span.get("chars", ())):
+            continue
+        if span.get("type", 0) == 3 or span.get("opacity", 1.0) == 0:
+            invisible = True
+        else:
+            visible = True
+        if visible and invisible:
+            break
+    return visible, invisible
+
+
+def classify_page_source(page):
+    """'native' | 'scanned' | 'blank' for one fitz page.
+
+    Heavy raster-image coverage alone is not a scan: a born-digital page can carry a full-bleed
+    background image behind real, visible text. It is routed 'scanned' only when that coverage
+    coincides with an invisible OCR text overlay (render mode 3) or with no visible text over
+    real vector drawings. Away from heavy image coverage, ANY real text means 'native' — sparse
+    pages (signatures, cover sheets) stay native."""
+    img_cov = _image_coverage(page)
+    if img_cov >= IMG_COVER_SCANNED:
+        visible, invisible = _text_visibility(page)
+        has_drawings = bool(page.get_drawings())
+        # born-digital = visible text painted over real vector content, with no invisible overlay
+        if visible and has_drawings and not invisible:
+            return "native"
         return "scanned"
     if any(w[4].strip() for w in page.get_text("words")):
         return "native"
-    return "blank" if img_area / area < 0.05 else "scanned"
+    return "blank" if img_cov < 0.05 else "scanned"
 
 
 def _render_gray(page, dpi=RENDER_DPI):
     import numpy as np
-    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
+    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
     return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
 
 
 def _render_rgb(page, dpi=RENDER_DPI):
     import numpy as np
-    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csRGB)
     return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
 
 
@@ -193,18 +262,14 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
     records (not by stripping the markdown), so the two always agree.
     """
-    close = not hasattr(source, "page_count")
-    doc = source if hasattr(source, "page_count") else (
-        fitz.open(stream=bytes(source), filetype="pdf") if isinstance(source, (bytes, bytearray))
-        else fitz.open(source))
+    doc, close = _open_doc(source)
     try:
-        _check_not_encrypted(doc)
         sources = [classify_page_source(doc[p]) for p in range(doc.page_count)]
         di_pages = _di_pages(di_result)
         if scan_config is None:
             scan_config = ScanConfig.azure_di() if di_pages is not None else ScanConfig()
         meta = None
-        words, warnings = [], []
+        words, warns = [], []
         page_md, page_clean, passages = [], [], []
         for pno in range(doc.page_count):
             page = doc[pno]
@@ -221,19 +286,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                     page_words = words_from_azure_di(di_pages[pno])
                 elif ocr is not None:
                     page_words = ocr(_render_rgb(page, dpi))
-                elif di_pages is not None:
-                    raise ValueError(
-                        f"di_result has {len(di_pages)} pages but page {pno} of the "
-                        f"{doc.page_count}-page document is scanned; pass a full di_result "
-                        f"or an ocr backend")
-                elif on_missing_ocr == "skip":
-                    warnings.append(f"page {pno} is scanned but no OCR backend was provided; "
-                                    f"skipped (no text or strikes reported for it)")
-                else:
-                    raise OcrRequiredError(
-                        f"page {pno} is scanned and no OCR backend was provided; pass "
-                        f"ocr=rapidocr_backend() (or another backend) or di_result=..., or "
-                        f"use on_missing_ocr='skip'")
+
                 if page_words is not None:
                     gray = _render_gray(page, dpi)
                     if meta is None:
@@ -246,6 +299,31 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
                         seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
                                for w in page_words if (w.text or "").strip()]
+                elif any(w[4].strip() for w in page.get_text("words")):
+                    # classified scanned but has extractable text (text-bearing scan / OCR-overlay
+                    # / full-bleed born-digital) — run the native detector instead of raising
+                    msg = (f"page {pno} classified as scanned but has extractable text; ran the "
+                           f"native detector on it (no OCR backend / di_result was provided)")
+                    _warnings.warn(msg, stacklevel=2)
+                    warns.append(msg)
+                    recs = native.page_strikes(page, pno, native_method)
+                    for r in recs:
+                        r["final"], r["verdict"] = True, "struck"
+                    if include_markdown:
+                        seq = _match_native_seq(page, recs)
+                elif di_pages is not None and on_missing_ocr != "skip":
+                    raise ValueError(
+                        f"di_result has {len(di_pages)} pages but page {pno} of the "
+                        f"{doc.page_count}-page document is scanned; pass a full di_result "
+                        f"or an ocr backend, or use on_missing_ocr='skip'")
+                elif on_missing_ocr == "skip":
+                    warns.append(f"page {pno} is scanned but no OCR backend / di_result covered "
+                                 f"it; skipped (no text or strikes reported for it)")
+                else:
+                    raise OcrRequiredError(
+                        f"page {pno} is scanned and no OCR backend was provided; pass "
+                        f"ocr=rapidocr_backend() (or another backend) or di_result=..., or "
+                        f"use on_missing_ocr='skip'")
 
             words.extend(recs)
             if include_markdown:
@@ -262,7 +340,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             "page_sources": sources,
             "words": words,
             "n_struck_final": sum(1 for w in words if w.get("final")),
-            "warnings": warnings,
+            "warnings": warns,
         }
         if include_markdown:
             result["markdown"] = "\n\n".join(page_md)

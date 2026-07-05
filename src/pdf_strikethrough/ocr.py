@@ -33,6 +33,14 @@ class Word:
     def __post_init__(self):
         # bboxes are used as dict keys downstream — coerce lists/ndarrays to a hashable tuple
         object.__setattr__(self, "bbox", tuple(float(v) for v in self.bbox))
+        if len(self.bbox) != 4:
+            raise ValueError(f"Word.bbox must be (x0, y0, x1, y1); got {self.bbox!r}")
+        # a box in pixel coordinates would sail through the whole scanned pipeline and quietly
+        # report every word clean — reject it at construction (mirrors cnn.word_crop_px's >1.5 gate)
+        if max(abs(v) for v in self.bbox) > 1.5:
+            raise ValueError(
+                f"Word.bbox must be normalized page fractions in [0,1], got {self.bbox!r} "
+                "(these look like pixel coordinates — divide by the image width/height)")
 
 
 def _bbox_from_points(points, w, h):
@@ -46,8 +54,14 @@ def _bbox_from_points(points, w, h):
 def words_from_azure_di(di_page) -> list[Word]:
     """Convert one Azure DI ``pages[i]`` dict (prebuilt-layout / read) into Words. DI word
     polygons are 8 numbers in the page's own units; page width/height give the fractions."""
-    pw = di_page.get("width") or 1.0
-    ph = di_page.get("height") or 1.0
+    pw = di_page.get("width")
+    ph = di_page.get("height")
+    if not pw or not ph:
+        # falling back to 1.0 turned the polygons (in inches) into inch-unit "fractions" far
+        # outside [0,1] that silently detect nothing — fail loudly instead.
+        raise ValueError(
+            "Azure DI page is missing a non-zero 'width'/'height'; cannot normalize word "
+            f"polygons to page fractions (got width={pw!r}, height={ph!r})")
     out = []
     for w in di_page.get("words", []):
         text = w.get("content", "")
@@ -64,9 +78,28 @@ def words_from_azure_di(di_page) -> list[Word]:
 
 # --------------------------------------------------------------------------- RapidOCR (free, pip-only)
 
+def _ver_tuple(v):
+    """Best-effort (major, minor, patch) from a version string; non-numeric parts -> 0."""
+    parts = []
+    for p in str(v).split(".")[:3]:
+        num = "".join(ch for ch in p if ch.isdigit())
+        parts.append(int(num) if num else 0)
+    return tuple(parts)
+
+
+def _require_rapidocr_3_2(version):
+    """Raise a clear error on rapidocr < 3.2, whose result object predates the ``word_results``
+    nested shape this adapter reads (older installs throw opaque unpack errors or emit garbage)."""
+    if _ver_tuple(version) < (3, 2):
+        raise RuntimeError(
+            f"rapidocr {version} is too old for this adapter — the word-box result shape "
+            "changed in 3.2. Upgrade: pip install 'rapidocr>=3.2'")
+
+
 def rapidocr_backend(engine=None, **engine_kwargs):
     """Return an OCR backend using RapidOCR (ONNX, no system binary). Requires the `rapidocr`
-    extra. `engine` may be a preconstructed ``rapidocr.RapidOCR``; otherwise one is built lazily.
+    extra (``>=3.2``). `engine` may be a preconstructed ``rapidocr.RapidOCR``; otherwise one is
+    built lazily.
 
     RapidOCR detection is phrase/line-grained, so its word boxes run coarser than a true
     word-level engine — good for locating struck regions, weaker for per-word char spans."""
@@ -74,10 +107,16 @@ def rapidocr_backend(engine=None, **engine_kwargs):
 
     def backend(image) -> list[Word]:
         if holder["eng"] is None:
+            import rapidocr
+            _require_rapidocr_3_2(getattr(rapidocr, "__version__", "0"))
             from rapidocr import RapidOCR
             holder["eng"] = RapidOCR(**engine_kwargs)
         h, w = image.shape[:2]
         res = holder["eng"](image, return_word_box=True)
+        if not hasattr(res, "word_results"):
+            raise RuntimeError(
+                "RapidOCR returned a result without 'word_results'; this adapter needs "
+                "rapidocr>=3.2 (pip install 'rapidocr>=3.2')")
         out = []
         for line in (res.word_results or []):
             for (text, score, box) in line:

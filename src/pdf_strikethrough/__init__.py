@@ -57,26 +57,16 @@ __all__ = [
 
 def open_pdf(source):
     """Open `source` (path, bytes, or an already-open fitz document) as a fitz document.
-    Raises EncryptedPdfError for password-protected PDFs."""
-    import fitz
-    if hasattr(source, "page_count"):
-        doc = source
-    elif isinstance(source, (bytes, bytearray)):
-        doc = fitz.open(stream=bytes(source), filetype="pdf")
-    else:
-        doc = fitz.open(source)
-    if getattr(doc, "needs_pass", False):
-        raise EncryptedPdfError(
-            "PDF is password-protected; open it with fitz and call doc.authenticate(password) "
-            "(or save a decrypted copy) before processing")
-    return doc
+    Raises EncryptedPdfError for password-protected PDFs (routes through the same gate as
+    ``detect_pdf``; an already-authenticated document passes)."""
+    return detect._open_doc(source)[0]
 
 
 def render_page_gray(page, dpi=lines.RENDER_DPI):
     """Render a fitz page to a grayscale uint8 (H, W) numpy array."""
-    import fitz
     import numpy as np
-    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
+    import pymupdf
+    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
     return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
 
 

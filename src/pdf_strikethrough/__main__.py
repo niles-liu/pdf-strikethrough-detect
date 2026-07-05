@@ -32,7 +32,7 @@ def _build_ocr(name):
                              '(plus the tesseract system binary)')
         from .ocr import tesseract_backend
         return tesseract_backend()
-    raise SystemExit(f"unknown --ocr backend: {name!r} (choose rapidocr, tesseract, or none)")
+    # unreachable: argparse `choices` already rejects any other --ocr value before we get here.
 
 
 def _cmd_detect(args):
@@ -46,29 +46,37 @@ def _cmd_detect(args):
     # ScanConfig encodes — run confidence-free and let geometry + the CNN decide. API users with
     # a calibrated engine can pass their own ScanConfig.
     scan_config = st.ScanConfig.confidence_free() if args.ocr != "none" else st.ScanConfig()
+
+    # Open (and gate encryption) as its own step so its error handling doesn't swallow mid-run
+    # RuntimeErrors from onnxruntime / PyMuPDF and mislabel them "cannot open FILE".
     try:
-        res = st.detect_pdf(args.pdf, ocr=ocr, scan_config=scan_config, dpi=args.dpi,
-                            native_method=args.method,
-                            on_missing_ocr="skip" if args.ocr == "none" else "raise")
+        doc = st.open_pdf(args.pdf)
     except st.EncryptedPdfError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    except RuntimeError as e:                # pymupdf file errors (corrupt/truncated/not a PDF)
+        print(f"error: cannot open {args.pdf}: {e}", file=sys.stderr)
+        return 1
+    try:
+        res = st.detect_pdf(doc, ocr=ocr, scan_config=scan_config, dpi=args.dpi,
+                            native_method=args.method,
+                            on_missing_ocr="skip" if args.ocr == "none" else "raise")
     except st.OcrRequiredError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    except RuntimeError as e:               # pymupdf file errors (corrupt/truncated/not a PDF)
-        print(f"error: cannot open {args.pdf}: {e}", file=sys.stderr)
-        return 1
+    finally:
+        doc.close()
+    res["source"] = args.pdf                 # open_pdf gave detect_pdf a doc, so re-attach the path
 
     for w in res.get("warnings", []):
         print(f"warning: {w}", file=sys.stderr)
     final = [w for w in res["words"] if w.get("final")]
     if args.markdown:
-        with open(args.markdown, "w") as f:
+        with open(args.markdown, "w", encoding="utf-8") as f:
             f.write(res.get("markdown", ""))
         print(f"wrote struck-aware markdown to {args.markdown}")
     if args.clean_text:
-        with open(args.clean_text, "w") as f:
+        with open(args.clean_text, "w", encoding="utf-8") as f:
             f.write(res.get("clean_text", ""))
         print(f"wrote surviving clean text to {args.clean_text}")
     if args.json:
@@ -78,7 +86,7 @@ def _cmd_detect(args):
                    "words": [{k: w[k] for k in ("page", "text", "chars", "char_span",
                                                 "partial", "bbox_frac", "tier", "verdict")
                               if k in w} for w in final]}
-        with open(args.json, "w") as f:
+        with open(args.json, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, default=list)
         print(f"wrote {len(final)} struck words to {args.json}")
     if not (args.json or args.markdown or args.clean_text):
@@ -94,6 +102,13 @@ def _cmd_detect(args):
 
 
 def main(argv=None):
+    # Console output can carry non-cp1252 chars (struck ﬁ, é, → ...). Never let a
+    # print(...!r) crash on a narrow console encoding — replace unencodable chars instead.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass                             # non-reconfigurable stream (e.g. captured in tests)
     p = argparse.ArgumentParser(prog="pdf-strikethrough",
                                 description="Detect struck-through text in PDFs.")
     sub = p.add_subparsers(dest="cmd", required=True)

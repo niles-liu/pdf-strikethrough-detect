@@ -53,16 +53,20 @@ def otsu_threshold(gray):
 
 def to_gray_u8(image):
     """Coerce input to the uint8 grayscale (H, W) array the detectors expect. Accepts (H, W)
-    grayscale or (H, W, 3|4) RGB(A) arrays; float images in [0, 1] are rescaled to 0..255;
-    out-of-range values are clipped (no mod-256 wraparound)."""
+    grayscale or (H, W, 3|4) RGB(A) arrays; float images in [0, 1] are rescaled to 0..255; wide
+    integer scans (16-bit and up) are rescaled from their dtype range instead of saturating to
+    all-white; out-of-range values are clipped (no mod-256 wraparound)."""
     a = np.asarray(image)
     if a.ndim == 3 and a.shape[2] in (3, 4):
         a = a[..., :3].mean(axis=2)
     if a.ndim != 2:
         raise ValueError(f"expected a (H, W) grayscale or (H, W, 3) RGB image, got shape {a.shape}")
     if a.dtype != np.uint8:
-        if np.issubdtype(a.dtype, np.floating) and a.size and float(a.max()) <= 1.0:
-            a = a * 255.0
+        if np.issubdtype(a.dtype, np.floating):
+            if a.size and float(a.max()) <= 1.0:
+                a = a * 255.0
+        elif np.issubdtype(a.dtype, np.integer) and np.iinfo(a.dtype).max > 255:
+            a = a.astype(np.float64) * (255.0 / np.iinfo(a.dtype).max)   # 16-bit -> 8-bit
         a = np.clip(a, 0, 255).astype(np.uint8)
     return a
 
@@ -182,8 +186,10 @@ def _collect_fragments(ink, dpi, scale=1.0):
 def _stitch_fragments(frags, dy=None, scale=1.0):
     """Union-find merge of collinear fragments. Returns [(seg, member_fragments), ...] so failed
        groups can be re-stitched tighter. `scale` rescales the pixel-space stitch tolerances."""
-    dy = STITCH_DY_PX * scale if dy is None else dy
-    max_gap = STITCH_GAP_PX * scale
+    # floor the pixel-space stitch tolerances so they don't collapse below a couple of pixels at
+    # low dpi (at 72 dpi a raw *scale would leave sub-pixel gaps/dy that never stitch)
+    dy = max(2.0, STITCH_DY_PX * scale) if dy is None else dy
+    max_gap = max(6.0, STITCH_GAP_PX * scale)
     n = len(frags)
     parent = list(range(n))
 
@@ -254,7 +260,8 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
         if fill < MIN_FILL:
             return None, True
         run_px = _spine_run_thickness(ink, center, u, length)
-        if run_px > MAX_STROKE_RUN_PX * scale:
+        # floored: unfloored, a 2-px strike at 72 dpi faces a "> 1.44 px" gate and is rejected
+        if run_px > max(2.0, MAX_STROKE_RUN_PX * scale):
             return None, True
         x0, y0 = int(min(start[0], end[0])), int(min(start[1], end[1]))
         x1, y1 = int(max(start[0], end[0])), int(max(start[1], end[1]))

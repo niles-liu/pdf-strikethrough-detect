@@ -98,7 +98,9 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
         x0, y0, x1, y1 = ln["bbox_px"]
         lx0, lx1 = x0 / pix_w, x1 / pix_w
         llen = max(lx1 - lx0, 1e-9)
-        lcy = ((y0 + y1) / 2) / pix_h
+        # endpoints for interpolating the stroke-y at each word's x-midpoint (a sloped strike sits
+        # at a different height over each word — a single global center mis-attributes them all).
+        (sx, sy), (ex, ey) = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
         short_line = ln.get("len_in", 0.0) < INK_SHORT_LEN_IN
 
         def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None):
@@ -120,6 +122,9 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
                 continue
             wcov = ov / max(wx1 - wx0, 1e-9)
             lcov = ov / llen
+            xm = (max(x0, wx0 * pix_w) + min(x1, wx1 * pix_w)) / 2.0   # word/line x-overlap center
+            t = 0.0 if ex == sx else min(1.0, max(0.0, (xm - sx) / (ex - sx)))
+            lcy = (sy + t * (ey - sy)) / pix_h                         # stroke-y here, interpolated
             rel = (lcy - wy0) / max(wy1 - wy0, 1e-9)
             off = rel - 0.5
             if best is None or abs(off) < best[0]:

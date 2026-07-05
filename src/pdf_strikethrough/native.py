@@ -15,7 +15,7 @@ space, where strikes stay horizontal regardless of /Rotate.
 import math
 import re
 
-import fitz  # PyMuPDF
+import pymupdf  # (formerly imported as the deprecated `fitz` alias)
 
 # word-level strike thresholds (fractions of word width covered by mid-band strokes)
 FULL_COV = 0.70          # >= this: the whole word is struck
@@ -31,23 +31,47 @@ FLAG_MIN_WCOV = 0.15     # flag path: a struck span must cover >= this of a word
 
 def _bbox_frac(page, x0, y0, x1, y1):
     """Unrotated-space rect -> (x0, y0, x1, y1) fractions of the rendered (rotated) page."""
-    r = fitz.Rect(x0, y0, x1, y1) * page.rotation_matrix
+    r = pymupdf.Rect(x0, y0, x1, y1) * page.rotation_matrix
     r.normalize()
     pw = page.rect.width or 1.0
     ph = page.rect.height or 1.0
     return (r.x0 / pw, r.y0 / ph, r.x1 / pw, r.y1 / ph)
 
 
+def _paint_invisible(color, opacity):
+    """A stroke/fill leaves no ink — and so cannot strike anything — when it is fully transparent
+    or painted in ~the page background (near-white). An unset (None) stroke color is PDF-default
+    black, i.e. visible."""
+    if opacity is not None and opacity <= 0.05:
+        return True
+    if color is None:
+        return False
+    return all(c >= 0.95 for c in color[:3])
+
+
 def horiz_strokes(page):
-    """All horizontal stroke intervals on the page: [(x0, x1, y), ...] in pt (unrotated space)."""
+    """All horizontal stroke intervals on the page: [(x0, x1, y), ...] in pt (unrotated space).
+    Invisible strokes (transparent, or drawn in the page background color) leave no ink and are
+    skipped — geometry alone would otherwise confirm a white / opacity-0 line as a strike."""
     out = []
     for d in page.get_drawings():
+        stroke_col, stroke_op = d.get("color"), d.get("stroke_opacity", 1.0)
         for it in d["items"]:
             if it[0] == "l":
+                if _paint_invisible(stroke_col, stroke_op):
+                    continue
                 p1, p2 = it[1], it[2]
                 if abs(p1.y - p2.y) <= MAX_STROKE_DY and abs(p1.x - p2.x) >= MIN_STROKE_LEN:
                     out.append((min(p1.x, p2.x), max(p1.x, p2.x), (p1.y + p2.y) / 2))
             elif it[0] in ("re", "qu"):
+                # a strike drawn as a thin bar is a FILLED rect — judge it by its fill paint,
+                # falling back to the stroke paint when it is only stroked
+                if d.get("fill") is not None:
+                    col, op = d.get("fill"), d.get("fill_opacity", 1.0)
+                else:
+                    col, op = stroke_col, stroke_op
+                if _paint_invisible(col, op):
+                    continue
                 r = it[1] if it[0] == "re" else it[1].rect
                 if r.height <= MAX_RECT_H and r.width >= MIN_STROKE_LEN:
                     out.append((r.x0, r.x1, (r.y0 + r.y1) / 2))
@@ -126,8 +150,8 @@ def native_flag_strikes(page, page_index):
     {page, text, chars, char_span, partial, bbox_frac, coverage, tier='flag',
     verdict='struck', final=True}.
     """
-    flags = fitz.TEXTFLAGS_DICT | fitz.TEXT_COLLECT_STYLES | fitz.TEXT_COLLECT_VECTORS
-    strike_bit = fitz.mupdf.FZ_STEXT_STRIKEOUT
+    flags = pymupdf.TEXTFLAGS_DICT | pymupdf.TEXT_COLLECT_STYLES | pymupdf.TEXT_COLLECT_VECTORS
+    strike_bit = pymupdf.mupdf.FZ_STEXT_STRIKEOUT
     page_words = [w for w in page.get_text("words") if w[4].strip()]
     if not page_words:
         return []
@@ -170,16 +194,21 @@ def native_flag_strikes(page, page_index):
             else:
                 merged.append([c0, c1])
         covered = sum(m1 - m0 for m0, m1 in merged)
+        cov = covered / max(len(txt), 1)
+        if cov < PARTIAL_COV:
+            continue                       # grazing overshoot into a neighbor word, not a deletion
         full = covered >= FULL_COV * max(len(txt), 1)
         if full:
             c0, c1 = 0, len(txt)
         else:
             c0, c1 = max(merged, key=lambda m: m[1] - m[0])
+            if cov < STRUCK_COV and c1 - c0 < 2:
+                continue                   # <2 struck chars on a grazed word (vector-path guard)
         out.append({
             "page": page_index, "text": txt, "chars": txt[c0:c1], "char_span": (c0, c1),
             "partial": not full,
             "bbox_frac": _bbox_frac(page, wx0, wy0, wx1, wy1),
-            "coverage": round(covered / max(len(txt), 1), 3),
+            "coverage": round(cov, 3),
             "tier": "flag", "verdict": "struck", "final": True,
         })
     out.sort(key=lambda h: (round(h["bbox_frac"][1], 3), h["bbox_frac"][0]))

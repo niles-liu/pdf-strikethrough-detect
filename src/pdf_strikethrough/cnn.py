@@ -24,10 +24,29 @@ from PIL import Image
 CROP_H, CROP_W = 32, 160          # net input: ink-positive [0,1], height-normalized isotropically
 PAD_X, PAD_Y = 5, 7               # crop margin around the word box (px)
 
-_MODEL_DIR = (os.environ.get("PDF_STRIKETHROUGH_MODEL_DIR")
-              or os.path.dirname(os.path.abspath(__file__)))
+_MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env var
 _lock = threading.Lock()
 _model = None                     # lazy singleton: (score_fn, meta dict)
+
+
+def _current_model_dir():
+    """Resolve the model directory at LOAD time (not import time), so setting
+    PDF_STRIKETHROUGH_MODEL_DIR — or calling set_model_dir() — before the first score actually
+    takes effect (the documented 'set it then import' override used to silently no-op because the
+    env var was read once at import)."""
+    return (_MODEL_DIR_OVERRIDE
+            or os.environ.get("PDF_STRIKETHROUGH_MODEL_DIR")
+            or os.path.dirname(os.path.abspath(__file__)))
+
+
+def set_model_dir(path):
+    """Point the loader at a directory holding strike_verdict_cnn.onnx + .meta.json (or a .pt),
+    clearing any already-loaded model so the next score reloads from `path`. Pass None to revert
+    to PDF_STRIKETHROUGH_MODEL_DIR / the packaged model."""
+    global _MODEL_DIR_OVERRIDE, _model
+    with _lock:
+        _MODEL_DIR_OVERRIDE = path
+        _model = None
 
 
 def word_crop_px(gray, bbox_frac, pad_x=PAD_X, pad_y=PAD_Y):
@@ -56,6 +75,11 @@ def std_crop(crop):
     if np.issubdtype(crop.dtype, np.floating):
         if crop.size and float(crop.max()) <= 1.0:
             crop = crop * 255.0
+        crop = np.clip(crop, 0.0, 255.0)
+    elif crop.dtype != np.uint8 and np.issubdtype(crop.dtype, np.integer):
+        # rescale wide integer crops (16-bit and up); a bare .astype(uint8) below would wrap mod-256
+        if np.iinfo(crop.dtype).max > 255:
+            crop = crop.astype(np.float64) * (255.0 / np.iinfo(crop.dtype).max)
         crop = np.clip(crop, 0.0, 255.0)
     ch, cw = crop.shape
     nw = max(12, int(round(cw * CROP_H / ch)))
@@ -89,16 +113,30 @@ def _build_torch_net():
     return StrikeNet()
 
 
+def _check_geometry(meta):
+    """The shipped meta records the crop/pad geometry the model was trained with. If a
+    retrained model ships different values than the code constants, preprocessing would silently
+    feed off-distribution crops — fail loudly instead."""
+    for key, const in (("crop_h", CROP_H), ("crop_w", CROP_W), ("pad_x", PAD_X), ("pad_y", PAD_Y)):
+        if key in meta and meta[key] != const:
+            raise ValueError(
+                f"model meta {key}={meta[key]} disagrees with the code constant {const}: the "
+                "model was trained with different preprocessing geometry. Re-export the model or "
+                "align the constants in cnn.py before using it.")
+
+
 def _load_model():
     """Try ONNX Runtime first, then a torch checkpoint. Returns (score_fn, meta)."""
-    onnx_path = os.path.join(_MODEL_DIR, "strike_verdict_cnn.onnx")
-    meta_path = os.path.join(_MODEL_DIR, "strike_verdict_cnn.meta.json")
-    pt_path = os.path.join(_MODEL_DIR, "strike_verdict_cnn.pt")
+    model_dir = _current_model_dir()
+    onnx_path = os.path.join(model_dir, "strike_verdict_cnn.onnx")
+    meta_path = os.path.join(model_dir, "strike_verdict_cnn.meta.json")
+    pt_path = os.path.join(model_dir, "strike_verdict_cnn.pt")
 
     if os.path.exists(onnx_path) and os.path.exists(meta_path):
         import onnxruntime as ort
         with open(meta_path) as f:
             meta = json.load(f)
+        _check_geometry(meta)
         sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         iname = sess.get_inputs()[0].name
 
@@ -111,12 +149,15 @@ def _load_model():
 
     if os.path.exists(pt_path):
         import torch
-        ckpt = torch.load(pt_path, map_location="cpu", weights_only=False)
+        # weights_only=True: never execute arbitrary pickle from a user-pointed model dir
+        # (the checkpoint holds only tensors + scalar thresholds, which load fine under it).
+        ckpt = torch.load(pt_path, map_location="cpu", weights_only=True)
         net = _build_torch_net()
         net.load_state_dict(ckpt["state_dict"])
         net.eval()
         meta = {"p_hi": ckpt["p_hi"], "p_lo": ckpt["p_lo"],
                 "version": ckpt.get("version", "unknown"), "runtime": "torch"}
+        _check_geometry({k: ckpt[k] for k in ("crop_h", "crop_w", "pad_x", "pad_y") if k in ckpt})
 
         def score(batch):
             with torch.no_grad():
@@ -125,7 +166,7 @@ def _load_model():
         return score, meta
 
     raise FileNotFoundError(
-        f"no strike-verdict model in {_MODEL_DIR} "
+        f"no strike-verdict model in {model_dir} "
         "(need strike_verdict_cnn.onnx + .meta.json, or strike_verdict_cnn.pt with torch)")
 
 
