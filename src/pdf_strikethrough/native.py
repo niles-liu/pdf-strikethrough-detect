@@ -2,7 +2,8 @@
 ground truth (no OCR, no model, no guessing).
 
 In born-digital documents a strikethrough is a DRAWING: a thin horizontal vector line ("l"
-item) or a thin filled rectangle ("re"/"qu" item) painted over the text. A word is struck when
+item), a thin filled rectangle ("re"/"qu" item), or — dashed or curve-drawn — a run of short
+segments / a flat cubic bezier ("c" item), all painted over the text. A word is struck when
 the merged stroke coverage through its MIDDLE BAND (0.22h..0.78h — excludes underlines and
 overlines) reaches half its width; smaller mid-band coverage that still spans >= 2 characters is
 a genuine partial strike ('semi-' of 'semi-monthly', '19' of '192012') with the char range
@@ -26,10 +27,13 @@ import pymupdf  # (formerly imported as the deprecated `fitz` alias)
 FULL_COV = 0.70          # >= this: the whole word is struck
 STRUCK_COV = 0.50        # >= this: struck (partial if < FULL_COV)
 PARTIAL_COV = 0.25       # >= this AND >= 2 chars: partial strike; below = grazing stroke end
-MIN_STROKE_LEN = 6.0     # pt; shorter "lines" are dashes/tick marks
+MIN_STROKE_LEN = 6.0     # pt; a solid strike stroke is at least this long
 MAX_STROKE_DY = 1.5      # pt; a strike stroke is horizontal
 MAX_RECT_H = 3.5         # pt; a strike drawn as a filled rect is thin
 MID_BAND = 0.22          # strokes within [y0 + f*h, y1 - f*h] count as through-text
+# Dashes / flat-bezier pieces are chained before the length gate (see _chain_short).
+DASH_MIN_SEG = 1.0       # pt; below this a segment is graphics noise, never a dash
+DASH_MAX_GAP = 4.0       # pt; max x-gap between dashes of one chained strike
 
 FLAG_MIN_WCOV = 0.15     # flag path: a struck span must cover >= this of a word to count
 
@@ -62,26 +66,70 @@ def _rgb(color):
     return tuple(round(float(c), 3) for c in color)
 
 
+def _chain_short(segs):
+    """Merge collinear short strike segments (dashes, flat-bezier pieces) into runs. Segments join
+    when they share a y-band (bucketed at ~1 pt) and sit no more than DASH_MAX_GAP pt apart in x;
+    each run is emitted as one ``(x0, x1, y, color, width)`` interval carrying its longest member's
+    paint. The caller applies the MIN_STROKE_LEN test to the run, so a dashed strike passes while a
+    lone tick does not."""
+    buckets = {}
+    for seg in segs:
+        buckets.setdefault(round(seg[2]), []).append(seg)
+    out = []
+    for group in buckets.values():
+        group.sort()                                   # by x0
+        cx0 = cx1 = None
+        members = []
+        for (x0, x1, y, col, wid) in group:
+            if cx0 is None or x0 > cx1 + DASH_MAX_GAP:
+                if cx0 is not None:
+                    dom = max(members, key=lambda s: s[1] - s[0])
+                    out.append((cx0, cx1, dom[2], dom[3], dom[4]))
+                cx0, cx1, members = x0, x1, [(x0, x1, y, col, wid)]
+            else:
+                cx1 = max(cx1, x1)
+                members.append((x0, x1, y, col, wid))
+        if cx0 is not None:
+            dom = max(members, key=lambda s: s[1] - s[0])
+            out.append((cx0, cx1, dom[2], dom[3], dom[4]))
+    return out
+
+
 def horiz_strokes(page):
     """All horizontal stroke intervals on the page: ``[(x0, x1, y, color, width), ...]`` in pt
     (unrotated space). ``color`` is the paint that makes the mark (the stroke color for a line,
     the fill color for a filled bar) as an RGB 3-tuple in [0, 1]; ``width`` is the stroke line
     width for a line, or the bar height for a filled rect — the visual thickness of the strike.
     Invisible strokes (transparent, or drawn in the page background color) leave no ink and are
-    skipped — geometry alone would otherwise confirm a white / opacity-0 line as a strike."""
-    out = []
+    skipped — geometry alone would otherwise confirm a white / opacity-0 line as a strike.
+
+    A strike may be dashed (many short line segments) or drawn as a flat cubic bezier; those
+    sub-MIN_STROKE_LEN pieces are collected and chained (see :func:`_chain_short`) so they clear the
+    length gate a solid stroke clears directly."""
+    out, shorts = [], []
     for d in page.get_drawings():
         stroke_col, stroke_op = d.get("color"), d.get("stroke_opacity", 1.0)
         line_w = d.get("width")
+        width = round(float(line_w), 2) if line_w is not None else 1.0    # PDF default line width 1
         for it in d["items"]:
+            seg = None
             if it[0] == "l":
                 if _paint_invisible(stroke_col, stroke_op):
                     continue
                 p1, p2 = it[1], it[2]
-                if abs(p1.y - p2.y) <= MAX_STROKE_DY and abs(p1.x - p2.x) >= MIN_STROKE_LEN:
-                    width = round(float(line_w), 2) if line_w is not None else 1.0  # PDF default 1
-                    out.append((min(p1.x, p2.x), max(p1.x, p2.x), (p1.y + p2.y) / 2,
-                                _rgb(stroke_col), width))
+                if abs(p1.y - p2.y) <= MAX_STROKE_DY:
+                    seg = (min(p1.x, p2.x), max(p1.x, p2.x), (p1.y + p2.y) / 2,
+                           _rgb(stroke_col), width)
+            elif it[0] == "c":
+                # a strike drawn as a (near-)flat cubic bezier reads as horizontal when all four
+                # control points share the stroke's y-band; genuinely curved beziers are skipped
+                if _paint_invisible(stroke_col, stroke_op):
+                    continue
+                pts = it[1:5]
+                ys = [p.y for p in pts]
+                xs = [p.x for p in pts]
+                if max(ys) - min(ys) <= MAX_STROKE_DY:
+                    seg = (min(xs), max(xs), sum(ys) / len(ys), _rgb(stroke_col), width)
             elif it[0] in ("re", "qu"):
                 # a strike drawn as a thin bar is a FILLED rect — judge it by its fill paint,
                 # falling back to the stroke paint when it is only stroked
@@ -92,8 +140,17 @@ def horiz_strokes(page):
                 if _paint_invisible(col, op):
                     continue
                 r = it[1] if it[0] == "re" else it[1].rect
-                if r.height <= MAX_RECT_H and r.width >= MIN_STROKE_LEN:
-                    out.append((r.x0, r.x1, (r.y0 + r.y1) / 2, _rgb(col), round(float(r.height), 2)))
+                if r.height <= MAX_RECT_H:
+                    seg = (r.x0, r.x1, (r.y0 + r.y1) / 2, _rgb(col), round(float(r.height), 2))
+            if seg is None:
+                continue
+            if seg[1] - seg[0] >= MIN_STROKE_LEN:
+                out.append(seg)                        # solid stroke: emitted as-is (no chaining)
+            elif seg[1] - seg[0] >= DASH_MIN_SEG:
+                shorts.append(seg)                     # dash / bezier piece: chain it first
+    for chain in _chain_short(shorts):
+        if chain[1] - chain[0] >= MIN_STROKE_LEN:
+            out.append(chain)
     return out
 
 

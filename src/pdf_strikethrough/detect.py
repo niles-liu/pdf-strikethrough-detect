@@ -24,6 +24,8 @@ log = logging.getLogger(__name__)   # "pdf_strikethrough.detect"; DEBUG diagnost
 
 IMG_COVER_SCANNED = 0.70    # raster images cover >= this frac of the page -> scanned
 RENDER_DPI = 200
+HIGH_DPI_CAP = 300          # scanned rasters above this are worked at RENDER_DPI (see _working_dpi)
+MAX_RENDER_MPIX = 128       # hard per-page raster ceiling; a bigger page is downsampled to fit
 # Standalone raster inputs detect_image_file (and the CLI) accept — a photo/scan/fax that never
 # was a PDF. Multi-page TIFFs are one frame per page.
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
@@ -132,6 +134,44 @@ def classify_page_source(page, words=None):
     if any(w[4].strip() for w in words):
         return "native"
     return "blank" if img_cov < 0.05 else "scanned"
+
+
+def _working_dpi(width_in, height_in, requested_dpi):
+    """Effective raster DPI for one page, honoring both resolution guards. Returns
+    ``(dpi, note_or_None)``: `note` is a caller-facing warning string set only when the pixel
+    budget forced a resolution below what was requested (the perf normalization is silent — it is
+    accuracy-neutral). See HIGH_DPI_CAP / MAX_RENDER_MPIX."""
+    dpi = float(requested_dpi)
+    if dpi > HIGH_DPI_CAP:                          # accuracy-neutral, so no warning
+        log.debug("normalizing %g dpi down to %d", dpi, RENDER_DPI)
+        dpi = float(RENDER_DPI)
+    area_in = max(float(width_in), 0.0) * max(float(height_in), 0.0)
+    budget_px = MAX_RENDER_MPIX * 1_000_000
+    note = None
+    if area_in > 0 and area_in * dpi * dpi > budget_px:
+        capped = (budget_px / area_in) ** 0.5
+        note = (f"page is {width_in:.0f}x{height_in:.0f} in; rendering at {capped:.0f} dpi instead "
+                f"of {int(requested_dpi)} to stay under the {MAX_RENDER_MPIX} Mpix raster budget "
+                f"(see SECURITY.md)")
+        dpi = capped
+    return max(1.0, dpi), note
+
+
+def _downsample_gray(gray, dpi):
+    """Apply the resolution guards to an already-loaded raster (the image-file path, where a
+    frame is decoded before we know its size). Downsamples the array to the working DPI and
+    returns ``(gray, dpi, note_or_None)``; a no-op when the raster is already within budget."""
+    import numpy as np
+    from PIL import Image
+    h, w = gray.shape
+    dpi = float(dpi)
+    eff, note = _working_dpi(w / dpi, h / dpi, dpi)
+    if eff < dpi - 0.5:
+        scale = eff / dpi
+        nw, nh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+        gray = np.asarray(Image.fromarray(gray).resize((nw, nh), Image.LANCZOS), dtype=np.uint8)
+        dpi = eff
+    return gray, dpi, note
 
 
 def _render_gray(page, dpi=RENDER_DPI):
@@ -254,6 +294,10 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     all_words, warns, page_md, page_clean, passages = [], [], [], [], []
     for pno, (gray, meta_dpi) in enumerate(frames):
         use_dpi = dpi if dpi is not None else (meta_dpi or RENDER_DPI)
+        gray, use_dpi, note = _downsample_gray(gray, use_dpi)
+        if note:
+            _warnings.warn(note, stacklevel=2)
+            warns.append(note)
         if wbp is not None and pno in wbp:
             page_words = wbp[pno]
         elif words is not None and len(frames) == 1:
@@ -493,23 +537,29 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                           pno, method, len(recs))
             elif sources[pno] == "scanned":
                 page_words = None
+                R = page.rect
+                page_dpi, note = _working_dpi(R.width / 72.0, R.height / 72.0, dpi)
+                page_dpi = int(round(page_dpi))
+                if note:
+                    _warnings.warn(note, stacklevel=2)
+                    warns.append(note)
                 if di_pages is not None and pno < len(di_pages):
                     page_words = words_from_azure_di(di_pages[pno])
                 elif wbp is not None and pno in wbp:
                     page_words = wbp[pno]
                 elif ocr is not None:
                     t0 = time.perf_counter()
-                    page_words = ocr(_render_rgb(page, dpi))
+                    page_words = ocr(_render_rgb(page, page_dpi))
                     log.debug("page %d: OCR -> %d word(s) in %.0f ms",
                               pno, len(page_words), (time.perf_counter() - t0) * 1e3)
 
                 if page_words is not None:
-                    gray = _render_gray(page, dpi)
+                    gray = _render_gray(page, page_dpi)
                     if meta is None:
                         meta = cnn.get_model_meta()
                     t0 = time.perf_counter()
                     recs = detect_scanned_image(gray, page_words, config=scan_config,
-                                                meta=meta, dpi=dpi)
+                                                meta=meta, dpi=page_dpi)
                     log.debug("page %d: geometry+CNN -> %d struck record(s) in %.0f ms",
                               pno, len(recs), (time.perf_counter() - t0) * 1e3)
                     for r in recs:

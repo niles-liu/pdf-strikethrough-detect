@@ -24,13 +24,16 @@ from PIL import Image
 CROP_H, CROP_W = 32, 160          # net input: ink-positive [0,1], height-normalized isotropically
 PAD_X, PAD_Y = 5, 7               # crop margin around the word box, in PIXELS
 
-# --- Calibration note (roadmap R-highdpi) -----------------------------------------------------
+# --- Calibration note (R-highdpi) -------------------------------------------------------------
 # PAD_X/PAD_Y are FIXED PIXEL margins calibrated for RENDER_DPI = 200 (detect.py). Their share of a
-# word box shifts with resolution — large around a 72-dpi glyph, tiny at 600 dpi — pushing the CNN
-# input off its training distribution away from 200 dpi. detect_pdf renders scanned pages at 200, so
-# the shipped path is on-distribution; scoring crops from very-different-dpi images degrades
-# confidence. The fix (dpi-proportional or box-height-relative pads + a model re-export so meta.json
-# matches) is deferred to the high-DPI downsampling work so the geometry isn't re-tuned twice.
+# word box shifts with resolution — large around a 72-dpi glyph, tiny at 600 dpi — which would push
+# the CNN input off its training distribution away from 200 dpi. As of 0.8.0 detect_pdf /
+# detect_image_file normalize any raster above HIGH_DPI_CAP back down to RENDER_DPI before cropping
+# (see detect._working_dpi), so crops the CNN scores are always ~200-dpi and the fixed pads stay
+# on-distribution by construction — this supersedes the previously-planned dpi-proportional pads +
+# ONNX re-export (resolution normalization is accuracy-neutral and costs no model churn). A crop
+# from a caller-supplied raster far below 200 dpi (e.g. score_word on a 72-dpi image) is still
+# off-distribution; there is no auto-upsampling and it isn't worth a re-export.
 
 _MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env var
 _lock = threading.Lock()

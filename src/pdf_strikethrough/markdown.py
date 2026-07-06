@@ -29,6 +29,54 @@ def mark_word(text, rec):
     return f"{text[:c0]}~~{text[c0:c1]}~~{text[c1:]}"
 
 
+COL_MIN_GUTTER = 0.045   # min interior x-gap (page fraction) to read as a column boundary
+COL_MIN_WORDS  = 8       # below this many words a page carries too little signal to split
+COL_MIN_SIDE   = 3       # each resulting column must hold at least this many words
+COL_MIN_WIDTH  = 0.15    # each column must span >= this frac of the page width — narrow gutters
+                         # between narrow cells are a TABLE (read across rows), not prose columns
+
+
+def _column_partition(items):
+    """Split [(text, bbox_frac, rec), ...] into columns at full-height vertical whitespace
+    corridors, returning a list of item-lists ordered left→right (a single list when there is no
+    clear split). A corridor is an interior x-range (page fractions) that no word box crosses — the
+    gutter between newspaper-style columns — so a two-column page reads DOWN each column instead of
+    across both. Deliberately conservative: it needs enough words and a wide gutter with enough text
+    on each side, so ordinary single-column prose (whose word boxes tile the width) never splits."""
+    if len(items) < COL_MIN_WORDS:
+        return [items]
+    merged = []                                    # union of all word x-intervals
+    for x0, x1 in sorted((b[0], b[2]) for _, b, _ in items):
+        if merged and x0 <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], x1)
+        else:
+            merged.append([x0, x1])
+    cuts = [(merged[i][1] + merged[i + 1][0]) / 2 for i in range(len(merged) - 1)
+            if merged[i + 1][0] - merged[i][1] >= COL_MIN_GUTTER]
+    if not cuts:
+        return [items]
+    cols = []
+    for a, b in zip([0.0, *cuts], [*cuts, 1.0]):
+        col = [it for it in items if a <= (it[1][0] + it[1][2]) / 2 < b]
+        if col:
+            cols.append(col)
+    if len(cols) < 2 or any(len(c) < COL_MIN_SIDE for c in cols):
+        return [items]                             # not a real multi-column layout — keep as one
+    for c in cols:
+        if max(b[2] for _, b, _ in c) - min(b[0] for _, b, _ in c) < COL_MIN_WIDTH:
+            return [items]                         # a narrow column => a table, not prose columns
+    return cols
+
+
+def ordered_rows(items):
+    """Reading-order rows for a page: columns left→right (see :func:`_column_partition`), each split
+    into visual rows top→bottom. Equivalent to :func:`cluster_rows` on a single-column page."""
+    rows = []
+    for col in _column_partition(items):
+        rows.extend(cluster_rows(col))
+    return rows
+
+
 def cluster_rows(items):
     """Group [(text, bbox_frac, rec), ...] into visual rows (by y-center), each sorted left→right,
     rows top→bottom. bbox_frac is (x0, y0, x1, y1) in page fractions."""
@@ -51,7 +99,7 @@ def cluster_rows(items):
 
 def page_markdown(items):
     """Struck-aware markdown for one page from [(text, bbox_frac, rec), ...] (rec may be None)."""
-    return "\n".join(" ".join(mark_word(t, r) for t, _b, r in row) for row in cluster_rows(items))
+    return "\n".join(" ".join(mark_word(t, r) for t, _b, r in row) for row in ordered_rows(items))
 
 
 def page_clean_text(items):
@@ -59,7 +107,7 @@ def page_clean_text(items):
     words are dropped (partial strikes keep only the un-struck chars), assembled row by row
     from the word records directly — immune to literal '~~' in the document text."""
     rows_out = []
-    for row in cluster_rows(items):
+    for row in ordered_rows(items):
         toks = []
         for t, _b, r in row:
             if r is None or not r.get("final"):
@@ -129,11 +177,12 @@ def group_passages(items):
         })
         run.clear()
 
-    for row in cluster_rows(items):
-        for t, b, r in row:
-            if r is not None and r.get("final"):
-                run.append((t, b, r))
-            else:
-                flush()
-    flush()
+    for col in _column_partition(items):
+        for row in cluster_rows(col):
+            for t, b, r in row:
+                if r is not None and r.get("final"):
+                    run.append((t, b, r))          # runs merge across rows (hyphenated line breaks)
+                else:
+                    flush()
+        flush()                                    # ...but never across a column boundary
     return passages

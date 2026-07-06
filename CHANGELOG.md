@@ -4,6 +4,41 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-07-06
+
+Scale & armor: robustness on hostile and high-resolution input, dashed/curve-drawn strikes,
+column-aware reading order, and a batch CLI. All pure-code — no new dependencies or shipped assets.
+
+### Added
+- **Batch / directory CLI mode** — `pdf-strikethrough detect` accepts several files, a directory
+  (its top-level PDFs/images/.docx), or a glob (`*.pdf`, expanded internally so it works on shells
+  that don't glob). Output is JSONL (`--jsonl PATH`, one result object per line; `--json` behaves as
+  JSONL here); `--jobs N` spreads files across worker processes. A single unreadable file yields an
+  `error` line instead of aborting the run. Per-file output flags (`--markdown`/`--overlay`/cloud
+  results/`--pages`) stay single-file. The picklable worker lives in the new `_batch` module so it
+  resolves under both the console script and `python -m`.
+- **Dashed & curve-drawn native strikes** (R-dash) — `native.horiz_strokes` now chains collinear
+  sub-`MIN_STROKE_LEN` segments (dashes/dots) into runs before the length gate, and recognizes flat
+  (near-horizontal) cubic-bezier `"c"` path items as strike segments. A dashed or bezier strike is
+  detected like a solid line; an isolated short tick still isn't.
+- **Malformed-PDF regression suite** (R-hostile) — truncated / header-only / not-a-PDF / byte-flip
+  fuzz inputs are asserted to fail cleanly (catchable error) or recover, never hang or crash.
+- **Validated-scripts scope** (R-cjk slice 1) — horizontal CJK strikes are regression-tested
+  (native + scanned); the README documents the validated script/layout matrix. Vertical writing
+  modes remain out of scope.
+
+### Changed
+- **High-DPI normalization + pixel-budget guard** (R-highdpi / R-guard) — scanned rasters above
+  ~300 dpi are worked at the 200-dpi calibration point (accuracy-neutral; extra resolution is pure
+  cost), and a single page is capped at 128 Mpix — a hostile huge-mediabox page auto-downsamples
+  with a warning instead of OOMing. Output boxes are page fractions, so both are invisible to
+  results. This resolution normalization keeps CNN crops on-distribution by construction, superseding
+  the previously-planned dpi-proportional-pad + ONNX re-export. Documented in `SECURITY.md`.
+- **Column-aware reading order** (R-layout) — `markdown` / `clean_text` / `passages` now read
+  down each column of a two-column page instead of interleaving across the gutter; narrow-column
+  tables are left as rows (a struck table row stays one passage) and strikes across a hyphenated
+  line break still group into one passage.
+
 ## [0.7.0] — 2026-07-05
 
 Beyond PDFs: the same strike detection now reaches raster images, Word documents, and the AWS/Google

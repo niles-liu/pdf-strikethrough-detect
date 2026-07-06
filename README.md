@@ -213,11 +213,25 @@ cat doc.pdf | pdf-strikethrough detect -                    # read the PDF from 
 pdf-strikethrough --version
 ```
 
+**Batch mode.** Pass several files, a directory, or a glob and each is processed independently —
+JSONL output (one result object per line), `--jobs N` to spread files across processes, and one
+bad file never aborts the run (its line carries an `error` key):
+
+```bash
+pdf-strikethrough detect ./contracts/ --jsonl out.jsonl        # every document in a directory
+pdf-strikethrough detect *.pdf --jobs 4 --jsonl -              # glob, 4 workers, stream to stdout
+pdf-strikethrough detect ./contracts/ --fail-if-found          # CI gate over a whole tree (exit 3)
+```
+
+Per-file output flags (`--markdown`/`--overlay`/`--clean-text`/`--provenance`/cloud results/
+`--pages`) are single-file only; in batch mode use `--jsonl`.
+
 Other flags: `--dpi` (raster DPI for scanned pages, default 200; read from image metadata for image
-files), `--overlay-dpi` (overlay render DPI, default 150), `--limit` (max words in plain output),
+files — very-high-dpi input is normalized to 200 internally, see below), `--overlay-dpi` (overlay
+render DPI, default 150), `--limit` (max words in plain output), `--jobs` / `--jsonl` (batch),
 `--scan-config auto|azure-di|confidence-free`, `--markdown`, `--docai-result`. Exit codes: `0` ok,
-`1` usage/file error, `2` encrypted / OCR required, `3` `--fail-if-found` matched. Full help:
-`pdf-strikethrough detect -h`.
+`1` usage/file error (batch: ≥1 file errored), `2` encrypted / OCR required, `3` `--fail-if-found`
+matched. Full help: `pdf-strikethrough detect -h`.
 
 ## Examples
 
@@ -243,6 +257,27 @@ python examples/rag_provenance.py         # clean_text vs provenance_text ([dele
   apart. Ships as ONNX; set `PDF_STRIKETHROUGH_MODEL_DIR` to use your own weights.
 - **Attribution** (`scanned.py`): assigns strokes to OCR words with char spans and full/partial
   resolution, plus a visual-row "orphan" pass for words the detector's stroke evidence missed.
+
+**Resolution & resource limits.** The geometry tunables and the CNN's crop are calibrated at
+200 dpi; scanned rasters above ~300 dpi are downsampled to 200 internally (accuracy-neutral — extra
+resolution buys nothing but cost). Output boxes are page fractions, so this is invisible to results.
+A hard raster budget caps a single page at 128 Mpix, so a hostile huge-mediabox page is
+auto-downsampled with a warning instead of OOMing the process (see [`SECURITY.md`](SECURITY.md)).
+
+**Scope — validated scripts & layouts.** Detection assumes **horizontal, left-to-right** text; a
+strike is a near-horizontal stroke through a word's middle band. Reading-order assembly is
+column-aware (two-column pages read down each column; tables read across rows).
+
+| Case | Status |
+|---|---|
+| Latin / Western, horizontal | validated (12-PDF redline benchmark, 33k struck words) |
+| CJK, **horizontal** set (native + scanned) | detected — strikes are horizontal regardless of script (regression-tested) |
+| Two-column / newspaper layout, struck table rows, hyphenated-line-break strikes | handled |
+| **Vertical** writing modes (CJK/Mongolian), RTL strike axes | out of scope (roadmap) |
+| Handwritten / freehand strikes | untested (geometry assumes near-straight strokes) |
+
+RapidOCR (the recommended scanned backend) is strongest on Chinese, so horizontal-CJK scans work
+end to end today; full vertical-text support is future work.
 
 ## API surface
 

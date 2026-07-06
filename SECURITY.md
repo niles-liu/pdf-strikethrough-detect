@@ -17,6 +17,23 @@ A few defensive choices worth knowing:
   arbitrary pickle code.
 - The shipped model's crop/pad geometry is validated against the code constants at load time.
 
+## Resource limits
+
+Rendering a scanned page allocates a raster of `page_size × dpi²` pixels, so a hostile
+document — a huge mediabox, or an absurd requested DPI — could otherwise exhaust memory. Two
+guards bound this:
+
+- **Per-page raster budget (128 Mpix).** A page that would exceed it is rendered at a
+  proportionally lower DPI (auto-downsampled) with a warning, rather than allocating the full
+  raster. Output coordinates are page fractions, so results are unaffected.
+- **High-DPI normalization.** Rasters above ~300 dpi are worked at 200 dpi internally (the
+  detector's calibration point); extra resolution adds cost without accuracy.
+
+Image files are additionally subject to Pillow's decompression-bomb guard
+(`PIL.Image.MAX_IMAGE_PIXELS`), which raises on a maliciously large image before it is decoded.
+These limits target memory exhaustion, not a formal DoS guarantee; batch mode isolates per-file
+failures so one malformed input cannot abort a run.
+
 ## Supported versions
 
 Fixes are released against the latest published version on PyPI. Please upgrade before reporting.
