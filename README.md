@@ -55,21 +55,26 @@ print(st.clean_markdown("contract.pdf"))        # surviving text, deletions remo
 ```
 
 Each native record: `{page, text, chars, char_span, partial, bbox_frac, tier, coverage, verdict,
-final}` (`tier` is `"vector"` or `"flag"`). Scanned records replace `coverage` with the evidence
-that decided them — `score`, `cnn_prob`, `cnn_agrees`, `conf` — and `tier` is `"auto"`/`"review"`.
-The keys are documented as `TypedDict`s in `pdf_strikethrough.types` (`StruckWord`, `DetectResult`,
-`Passage`); the package ships `py.typed`, so type checkers see them. Partial strikes (`semi-` of
-`semi-monthly`) are resolved to a char range. `bbox_frac` is in fractions of the rendered page
-(rotation-aware), so it maps directly onto a rendered pixmap.
+final}` (`tier` is `"vector"`, `"flag"`, or `"annot"`). Vector records also carry
+`stroke_color`/`stroke_width` (the paint + thickness of the dominant stroke — red = opposing
+counsel is evidence); annotation records carry `annot_author`/`annot_created`/`annot_modified`/
+`annot_color`/`annot_id` (the redline's "who and when"). Scanned records replace `coverage` with
+the evidence that decided them — `score`, `cnn_prob`, `cnn_agrees`, `conf` — and `tier` is
+`"auto"`/`"review"`. The keys are documented as `TypedDict`s in `pdf_strikethrough.types`
+(`StruckWord`, `DetectResult`, `Passage`); the package ships `py.typed`, so type checkers see them.
+Partial strikes (`semi-` of `semi-monthly`) are resolved to a char range. `bbox_frac` is in
+fractions of the rendered page (rotation-aware), so it maps directly onto a rendered pixmap.
 
-Two native detectors, both **base-PyMuPDF only** (no pymupdf4llm), selected by `method`:
+Three native detectors, all **base-PyMuPDF only** (no pymupdf4llm), selected by `method`:
 
 ```python
 st.strikethroughs_in_pdf("contract.pdf", method="vector")  # stroke geometry (default) —
-                                                           #   precise partial-char spans
+                                                           #   precise partial-char spans + color/width
 st.strikethroughs_in_pdf("contract.pdf", method="flag")    # MuPDF's FZ_STEXT_STRIKEOUT signal —
                                                            #   also catches font-attribute strikes
-st.strikethroughs_in_pdf("contract.pdf", method="both")    # union — maximum recall
+st.strikethroughs_in_pdf("contract.pdf", method="annot")   # explicit /StrikeOut annotations —
+                                                           #   Acrobat/Preview redlines + forensics
+st.strikethroughs_in_pdf("contract.pdf", method="both")    # union of all three — maximum recall
 ```
 
 **Validated across domains.** On 12 public redline PDFs (federal & state regulations, court
@@ -97,7 +102,7 @@ passages = res["passages"]                                  # grouped deletion s
 ```
 
 `detect_pdf` classifies each page native-vs-scanned, runs the exact path on native pages
-(`native_method="vector"|"flag"|"both"`) and the geometry→OCR→CNN pipeline on scanned ones, and
+(`method="vector"|"flag"|"annot"|"both"`) and the geometry→OCR→CNN pipeline on scanned ones, and
 assembles `markdown` / `clean_text` / `passages` for **both** page kinds from its own strike
 decisions (so the text and the word records always agree — no dependence on an external markdown
 engine). Already have an Azure Document Intelligence result? Pass `di_result=...` (the REST JSON
@@ -143,7 +148,16 @@ p = st.score_word(gray, (0.12, 0.34, 0.38, 0.36))   # CNN strike probability (0.
 from pdf_strikethrough.ocr import Word
 # detect_scanned_image accepts your own image; RGB / float arrays are coerced to grayscale uint8
 recs = st.detect_scanned_image(gray, [Word("foo", (0.12, 0.34, 0.38, 0.36), 0.6)])
+
+# visual overlay — render each struck page with the strikes boxed (red=full, orange=partial)
+for pg in st.render_overlay("contract.pdf", dpi=150):
+    pg["image"].save(f"overlay-p{pg['page']}.png")     # or st.save_overlays(src, "out/")
 ```
+
+**Logging.** Diagnostics (page routing, native method + record counts, OCR/CNN timings) are
+emitted at `DEBUG` under the `pdf_strikethrough` logger — silent by default (a `NullHandler` is
+attached). Opt in with `logging.getLogger("pdf_strikethrough").setLevel(logging.DEBUG)` and a
+handler; `warnings` stay reserved for caller-facing hazards.
 
 ## CLI
 
@@ -153,18 +167,21 @@ pdf-strikethrough detect contract.pdf                       # native pages (scan
 pdf-strikethrough detect scan.pdf --ocr rapidocr            # include scanned pages
 pdf-strikethrough detect scan.pdf --di-result di.json       # use a pre-fetched Azure DI result
 pdf-strikethrough detect doc.pdf --method both              # max-recall native detection
+pdf-strikethrough detect doc.pdf --method annot             # explicit /StrikeOut annotations only
 pdf-strikethrough detect doc.pdf --pages 1-5,12             # only these pages (1-based)
-pdf-strikethrough detect doc.pdf --json out.json            # full struck words + passages
+pdf-strikethrough detect doc.pdf --json out.json            # full struck words + passages + evidence
 pdf-strikethrough detect doc.pdf --json -                   # ...or stream JSON to stdout
 pdf-strikethrough detect doc.pdf --clean-text clean.txt     # surviving text, deletions removed
 pdf-strikethrough detect doc.pdf --markdown marked.md       # deletions as ~~struck~~
+pdf-strikethrough detect doc.pdf --overlay out/             # page images with strikes boxed
 pdf-strikethrough detect doc.pdf --fail-if-found            # exit 3 if any strike found (CI gate)
 cat doc.pdf | pdf-strikethrough detect -                    # read the PDF from stdin
 pdf-strikethrough --version
 ```
 
-Other flags: `--dpi` (raster DPI for scanned pages, default 200), `--limit` (max words in plain
-output), `--scan-config auto|azure-di|confidence-free`. Exit codes: `0` ok, `1` usage/file error,
+Other flags: `--dpi` (raster DPI for scanned pages, default 200), `--overlay-dpi` (overlay render
+DPI, default 150), `--limit` (max words in plain output), `--scan-config
+auto|azure-di|confidence-free`. Exit codes: `0` ok, `1` usage/file error,
 `2` encrypted / OCR required, `3` `--fail-if-found` matched. Full help: `pdf-strikethrough detect -h`.
 
 ## Examples
@@ -175,6 +192,7 @@ sample PDFs (no assets to download) so every snippet is copy-paste runnable:
 ```bash
 python examples/native_quickstart.py     # build a redline PDF, detect strikes, print clean text
 python examples/scanned_quickstart.py    # rasterize it to a "scan", run OCR + CNN  ([rapidocr])
+python examples/overlay_quickstart.py     # print strike evidence + write a before/after overlay
 ```
 
 ## How it works
@@ -196,8 +214,8 @@ The top-level package (`import pdf_strikethrough as st`) exports ~30 names; the 
 
 | Group | Names |
 |---|---|
-| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `detect_pdf`, `detect_scanned_image`, `open_pdf`, `render_page_gray` |
-| Native detectors | `native_page_strikes`, `native_flag_strikes`, `native_doc_strikes`, `page_strikes`, `native_markdown`, `strip_struck_markdown` |
+| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `detect_pdf`, `detect_scanned_image`, `open_pdf`, `render_page_gray`, `render_overlay`, `save_overlays` |
+| Native detectors | `native_page_strikes`, `native_flag_strikes`, `native_annot_strikes`, `native_doc_strikes`, `page_strikes`, `native_markdown`, `strip_struck_markdown` |
 | Scanned geometry + classifier | `strike_lines`, `ink_mask`, `to_gray_u8`, `analyze_scanned_page`, `ScanConfig`, `classify_page_source`, `apply_cnn_verdict` |
 | CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta` |
 | OCR | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di` |

@@ -126,7 +126,7 @@ def test_detect_pdf_extracts_words_once_per_native_page(monkeypatch):
         return orig(self, *a, **k)
 
     monkeypatch.setattr(pymupdf.Page, "get_text", counting)
-    res = st.detect_pdf(doc, native_method="both")
+    res = st.detect_pdf(doc, method="both")
     assert res["n_struck_final"] == 2
     assert calls["words"] == 2      # classify (1) + one threaded per-page extraction (1)
     doc.close()
@@ -134,7 +134,7 @@ def test_detect_pdf_extracts_words_once_per_native_page(monkeypatch):
 
 def test_detect_pdf_native_end_to_end():
     doc = _synthetic_native_pdf()
-    res = st.detect_pdf(doc, native_method="both")
+    res = st.detect_pdf(doc, method="both")
     assert res["page_sources"] == ["native"]
     assert res["n_struck_final"] == 2
     assert res["markdown"] == "keep this ~~deleted~~ ~~text~~ here"
@@ -766,3 +766,205 @@ def test_no_record_claims_struck_while_not_final():
         for r in recs:
             if r.get("verdict") == "struck":
                 assert r["final"], r
+
+
+# --------------------------------------------------------------------- v0.6.0 surface
+
+def test_detect_pdf_method_alias_deprecated_but_honored():
+    """R-name: detect_pdf's native-page selector is now `method`; the old `native_method` still
+    works but emits a DeprecationWarning, and passing both with different values raises."""
+    import warnings
+    doc = _synthetic_native_pdf()
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        res = st.detect_pdf(doc, native_method="both")
+    assert res["n_struck_final"] == 2
+    assert any(issubclass(w.category, DeprecationWarning) for w in rec), [str(w.message) for w in rec]
+    # method= is the new name and takes the same values
+    assert st.detect_pdf(doc, method="vector")["n_struck_final"] == 2
+    try:
+        st.detect_pdf(doc, method="vector", native_method="flag")
+        assert False, "expected ValueError when method / native_method disagree"
+    except ValueError:
+        pass
+    doc.close()
+
+
+def test_vector_records_carry_stroke_color_and_width():
+    """R-forensics: native vector records report the dominant contributing stroke's color + width
+    (RGB in [0,1], width in pt) — pen-color conventions are evidence in legal review."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 100), "keep deleted here", fontsize=12)
+    r = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}["deleted"]
+    ym = (r.y0 + r.y1) / 2
+    page.draw_line(fitz.Point(r.x0, ym), fitz.Point(r.x1, ym), width=1.5, color=(1, 0, 0))
+    rec = st.native_page_strikes(page, 0)[0]
+    assert rec["stroke_color"] == (1.0, 0.0, 0.0)
+    assert rec["stroke_width"] == 1.5
+    doc.close()
+
+
+def test_vector_filled_bar_reports_fill_color():
+    """A strike drawn as a thin FILLED bar reports the fill paint as stroke_color and the bar
+    height as stroke_width."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 100), "keep deleted here", fontsize=12)
+    r = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}["deleted"]
+    ym = (r.y0 + r.y1) / 2
+    page.draw_rect(fitz.Rect(r.x0, ym - 1, r.x1, ym + 1), fill=(0, 0, 1), color=(0, 0, 1))
+    rec = st.native_page_strikes(page, 0)[0]
+    assert rec["stroke_color"] == (0.0, 0.0, 1.0) and rec["stroke_width"] > 0
+    doc.close()
+
+
+def test_annot_pass_detects_with_forensics():
+    """R-annot: the explicit /StrikeOut annotation pass reports tier='annot' plus the annotation's
+    author/date/color forensics."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=200)
+    page.insert_text((50, 100), "keep deleted text here", fontsize=12)
+    r = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}["deleted"]
+    a = page.add_strikeout_annot(r)
+    a.set_info(title="J. Reviewer")
+    a.set_colors(stroke=(1, 0, 0))
+    a.update()
+    recs = st.native_annot_strikes(page, 0)
+    assert [x["text"] for x in recs] == ["deleted"]
+    rec = recs[0]
+    assert rec["tier"] == "annot" and rec["annot_author"] == "J. Reviewer"
+    assert rec["annot_color"] == (1.0, 0.0, 0.0)
+    doc.close()
+
+
+def test_annot_pass_skips_hidden_annotation():
+    """A hidden /StrikeOut annotation paints no ink, so the explicit pass must not report it."""
+    doc, page = _strikeout_annot_doc(update=True, hidden=True)
+    assert st.native_annot_strikes(page, 0) == []
+    doc.close()
+
+
+def test_page_strikes_annot_method_and_both_union():
+    """method='annot' routes to the annotation pass; 'both' unions vector+flag+annot (deduped)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=200)
+    page.insert_text((50, 100), "keep deleted text here", fontsize=12)
+    r = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}["deleted"]
+    page.add_strikeout_annot(r).update()
+    assert [x["text"] for x in st.page_strikes(page, 0, "annot")] == ["deleted"]
+    assert st.page_strikes(page, 0, "annot")[0]["tier"] == "annot"
+    assert sorted(x["text"] for x in st.page_strikes(page, 0, "both")) == ["deleted"]  # no dupes
+    # end-to-end through detect_pdf
+    res = st.detect_pdf(doc, method="annot")
+    assert res["n_struck_final"] == 1 and res["words"][0]["tier"] == "annot"
+    doc.close()
+
+
+def test_both_grafts_annotation_forensics_onto_covering_record():
+    """A /StrikeOut annotation's appearance stream is also caught by the vector path, so under
+    method='both' the vector record covers it. The union must GRAFT the annotation's author/color
+    onto that record rather than drop it — otherwise the forensics are lost."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=200)
+    page.insert_text((50, 100), "keep deleted text here", fontsize=12)
+    r = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}["deleted"]
+    a = page.add_strikeout_annot(r)
+    a.set_info(title="Counsel")
+    a.update()
+    recs = st.page_strikes(page, 0, "both")
+    assert [x["text"] for x in recs] == ["deleted"]           # single record, not duplicated
+    assert recs[0]["annot_author"] == "Counsel"               # forensics grafted on
+    doc.close()
+
+
+def test_page_strikes_rejects_unknown_method():
+    doc = _synthetic_native_pdf()
+    try:
+        st.page_strikes(doc[0], 0, "nope")
+        assert False, "expected ValueError for an unknown method"
+    except ValueError:
+        pass
+    doc.close()
+
+
+def test_render_overlay_boxes_struck_pages():
+    """R-overlay: render_overlay returns one RGB image per struck page, boxing every final record."""
+    doc = _three_page_native_pdf()          # pages 0 and 2 struck, page 1 clean
+    pages = st.render_overlay(doc, dpi=100)
+    assert [p["page"] for p in pages] == [0, 2]
+    assert all(p["n_struck"] == 1 for p in pages)
+    img = pages[0]["image"]
+    assert img.mode == "RGB" and img.size[0] > 0 and img.size[1] > 0
+    doc.close()
+
+
+def test_render_overlay_empty_without_strikes():
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=300, height=120)
+    page.insert_text((40, 60), "nothing struck here", fontsize=12)
+    assert st.render_overlay(doc) == []
+    doc.close()
+
+
+def test_save_overlays_dir_and_prefix(tmp_path):
+    """save_overlays writes overlay-p{n}.png into a directory, or {root}-p{n}{ext} for a filename."""
+    doc = _synthetic_native_pdf()
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(doc.tobytes())
+    doc.close()
+    into_dir = st.save_overlays(str(pdf), str(tmp_path / "ov"), dpi=100)
+    assert into_dir == [str(tmp_path / "ov" / "overlay-p0.png")]
+    assert (tmp_path / "ov" / "overlay-p0.png").exists()
+    as_prefix = st.save_overlays(str(pdf), str(tmp_path / "shot.png"), dpi=100)
+    assert as_prefix == [str(tmp_path / "shot-p0.png")]
+    assert (tmp_path / "shot-p0.png").exists()
+
+
+def test_cli_overlay_writes_images(tmp_path):
+    from pdf_strikethrough import __main__ as cli
+    pdf = _write_three_page_pdf(tmp_path)
+    outdir = tmp_path / "ov"
+    assert cli.main(["detect", pdf, "--overlay", str(outdir), "--overlay-dpi", "100"]) == 0
+    written = sorted(p.name for p in outdir.iterdir())
+    assert written == ["overlay-p0.png", "overlay-p2.png"]   # the two struck pages
+
+
+def test_cli_json_carries_forensic_evidence(tmp_path):
+    """The CLI JSON now includes stroke_color/stroke_width (vector) and annot_* (annotation)."""
+    import fitz
+    import json
+    from pdf_strikethrough import __main__ as cli
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=200)
+    page.insert_text((50, 100), "keep deleted here", fontsize=12)
+    r = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}["deleted"]
+    a = page.add_strikeout_annot(r)
+    a.set_info(title="Counsel")
+    a.update()
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(doc.tobytes())
+    doc.close()
+    out = tmp_path / "o.json"
+    assert cli.main(["detect", str(pdf), "--method", "annot", "--json", str(out)]) == 0
+    w = json.loads(out.read_text(encoding="utf-8"))["words"][0]
+    assert w["tier"] == "annot" and w["annot_author"] == "Counsel"
+
+
+def test_logger_has_null_handler_and_emits_debug(caplog):
+    """R-log: the package attaches a NullHandler (silent by default) and logs pipeline
+    diagnostics at DEBUG under the 'pdf_strikethrough' logger when a caller opts in."""
+    import logging
+    handlers = logging.getLogger("pdf_strikethrough").handlers
+    assert any(isinstance(h, logging.NullHandler) for h in handlers)
+    doc = _synthetic_native_pdf()
+    with caplog.at_level(logging.DEBUG, logger="pdf_strikethrough"):
+        st.detect_pdf(doc, method="vector")
+    assert any("source=native" in r.message or "detect_pdf" in r.message for r in caplog.records)
+    doc.close()

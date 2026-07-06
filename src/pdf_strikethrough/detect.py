@@ -10,6 +10,8 @@ words (the geometry can't decide) the CNN is the decider.
 """
 from __future__ import annotations
 
+import logging
+import time
 import warnings as _warnings
 
 import pymupdf
@@ -17,6 +19,8 @@ import pymupdf
 from . import cnn, markdown as _md, native
 from .ocr import words_from_azure_di
 from .scanned import ScanConfig, analyze_scanned_page
+
+log = logging.getLogger(__name__)   # "pdf_strikethrough.detect"; DEBUG diagnostics, opt-in
 
 IMG_COVER_SCANNED = 0.70    # raster images cover >= this frac of the page -> scanned
 RENDER_DPI = 200
@@ -245,6 +249,24 @@ def _di_pages(di_result):
         f"(REST JSON or sdk_result.as_dict()), got {type(di_result).__name__}")
 
 
+def _resolve_native_method(method, native_method):
+    """Back-compat shim for the 0.6.0 R-name rename. detect_pdf's native-page selector is now
+    ``method`` (matching ``strikethroughs_in_pdf``/``page_strikes`` and the CLI ``--method``);
+    ``native_method`` is the deprecated alias, honored with a ``DeprecationWarning``. Passing both
+    with different values is an error."""
+    if native_method is not None:
+        if method is not None and method != native_method:
+            raise ValueError(
+                "pass only one of method= / native_method= (native_method is the deprecated "
+                "0.5.x alias; they disagree here)")
+        _warnings.warn(
+            "detect_pdf(native_method=...) is deprecated since 0.6.0; use method= (renamed to "
+            "match strikethroughs_in_pdf/page_strikes and the CLI --method)",
+            DeprecationWarning, stacklevel=3)
+        return native_method
+    return "vector" if method is None else method
+
+
 def _normalize_pages(pages, page_count):
     """Coerce a user ``pages=`` value to a sorted list of unique, in-range 0-based indices.
     Accepts any iterable of ints (negatives index from the end, like list slicing). Out-of-range
@@ -266,8 +288,8 @@ def _normalize_pages(pages, page_count):
 
 
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
-               include_markdown=True, native_method="vector", on_missing_ocr="raise",
-               pages=None, progress=None):
+               include_markdown=True, method=None, on_missing_ocr="raise",
+               pages=None, progress=None, native_method=None):
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
@@ -284,8 +306,11 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             Azure-DI calibration).
         include_markdown: also assemble struck-aware ``markdown``, surviving ``clean_text``, and
             grouped deletion ``passages`` (cheap; reuses the words already extracted).
-        native_method: 'vector' (default), 'flag', or 'both' — see
-            :func:`pdf_strikethrough.native.page_strikes`.
+        method: native-page detector — 'vector' (default), 'flag', 'annot', or 'both' — see
+            :func:`pdf_strikethrough.native.page_strikes`. (Renamed from ``native_method`` in
+            0.6.0 to match ``strikethroughs_in_pdf``/``page_strikes`` and the CLI ``--method``.)
+        native_method: DEPRECATED alias for ``method``, kept for 0.5.x compatibility; emits a
+            ``DeprecationWarning``. Passing both with different values raises ``ValueError``.
         on_missing_ocr: what to do when a scanned page is hit with no `ocr`/`di_result`:
             'raise' (default) raises OcrRequiredError; 'skip' skips the page, records a warning
             in the result, and still returns everything from the other pages.
@@ -307,10 +332,13 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
     records (not by stripping the markdown), so the two always agree.
     """
+    method = _resolve_native_method(method, native_method)
     doc, close = _open_doc(source)
     try:
         page_indices = _normalize_pages(pages, doc.page_count)
         sources = {p: classify_page_source(doc[p]) for p in page_indices}
+        log.debug("detect_pdf: %d-page doc, processing %d page(s); native method=%r",
+                  doc.page_count, len(page_indices), method)
         di_pages = _di_pages(di_result)
         if scan_config is None:
             scan_config = ScanConfig.azure_di() if di_pages is not None else ScanConfig()
@@ -321,26 +349,35 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         for done, pno in enumerate(page_indices, start=1):
             page = doc[pno]
             recs, seq = [], []
+            log.debug("page %d/%d (index %d): source=%s", done, total, pno, sources[pno])
             if sources[pno] == "native":
                 nat_words = page.get_text("words")   # extract once; threaded through both detectors
-                recs = native.page_strikes(page, pno, native_method, words=nat_words)
+                recs = native.page_strikes(page, pno, method, words=nat_words)
                 for r in recs:
                     r["final"], r["verdict"] = True, "struck"
                 if include_markdown:
                     seq = _match_native_seq(page, recs, words=nat_words)
+                log.debug("page %d: native detector (%s) -> %d strike record(s)",
+                          pno, method, len(recs))
             elif sources[pno] == "scanned":
                 page_words = None
                 if di_pages is not None and pno < len(di_pages):
                     page_words = words_from_azure_di(di_pages[pno])
                 elif ocr is not None:
+                    t0 = time.perf_counter()
                     page_words = ocr(_render_rgb(page, dpi))
+                    log.debug("page %d: OCR -> %d word(s) in %.0f ms",
+                              pno, len(page_words), (time.perf_counter() - t0) * 1e3)
 
                 if page_words is not None:
                     gray = _render_gray(page, dpi)
                     if meta is None:
                         meta = cnn.get_model_meta()
+                    t0 = time.perf_counter()
                     recs = detect_scanned_image(gray, page_words, config=scan_config,
                                                 meta=meta, dpi=dpi)
+                    log.debug("page %d: geometry+CNN -> %d struck record(s) in %.0f ms",
+                              pno, len(recs), (time.perf_counter() - t0) * 1e3)
                     for r in recs:
                         r["page"] = pno
                     if include_markdown:
@@ -355,7 +392,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                            f"native detector on it (no OCR backend / di_result was provided)")
                     _warnings.warn(msg, stacklevel=2)
                     warns.append(msg)
-                    recs = native.page_strikes(page, pno, native_method, words=nat_words)
+                    recs = native.page_strikes(page, pno, method, words=nat_words)
                     for r in recs:
                         r["final"], r["verdict"] = True, "struck"
                     if include_markdown:

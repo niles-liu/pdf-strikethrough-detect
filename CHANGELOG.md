@@ -4,7 +4,49 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] — 2026-07-05
+## [0.6.0] — 2026-07-05
+
+Annotations & evidence: complete the *evidence story* for the signals already detected — an
+explicit annotation pass with redline forensics, stroke color/width on vector records, a visual
+overlay, a library logger, and CLI/API naming unification. Code-only, no new dependencies or
+shipped assets.
+
+### Added
+- **Explicit `/StrikeOut` annotation pass** (`native_annot_strikes`, `method="annot"`, folded into
+  `method="both"`). Reads the redlines Acrobat/Preview/editors write as annotation objects
+  (QuadPoints over the struck text) — distinct from the vector drawings the geometry path reads and
+  the font-attribute flag path — and snaps them onto the page words (partial spans supported).
+  Records carry `tier="annot"` plus **flattened-redline forensics no extractor exposes**:
+  `annot_author` (/T), `annot_created`, `annot_modified` (the "who struck this, and when"),
+  `annot_color`, and `annot_id`. Hidden annotations paint no ink and are skipped.
+- **Stroke color/width on vector records** (`stroke_color`, `stroke_width`). `get_drawings()`
+  already carries them; the native geometry path now reports the dominant contributing stroke's
+  paint (RGB in [0, 1]) and thickness (pt). Pen-color conventions (red = opposing counsel) are
+  evidence in legal review. Both keys are surfaced in the CLI `--json` output alongside the
+  annotation forensics.
+- **Visual overlay** — `render_overlay(source, result=None, dpi=150, pages=None)` renders each
+  struck page to a PIL image with strike boxes drawn (red = full, orange = partial); `save_overlays`
+  writes them to disk; and the CLI gains `--overlay PATH` (+ `--overlay-dpi`). Useful for debugging,
+  `ScanConfig` tuning, and the before/after documentation figure. No new dependency — PyMuPDF
+  renders, Pillow draws (both already core).
+- **Library logger.** The package attaches a `NullHandler` to the `pdf_strikethrough` logger (silent
+  by default) and logs pipeline diagnostics at DEBUG — page routing, native detector method + record
+  counts, OCR and geometry+CNN timings. `warnings` stays reserved for caller-facing hazards.
+
+### Changed
+- **`detect_pdf` native-page selector renamed `native_method` → `method`**, matching
+  `strikethroughs_in_pdf`, `page_strikes`, and the CLI `--method`. `native_method` remains as a
+  deprecated alias (emits a `DeprecationWarning`; passing both with different values raises
+  `ValueError`) so 0.5.x callers keep working. The CLI is unchanged (`--method` already matched).
+- CLI `--method` gains the `annot` choice; `--json` evidence now includes `stroke_color`/
+  `stroke_width`/`annot_*`.
+- **CI early-warning legs** (`.github/workflows/ci.yml`): a weekly `deps-latest` job against
+  newest + pre-release deps (the `fitz`→`pymupdf` rename bit once); a `lowest-bounds` job that
+  installs the exact `>=` floors on Python 3.10 to prove they're real; and a `torch-fallback` job
+  that removes onnxruntime and loads a `.pt` through the CNN's torch fallback — a shipped code path
+  CI never touched.
+
+
 
 Reachable & credible: new public API/CLI surface, inline typing, runnable examples, a reproducible
 benchmark harness, and release/CI hardening.

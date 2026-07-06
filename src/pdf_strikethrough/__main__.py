@@ -140,7 +140,7 @@ def _cmd_detect(args):
     on_missing_ocr = "skip" if (args.ocr == "none" and di_result is None) else "raise"
     try:
         res = st.detect_pdf(doc, ocr=ocr, scan_config=scan_config, dpi=args.dpi,
-                            native_method=args.method, di_result=di_result,
+                            method=args.method, di_result=di_result,
                             pages=page_subset, progress=progress,
                             on_missing_ocr=on_missing_ocr)
     except st.OcrRequiredError as e:
@@ -165,11 +165,19 @@ def _cmd_detect(args):
             f.write(res.get("clean_text", ""))
         if args.clean_text != "-":
             print(f"wrote surviving clean text to {args.clean_text}")
+    if args.overlay:
+        from . import overlay as _ov
+        # reuse the results already computed; render reopens the source (the doc handle is closed)
+        written = _ov.save_overlays(pdf_source, args.overlay, result=res, dpi=args.overlay_dpi)
+        print(f"wrote {len(written)} overlay image(s)" +
+              (f" to {args.overlay}" if written else " (no struck pages)"))
     if args.json:
         # evidence fields (coverage on native, score/cnn_prob on scanned) are included when present
         # so a JSON consumer can see *why* a word was flagged, not just that it was.
         evidence = ("page", "text", "chars", "char_span", "partial", "bbox_frac", "tier",
-                    "verdict", "coverage", "score", "cnn_prob", "cnn_agrees", "conf")
+                    "verdict", "coverage", "stroke_color", "stroke_width",
+                    "annot_author", "annot_created", "annot_modified", "annot_color", "annot_id",
+                    "score", "cnn_prob", "cnn_agrees", "conf")
         payload = {"schema_version": SCHEMA_VERSION, "source": res["source"],
                    "page_count": res["page_count"], "page_sources": res["page_sources"],
                    "n_struck_final": len(final), "warnings": res.get("warnings", []),
@@ -184,7 +192,7 @@ def _cmd_detect(args):
         if args.json != "-":
             print(f"wrote {len(final)} struck words to {args.json}")
 
-    if not (args.json or args.markdown or args.clean_text):
+    if not (args.json or args.markdown or args.clean_text or args.overlay):
         print(f"{res['source']}: {res['page_count']} pages "
               f"({', '.join(sorted(set(res['page_sources'])))}), "
               f"{len(final)} struck words in {len(res.get('passages', []))} passages")
@@ -230,15 +238,21 @@ def main(argv=None):
     d.add_argument("--dpi", type=int, default=200, help="raster DPI for scanned pages")
     d.add_argument("--pages", metavar="SPEC",
                    help="process only these 1-based pages, e.g. '1-5,12' (default: all)")
-    d.add_argument("--method", default="vector", choices=["vector", "flag", "both"],
-                   help="native-page detector: vector geometry, MuPDF strikeout flag, or the "
-                        "union of both")
+    d.add_argument("--method", default="vector", choices=["vector", "flag", "annot", "both"],
+                   help="native-page detector: vector geometry, MuPDF strikeout flag, explicit "
+                        "/StrikeOut annotations, or the union of all three")
     d.add_argument("--limit", type=int, default=25, help="max words to print (plain output)")
     d.add_argument("--json", metavar="PATH", help="write full results as JSON ('-' = stdout)")
     d.add_argument("--markdown", metavar="PATH",
                    help="write struck-aware markdown (~~deleted~~) ('-' = stdout)")
     d.add_argument("--clean-text", dest="clean_text", metavar="PATH",
                    help="write the surviving text with deletions removed ('-' = stdout)")
+    d.add_argument("--overlay", metavar="PATH",
+                   help="write page images with the detected strikes boxed (red=full, "
+                        "orange=partial); PATH is a directory, or a filename prefix if it ends in "
+                        "an image extension. One image per struck page")
+    d.add_argument("--overlay-dpi", dest="overlay_dpi", type=int, default=150,
+                   help="render DPI for --overlay images")
     d.add_argument("--fail-if-found", dest="fail_if_found", action="store_true",
                    help="exit 3 if any struck word is found (for CI gating)")
     d.set_defaults(func=_cmd_detect)

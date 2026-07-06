@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC — the deps-latest early-warning leg
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -109,4 +111,88 @@ jobs:
           assert callable(rapidocr_backend) and callable(tesseract_backend)
           st.clean_markdown  # the [markdown] entry point
           print("extras import smoke OK")
+          PY
+
+  deps-latest:
+    # Early warning against upstream churn: install the newest deps INCLUDING pre-releases and run
+    # the suite. PyMuPDF is the one that bit before (the fitz -> pymupdf rename), so bump it --pre
+    # explicitly. Scheduled/manual only — a green PR shouldn't wait on unreleased upstream builds;
+    # a red run here is a heads-up, not a merge blocker.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install with newest + pre-release deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,markdown]"
+          pip install --upgrade --pre pymupdf pymupdf4llm numpy scipy pillow onnxruntime
+          pip list | grep -Ei "pymupdf|numpy|scipy|pillow|onnxruntime"
+      - name: Test
+        run: pytest tests/ -q
+
+  lowest-bounds:
+    # Prove the >= floors in pyproject.toml are real: install the OLDEST version of every runtime
+    # dependency and run the suite. Python 3.10 (the min supported) is where those old wheels exist.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install dependency floors, then the package with --no-deps
+        run: |
+          python -m pip install --upgrade pip
+          # the exact lower bounds declared in pyproject.toml [project.dependencies]
+          pip install "numpy==1.24.*" "pillow==9.0.*" "scipy==1.10.*" \
+                      "onnxruntime==1.16.*" "pymupdf==1.26.*"
+          pip install --no-deps -e .
+          pip install pytest
+          pip list | grep -Ei "pymupdf|numpy|scipy|pillow|onnxruntime"
+      - name: Test
+        run: pytest tests/ -q
+
+  torch-fallback:
+    # The CNN's torch (.pt) fallback path in cnn._load_model is never exercised by the shipped
+    # ONNX-only package, so CI never touched it. Install torch, REMOVE onnxruntime, and load a
+    # freshly-saved .pt checkpoint through the fallback to prove it still works.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install torch, remove onnxruntime
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[torch]"
+          pip uninstall -y onnxruntime onnxruntime-gpu || true
+      - name: Load the model through the torch fallback (no onnxruntime present)
+        run: |
+          python - <<'PY'
+          import importlib.util, os, tempfile
+          import numpy as np, torch
+          from pdf_strikethrough import cnn
+          assert importlib.util.find_spec("onnxruntime") is None, "onnxruntime should be absent"
+          d = tempfile.mkdtemp()
+          torch.save({"state_dict": cnn._build_torch_net().state_dict(),
+                      "p_hi": 0.85, "p_lo": 0.15, "version": "ci-torch-fallback",
+                      "crop_h": cnn.CROP_H, "crop_w": cnn.CROP_W,
+                      "pad_x": cnn.PAD_X, "pad_y": cnn.PAD_Y},
+                     os.path.join(d, "strike_verdict_cnn.pt"))
+          cnn.set_model_dir(d)
+          meta = cnn.get_model_meta()
+          assert meta["runtime"] == "torch", meta
+          p = cnn.score_crops([np.zeros((cnn.CROP_H, cnn.CROP_W), np.float32)])
+          assert p.shape == (1,), p
+          print("torch fallback OK:", meta["version"])
           PY

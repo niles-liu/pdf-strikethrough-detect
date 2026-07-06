@@ -18,7 +18,7 @@ from typing import List, Literal, Optional, Tuple, TypedDict
 BBoxFrac = Tuple[float, float, float, float]
 # (start, end) character offsets into ``text`` that the strike covers.
 CharSpan = Tuple[int, int]
-Tier = Literal["vector", "flag", "auto", "review", "weak"]
+Tier = Literal["vector", "flag", "annot", "auto", "review", "weak"]
 Verdict = Literal["struck", "clean", "unsure"]
 
 
@@ -35,6 +35,15 @@ class StruckWord(TypedDict, total=False):
     final: bool                  # the ship decision: is this word reported as struck?
     # native only
     coverage: float              # fraction of the word's width the stroke spans
+    # native 'vector' only — forensics from the dominant contributing stroke
+    stroke_color: Optional[Tuple[float, float, float]]   # RGB in [0, 1] (None = unset/default black)
+    stroke_width: float          # stroke line width (pt), or bar height for a filled-rect strike
+    # native 'annot' only — /StrikeOut annotation forensics (present when the annotation supplies)
+    annot_author: Optional[str]     # /T   "who struck this"
+    annot_created: Optional[str]    # /CreationDate (PDF date string)
+    annot_modified: Optional[str]   # /M           (PDF date string)  "...and when"
+    annot_color: Optional[Tuple[float, float, float]]    # annotation stroke color, RGB in [0, 1]
+    annot_id: Optional[str]         # /NM annotation name/id
     # scanned only
     score: float                 # layer-1 geometric score
     cnn_prob: Optional[float]    # StrikeNet probability (None if the crop was too small to score)

@@ -22,28 +22,36 @@ Low-level, on your own image (no PDF):
     lines = st.strike_lines(gray, dpi=200)            # OCR-free stroke geometry
     p = st.score_word(gray, (x0, y0, x1, y1))         # CNN strike probability for a word box
 """
+import logging as _logging
 import warnings as _warnings
 
-from . import cnn, detect, lines, markdown, native, ocr, scanned, types
+from . import cnn, detect, lines, markdown, native, ocr, overlay, scanned, types
 from .cnn import (get_model_meta, score_crops, score_word, std_crop, verdict_of, word_crop_px)
 from .detect import (EncryptedPdfError, OcrRequiredError, apply_cnn_verdict,
                      classify_page_source, detect_pdf, detect_scanned_image)
 from .lines import ink_mask, strike_lines, to_gray_u8
-from .native import (native_doc_strikes, native_flag_strikes, native_markdown,
-                     native_page_strikes, page_strikes, strip_struck_markdown)
+from .native import (native_annot_strikes, native_doc_strikes, native_flag_strikes,
+                     native_markdown, native_page_strikes, page_strikes, strip_struck_markdown)
 from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di)
+from .overlay import render_overlay, save_overlays
 from .scanned import ScanConfig, analyze_scanned_page
 from .types import DetectResult, Passage, StruckWord
 
-__version__ = "0.5.0"
+# Library logging etiquette: attach a NullHandler so importing the package never emits records on
+# its own. Diagnostics (page routing, tier decisions, OCR/CNN timing) are logged at DEBUG under the
+# "pdf_strikethrough" logger — a caller opts in with logging.getLogger("pdf_strikethrough").
+# ``warnings`` stays reserved for caller-facing hazards (silent-[] on scans, scanned-fallback, ...).
+_logging.getLogger("pdf_strikethrough").addHandler(_logging.NullHandler())
+
+__version__ = "0.6.0"
 
 __all__ = [
     # high-level
     "strikethroughs_in_pdf", "clean_markdown", "detect_pdf", "detect_scanned_image",
-    "open_pdf", "render_page_gray",
+    "open_pdf", "render_page_gray", "render_overlay", "save_overlays",
     # native
-    "native_page_strikes", "native_flag_strikes", "native_doc_strikes", "page_strikes",
-    "native_markdown", "strip_struck_markdown",
+    "native_page_strikes", "native_flag_strikes", "native_annot_strikes", "native_doc_strikes",
+    "page_strikes", "native_markdown", "strip_struck_markdown",
     # scanned geometry + classifier
     "strike_lines", "ink_mask", "to_gray_u8", "analyze_scanned_page", "ScanConfig",
     "classify_page_source", "apply_cnn_verdict",
@@ -56,7 +64,7 @@ __all__ = [
     # typing
     "StruckWord", "DetectResult", "Passage",
     # submodules
-    "cnn", "lines", "native", "ocr", "scanned", "detect", "markdown", "types",
+    "cnn", "lines", "native", "ocr", "overlay", "scanned", "detect", "markdown", "types",
 ]
 
 
