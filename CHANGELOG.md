@@ -4,6 +4,81 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-07-06
+
+Prove it: the evidence & model program. This release ships the *machinery* — operating points,
+calibration, an active-learning export, a digest-verified model loader, a reproducible training
+script, and a demo — plus the **populated public benchmark corpus** those numbers stand on. All
+pure-code, no new runtime dependencies. The StrikeNet weights + model card are now hosted on
+Hugging Face ([`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet)) and the demo is
+live as a Space ([`niles-liu/strikethrough-demo`](https://huggingface.co/spaces/niles-liu/strikethrough-demo)).
+Still deferred (needs a hand-labeled corpus + a torch run): retraining StrikeNet from data and the
+R-cal precision/recall figure.
+
+### Added
+- **Selectable operating points** (R-cal) — `ScanConfig.recall_first()` (legal / audit: never miss
+  a deletion) and `ScanConfig.precision_first()` (RAG / indexing: never drop live text) set the
+  CNN's struck/clean decision threshold, overridable via the new `cnn_p_hi` / `cnn_p_lo` fields.
+- **Threshold calibration** (R-cal) — new `pdf_strikethrough.calibration`:
+  `threshold_for_recall` / `threshold_for_precision` (extreme threshold meeting a target on a
+  labeled set), `conformal_threshold` (split-conformal, distribution-free recall floor of
+  `1 - alpha`), and `pr_curve`. Picks an operating point *from data* instead of a magic number.
+- **Active-learning crop export** (R-active) — `dump_crops` / CLI `--dump-crops DIR` writes every
+  crop the scanned pipeline scored (as a PNG) plus its verdict and geometry evidence to a
+  `crops.jsonl` manifest for labeling; the labeled set feeds retraining and calibration. A
+  "contribute a failing page" issue template routes bug reports into the same format.
+- **Digest-verified model download** (R-hf) — `cnn.ensure_model(url, sha256, …)` downloads a
+  StrikeNet model to a local cache, verifies its sha256 before anything is loaded (a tampered host
+  can't swap the graph), and points the loader at it. The shipped model is published at
+  [`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet) (`.onnx` + `.meta.json` +
+  card); `st.ensure_model` is verified end-to-end against that URL. README "Hosted weights" block
+  shows the one-call load.
+- **Reproducible training script** (R-hf) — `training/train_strikenet.py` trains StrikeNet from a
+  `dump_crops` labeling set, calibrates `p_hi` / `p_lo` conformally, and exports ONNX + meta with
+  the crop geometry recorded (so preprocessing can't drift). Closes the model reproducibility hole.
+- **Gradio demo** (R-space) — `demo/app.py` (+ requirements/README): drag in a PDF or scan, see the
+  strikes boxed plus the struck-aware markdown and surviving text. Deployed live at
+  [`niles-liu/strikethrough-demo`](https://huggingface.co/spaces/niles-liu/strikethrough-demo); the
+  app best-effort pulls the hosted model via `ensure_model` (packaged weights as fallback, so local
+  runs still work).
+- **Corpus fetcher + populated benchmark corpus** (R-bench) — `benchmarks/fetch_corpus.py`
+  downloads the manifest's PDFs into `corpus/` and verifies each sha256. `benchmarks/manifest.json`
+  now lists **10 public regulatory redline PDFs** (US Copyright Office, FDIC, CEQ ×2, EPA ×3,
+  California CCPA/CPPA, Gretna LA development code — 54.7k struck words, each sha256-pinned). The
+  benchmark is one command to reproduce: `confirmation_rate.py` prints **99.8% of vector detections
+  independently confirmed by the flag signal** (92.5–100% per document, 8 of 10 ≥99.9%).
+- **Reproducible scanned-path benchmark** (R-bench) — `benchmarks/scanned_recovery.py` rasterizes
+  the born-digital redline pages into image-only "scans" and scores the scanned path (OCR words +
+  geometry + CNN) against the native detector's *known* strikes on the originals. On 3 documents /
+  24 pages / 2,170 known strikes the scanned path recovers **95% (Azure DI) / 97% (RapidOCR)** of the
+  strike set. `prep_scanned_di.py` is the one-time asset generator (rasterize + one Azure DI call,
+  cached). This supersedes the DI-vs-original-pipeline `di_parity.py` / `ocr_backend_table.py`, which
+  needed a vanished reference pipeline; both are kept as legacy for a genuinely scanned corpus.
+
+### Fixed
+- **RapidOCR ≥ 3.2 version gate** — `rapidocr_backend()` read `rapidocr.__version__`, which the
+  `rapidocr` 3.x wheels don't set, so a valid install (3.9.1) was wrongly rejected as "too old". It
+  now falls back to `importlib.metadata.version("rapidocr")`.
+- **Demo launch crash** — `demo/app.py` referenced an unimported `tempfile` in its `__main__` block,
+  raising `NameError` on `python demo/app.py` (and every Space startup). Removed the dead line.
+- **`.env` now git-ignored** — the repo pattern for local secrets (`HF_TOKEN`, `CLAUDE_API_KEY`) was
+  never in `.gitignore`; added `.env` / `.env.*` so a token file can't be committed.
+
+### Changed
+- **README** documents operating points, the calibration surface, the model-improvement loop
+  (dump-crops → label → train → load), and expands the handwritten-strike scope note (the main known
+  gap) with the failing-page contribution path.
+- **Headline confirmation-rate figures reconciled to the reproducible corpus** — the README and
+  `native.py` "99.9–100% on 12 public redline PDFs (33k struck words)" (from the original private
+  dev corpus) is now the measured "99.8% on 10 public redline PDFs (54.7k struck words; 92.5–100%
+  per doc)". The domain description was corrected to the documents actually in the corpus (federal
+  & state regulatory redlines + a municipal code; the previous list named court rules / procurement
+  clauses / university policy, which the published corpus does not contain).
+- **OCR-backend / DI-parity claims reconciled to the reproducible benchmark** — the README's
+  "RapidOCR 100% covered / ~99%" table and "reproduces the original Azure-DI pipeline to 99.5%
+  (1477 vs 1484)" (both from the original private validation) are now the measured "95% (DI) / 97%
+  (RapidOCR) of the native strike set recovered", produced by `scanned_recovery.py`.
+
 ## [0.8.0] — 2026-07-06
 
 Scale & armor: robustness on hostile and high-resolution input, dashed/curve-drawn strikes,

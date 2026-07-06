@@ -12,11 +12,18 @@ lists each document with its source URL and a sha256; you download the files int
 
 | Script | Reproduces | Needs |
 |---|---|---|
-| [`confirmation_rate.py`](confirmation_rate.py) | "99.9–100% of vector detections confirmed by the flag signal" (README + `native.py`) | just the PDFs |
-| [`ocr_backend_table.py`](ocr_backend_table.py) | the "Choosing an OCR backend" coverage/agreement table | PDFs + per-doc DI reference + `[rapidocr,tesseract]` |
-| [`di_parity.py`](di_parity.py) | "1477 vs 1484 struck words (99.5% parity)" with the original Azure-DI pipeline | PDFs + per-doc DI result + reference count |
+| [`confirmation_rate.py`](confirmation_rate.py) | "99.8% of vector detections confirmed by the flag signal (92.5–100% per doc)" (README + `native.py`) | just the PDFs |
+| [`scanned_recovery.py`](scanned_recovery.py) | the "Choosing an OCR backend" recovery table — "95–97% of the native strike set recovered by the scanned path" | PDFs + `scanned_pages`/`scanned_di_result` (from `prep_scanned_di.py`) + `[rapidocr]` |
+| [`prep_scanned_di.py`](prep_scanned_di.py) | *(one-time asset generator for the above)* rasterizes struck pages, runs Azure DI once, caches the result | an Azure DI key in the repo `.env` |
+| [`ocr_backend_table.py`](ocr_backend_table.py) | *(legacy)* the OCR-backend table against a **scanned** corpus with DI references | a scanned corpus + per-doc DI result + `[rapidocr,tesseract]` |
+| [`di_parity.py`](di_parity.py) | *(legacy)* "1477 vs 1484 (99.5% parity)" against the **original** Azure-DI pipeline | a scanned corpus + per-doc DI result + the original pipeline's reference count |
 
-`confirmation_rate.py` needs only the PDFs and no cloud access — start there.
+`confirmation_rate.py` needs only the PDFs and no cloud access — start there. `scanned_recovery.py`
+is the reproducible scanned-path benchmark on this (born-digital) corpus: it rasterizes the redline
+pages into image-only "scans" and scores recovery against the native detector's known strikes.
+`ocr_backend_table.py` / `di_parity.py` are the older scanned-corpus scripts — kept for anyone with
+a genuinely scanned corpus and (for parity) the original pipeline's recorded counts, which
+`scanned_recovery.py` no longer needs.
 
 ## Manifest schema
 

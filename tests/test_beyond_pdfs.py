@@ -106,7 +106,7 @@ def test_detect_pdf_words_by_page_routes_and_defaults_confidence_free(monkeypatc
     supplied = [Word("deleted", (x0 / pw, y0 / ph, x1 / pw, y1 / ph), 0.5)]
     seen = {}
 
-    def fake_scanned(gray, words, config=None, meta=None, dpi=200):
+    def fake_scanned(gray, words, config=None, meta=None, dpi=200, crop_sink=None):
         seen["words"], seen["gating"] = words, config.confidence_gating
         return []
     monkeypatch.setattr(D, "detect_scanned_image", fake_scanned)
@@ -145,7 +145,7 @@ def test_detect_image_file_ocr_defaults_confidence_free(monkeypatch):
     _png, words = _redline_image_png()
     seen = {}
 
-    def fake_scanned(gray, w, config=None, meta=None, dpi=200):
+    def fake_scanned(gray, w, config=None, meta=None, dpi=200, crop_sink=None):
         seen["gating"] = config.confidence_gating
         return []
     monkeypatch.setattr(D, "detect_scanned_image", fake_scanned)
