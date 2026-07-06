@@ -9,7 +9,8 @@ Run locally:
     python demo/app.py
 
 Deploy as a Hugging Face Space: create a Gradio Space, add this file as `app.py` and
-`demo/requirements.txt` as `requirements.txt` at the repo root of the Space.
+`demo/requirements.txt` as `requirements.txt` at the repo root of the Space. Live instance:
+https://huggingface.co/spaces/niles-liu/strikethrough-demo
 """
 from __future__ import annotations
 
@@ -24,6 +25,18 @@ try:
     _OCR = rapidocr_backend()
 except Exception:                                    # noqa: BLE001 - OCR is optional in the demo
     _OCR = None
+
+# Keep the Space and the published model in lockstep: pull the HF-hosted StrikeNet (digest-verified
+# before it is loaded) at startup, falling back to the packaged weights if the Hub is unreachable.
+_MODEL_BASE = "https://huggingface.co/niles-liu/strikenet/resolve/main"
+try:
+    st.ensure_model(
+        f"{_MODEL_BASE}/strike_verdict_cnn.onnx",
+        "fac2c51baaa75ee782196bdfe7452638cb48c7deddb21163b1ac6a0a72ae4457",
+        meta_url=f"{_MODEL_BASE}/strike_verdict_cnn.meta.json",
+    )
+except Exception:                                    # noqa: BLE001 - packaged model is the fallback
+    pass
 
 MAX_PAGES = 5                                        # keep the hosted demo responsive
 
@@ -82,5 +95,4 @@ def build():
 
 
 if __name__ == "__main__":
-    _ = tempfile  # reserved for future crop-download support
     build().launch()

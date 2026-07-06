@@ -280,7 +280,21 @@ scored plus its verdict as a labeling set; label it, retrain with
 [`training/train_strikenet.py`](training/), and load your weights via
 `PDF_STRIKETHROUGH_MODEL_DIR`, `cnn.set_model_dir`, or `cnn.ensure_model(url, sha256, …)`
 (digest-verified download). A ["contribute a failing page"](.github/ISSUE_TEMPLATE/failing-page.md)
-report feeds the same loop, and [`demo/`](demo/) is a drag-and-drop Gradio app for trying it.
+report feeds the same loop, and [`demo/`](demo/) is a drag-and-drop Gradio app for trying it — live
+at [**huggingface.co/spaces/niles-liu/strikethrough-demo**](https://huggingface.co/spaces/niles-liu/strikethrough-demo).
+
+**Hosted weights.** The shipped StrikeNet is also published on the Hugging Face Hub
+([`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet)); the digest is verified before
+the graph is ever loaded, so a tampered host can't swap the model:
+
+```python
+import pdf_strikethrough as st
+st.ensure_model(
+    "https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.onnx",
+    "fac2c51baaa75ee782196bdfe7452638cb48c7deddb21163b1ac6a0a72ae4457",
+    meta_url="https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.meta.json",
+)
+```
 
 **Scope — validated scripts & layouts.** Detection assumes **horizontal, left-to-right** text; a
 strike is a near-horizontal stroke through a word's middle band. Reading-order assembly is

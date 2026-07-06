@@ -9,9 +9,11 @@ All notable changes to this project are documented here. The format follows
 Prove it: the evidence & model program. This release ships the *machinery* — operating points,
 calibration, an active-learning export, a digest-verified model loader, a reproducible training
 script, and a demo — plus the **populated public benchmark corpus** those numbers stand on. All
-pure-code, no new runtime dependencies. Asset-gated follow-ups that need external accounts (the
-StrikeNet model card + weights on Hugging Face, a hosted Space) and the Azure-DI parity number are
-published separately and are not part of this code drop.
+pure-code, no new runtime dependencies. The StrikeNet weights + model card are now hosted on
+Hugging Face ([`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet)) and the demo is
+live as a Space ([`niles-liu/strikethrough-demo`](https://huggingface.co/spaces/niles-liu/strikethrough-demo)).
+Still deferred (needs a hand-labeled corpus + a torch run): retraining StrikeNet from data and the
+R-cal precision/recall figure.
 
 ### Added
 - **Selectable operating points** (R-cal) — `ScanConfig.recall_first()` (legal / audit: never miss
@@ -27,12 +29,18 @@ published separately and are not part of this code drop.
   "contribute a failing page" issue template routes bug reports into the same format.
 - **Digest-verified model download** (R-hf) — `cnn.ensure_model(url, sha256, …)` downloads a
   StrikeNet model to a local cache, verifies its sha256 before anything is loaded (a tampered host
-  can't swap the graph), and points the loader at it.
+  can't swap the graph), and points the loader at it. The shipped model is published at
+  [`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet) (`.onnx` + `.meta.json` +
+  card); `st.ensure_model` is verified end-to-end against that URL. README "Hosted weights" block
+  shows the one-call load.
 - **Reproducible training script** (R-hf) — `training/train_strikenet.py` trains StrikeNet from a
   `dump_crops` labeling set, calibrates `p_hi` / `p_lo` conformally, and exports ONNX + meta with
   the crop geometry recorded (so preprocessing can't drift). Closes the model reproducibility hole.
 - **Gradio demo** (R-space) — `demo/app.py` (+ requirements/README): drag in a PDF or scan, see the
-  strikes boxed plus the struck-aware markdown and surviving text. Deployable as a Hugging Face Space.
+  strikes boxed plus the struck-aware markdown and surviving text. Deployed live at
+  [`niles-liu/strikethrough-demo`](https://huggingface.co/spaces/niles-liu/strikethrough-demo); the
+  app best-effort pulls the hosted model via `ensure_model` (packaged weights as fallback, so local
+  runs still work).
 - **Corpus fetcher + populated benchmark corpus** (R-bench) — `benchmarks/fetch_corpus.py`
   downloads the manifest's PDFs into `corpus/` and verifies each sha256. `benchmarks/manifest.json`
   now lists **10 public regulatory redline PDFs** (US Copyright Office, FDIC, CEQ ×2, EPA ×3,
@@ -51,6 +59,10 @@ published separately and are not part of this code drop.
 - **RapidOCR ≥ 3.2 version gate** — `rapidocr_backend()` read `rapidocr.__version__`, which the
   `rapidocr` 3.x wheels don't set, so a valid install (3.9.1) was wrongly rejected as "too old". It
   now falls back to `importlib.metadata.version("rapidocr")`.
+- **Demo launch crash** — `demo/app.py` referenced an unimported `tempfile` in its `__main__` block,
+  raising `NameError` on `python demo/app.py` (and every Space startup). Removed the dead line.
+- **`.env` now git-ignored** — the repo pattern for local secrets (`HF_TOKEN`, `CLAUDE_API_KEY`) was
+  never in `.gitignore`; added `.env` / `.env.*` so a token file can't be committed.
 
 ### Changed
 - **README** documents operating points, the calibration surface, the model-improvement loop
