@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-07-05
+
+Beyond PDFs: the same strike detection now reaches raster images, Word documents, and the AWS/Google
+OCR ecosystems, plus an audit-preserving text mode for RAG. All pure-code — no new dependencies.
+
+### Added
+- **Image-file input** — `detect_image_file(source, ocr=..., dpi=None)` and CLI support for
+  `.png/.jpg/.tiff` (incl. multi-page TIFF), for photos/faxes/scans that never were a PDF. Every
+  frame is treated as a scanned page (the pipeline is already image-native); DPI is taken from an
+  explicit `dpi=`, else the image metadata, else 200. Returns the same result shape as `detect_pdf`.
+- **Cloud-OCR adapters** — `words_from_textract(result)` (AWS Textract) and `words_from_docai(document)`
+  (Google Document AI), mirroring `words_from_azure_di`: each converts a pre-fetched result into
+  `{0-based page: [Word]}`. Neither cloud flags strikethrough natively — feed the result to
+  `detect_pdf(pdf, words_by_page=...)` (new provider-neutral parameter) or `detect_image_file`. CLI
+  gains `--textract-result` / `--docai-result`. These confidences aren't calibrated to the scanned
+  classifier, so `words_by_page` defaults `scan_config` to `ScanConfig.confidence_free()`.
+- **DOCX detection** — `strikethroughs_in_docx(source)` reads strike character formatting
+  (`w:strike`/`w:dstrike`) and tracked deletions (`w:del`, carrying `docx_author`/`docx_date`) from
+  a Word document. Records use `tier="docx"` with a `para` index instead of `bbox_frac`/`page`.
+  Stdlib-only (a .docx is a zip of XML) — no new dependency. The CLI routes `.docx` inputs here.
+- **Provenance text for RAG** — `provenance_text(result, template="[deleted: {}]")` and
+  `markdown.mark_provenance`: keep struck spans as `[deleted: …]` markers instead of removing them
+  (contrast `clean_text`), so struck text entering a vector index is recorded-as-deleted rather than
+  silently surfaced. CLI gains `--provenance PATH`; `examples/rag_provenance.py` demonstrates it.
+
+### Changed
+- CLI `detect` infers the input kind (PDF / image / .docx) from the file extension; `--dpi` now
+  defaults to the image metadata for image files (still 200 for PDFs). `--json` carries the new
+  `para`/`docx_*` evidence fields; `--overlay` warns and is skipped for non-PDF input.
+- **Fixed a clobbered `## [0.5.0]` heading** in this changelog (the 0.6.0 edit dropped it, orphaning
+  the 0.5.0 notes under the 0.6.0 section).
+
 ## [0.6.0] — 2026-07-05
 
 Annotations & evidence: complete the *evidence story* for the signals already detected — an
@@ -46,7 +78,7 @@ shipped assets.
   that removes onnxruntime and loads a `.pt` through the CNN's torch fallback — a shipped code path
   CI never touched.
 
-
+## [0.5.0] — 2026-07-05
 
 Reachable & credible: new public API/CLI surface, inline typing, runnable examples, a reproducible
 benchmark harness, and release/CI hardening.

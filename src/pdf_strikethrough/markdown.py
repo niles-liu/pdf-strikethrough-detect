@@ -86,6 +86,32 @@ def strip_struck(md):
     return re.sub(r"\n{3,}", "\n\n", clean).strip()
 
 
+def mark_provenance(md, template="[deleted: {}]"):
+    """Rewrite ``~~struck~~`` spans as audit markers (default ``[deleted: X]``) instead of removing
+    them — audit-preserving text for RAG / indexing, where silently dropping deleted text loses the
+    fact that something *was* deleted (a documented LlamaIndex failure mode). `template` is a
+    ``str.format`` pattern receiving the struck text.
+
+    Consecutive struck words separated only by spaces (a deletion passage) collapse into one
+    marker — ``~~the~~ ~~old~~ ~~rate~~`` -> ``[deleted: the old rate]`` — rather than one marker
+    per word. Shares :func:`strip_struck`'s caveat: text with a literal ``~~`` is ambiguous in
+    markdown form (prefer building this from ``detect_pdf(...)['markdown']``, which the package
+    emits)."""
+    matches = list(_STRIKE_SPAN.finditer(md))
+    out, pos, i = [], 0, 0
+    while i < len(matches):
+        m = matches[i]
+        out.append(md[pos:m.start()])
+        texts, end, j = [m.group(1)], m.end(), i + 1
+        while j < len(matches) and set(md[end:matches[j].start()]) <= {" ", "\t"}:
+            texts.append(md[end:matches[j].start()] + matches[j].group(1))   # keep the separator
+            end, j = matches[j].end(), j + 1
+        out.append(template.format("".join(texts)))
+        pos, i = end, j
+    out.append(md[pos:])
+    return "".join(out)
+
+
 def group_passages(items):
     """Maximal runs of consecutive final-struck words in reading order -> deletion passages.
     Returns [{text, n_words, bbox_frac}], one per contiguous struck section."""

@@ -17,6 +17,12 @@ Any PDF (routes native/scanned per page; scanned needs an OCR backend):
                         scan_config=ScanConfig.confidence_free())
     struck = [w for w in res["words"] if w["final"]]
 
+Beyond PDFs — an image file, a Word document, or a pre-fetched cloud-OCR result:
+
+    st.detect_image_file("scan.tiff", ocr=rapidocr_backend())   # .png/.jpg/.tiff (multi-page)
+    st.strikethroughs_in_docx("contract.docx")                  # w:strike + tracked w:del
+    st.detect_pdf("doc.pdf", words_by_page=st.words_from_textract(resp))   # Textract / DocAI
+
 Low-level, on your own image (no PDF):
 
     lines = st.strike_lines(gray, dpi=200)            # OCR-free stroke geometry
@@ -25,14 +31,16 @@ Low-level, on your own image (no PDF):
 import logging as _logging
 import warnings as _warnings
 
-from . import cnn, detect, lines, markdown, native, ocr, overlay, scanned, types
+from . import cnn, detect, docx, lines, markdown, native, ocr, overlay, scanned, types
 from .cnn import (get_model_meta, score_crops, score_word, std_crop, verdict_of, word_crop_px)
 from .detect import (EncryptedPdfError, OcrRequiredError, apply_cnn_verdict,
-                     classify_page_source, detect_pdf, detect_scanned_image)
+                     classify_page_source, detect_image_file, detect_pdf, detect_scanned_image)
+from .docx import strikethroughs_in_docx
 from .lines import ink_mask, strike_lines, to_gray_u8
 from .native import (native_annot_strikes, native_doc_strikes, native_flag_strikes,
                      native_markdown, native_page_strikes, page_strikes, strip_struck_markdown)
-from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di)
+from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di,
+                  words_from_docai, words_from_textract)
 from .overlay import render_overlay, save_overlays
 from .scanned import ScanConfig, analyze_scanned_page
 from .types import DetectResult, Passage, StruckWord
@@ -43,11 +51,12 @@ from .types import DetectResult, Passage, StruckWord
 # ``warnings`` stays reserved for caller-facing hazards (silent-[] on scans, scanned-fallback, ...).
 _logging.getLogger("pdf_strikethrough").addHandler(_logging.NullHandler())
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     # high-level
-    "strikethroughs_in_pdf", "clean_markdown", "detect_pdf", "detect_scanned_image",
+    "strikethroughs_in_pdf", "clean_markdown", "provenance_text", "detect_pdf",
+    "detect_image_file", "detect_scanned_image", "strikethroughs_in_docx",
     "open_pdf", "render_page_gray", "render_overlay", "save_overlays",
     # native
     "native_page_strikes", "native_flag_strikes", "native_annot_strikes", "native_doc_strikes",
@@ -57,14 +66,15 @@ __all__ = [
     "classify_page_source", "apply_cnn_verdict",
     # errors
     "OcrRequiredError", "EncryptedPdfError",
-    # OCR
+    # OCR (backends + pre-fetched cloud-result adapters)
     "Word", "rapidocr_backend", "tesseract_backend", "words_from_azure_di",
+    "words_from_textract", "words_from_docai",
     # CNN
     "score_word", "score_crops", "std_crop", "word_crop_px", "verdict_of", "get_model_meta",
     # typing
     "StruckWord", "DetectResult", "Passage",
     # submodules
-    "cnn", "lines", "native", "ocr", "overlay", "scanned", "detect", "markdown", "types",
+    "cnn", "docx", "lines", "native", "ocr", "overlay", "scanned", "detect", "markdown", "types",
 ]
 
 
@@ -123,3 +133,14 @@ def clean_markdown(source) -> str:
     finally:
         if not hasattr(source, "page_count"):
             doc.close()
+
+
+def provenance_text(result, template="[deleted: {}]") -> str:
+    """Audit-preserving text from a ``detect_pdf``/``detect_image_file`` result: struck spans are
+    replaced with ``[deleted: …]`` markers instead of removed (contrast ``clean_text``, which drops
+    them). For RAG / indexing where a silent deletion is the hazard — the deleted text stays
+    visible-as-deleted so a downstream index records that something *was* struck.
+
+    `result` must carry ``markdown`` (i.e. ``include_markdown=True``, the default); `template` is a
+    ``str.format`` pattern receiving the struck text."""
+    return markdown.mark_provenance(result.get("markdown", ""), template=template)

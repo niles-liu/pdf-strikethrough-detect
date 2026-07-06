@@ -134,6 +134,36 @@ separate struck from clean text); the default `ScanConfig()` is calibrated to Az
 struck words drop to 0.43–0.94. The DI-decoupled classifier reproduces the original Azure-DI
 pipeline to **99.5%** (1477 vs 1484 struck words on the validation doc).
 
+## Beyond PDFs — images, Word docs, cloud OCR
+
+The same detection reaches inputs that never were a born-digital PDF:
+
+```python
+# Raster image files (.png/.jpg/.tiff, incl. multi-page TIFF) — photos, faxes, scans.
+# Every frame is a scanned page, so it needs OCR; DPI comes from image metadata (else 200).
+res = st.detect_image_file("scan.tiff", ocr=rapidocr_backend())
+
+# Word .docx — strike formatting (w:strike/w:dstrike) + tracked deletions (w:del, with author/date).
+# No OCR, no geometry: records use tier="docx" and a `para` index. Stdlib-only, no extra needed.
+for w in st.strikethroughs_in_docx("contract.docx"):
+    print(w["para"], repr(w["chars"]), w["docx_change"], w.get("docx_author"))
+
+# AWS Textract / Google Document AI — neither flags strikethrough; add the layer on top.
+# Convert a pre-fetched result to {page: [Word]} and feed it as words_by_page (works on images too).
+res = st.detect_pdf("doc.pdf", words_by_page=st.words_from_textract(textract_response))
+res = st.detect_pdf("doc.pdf", words_by_page=st.words_from_docai(docai_document))
+```
+
+**Provenance mode for RAG.** Struck text entering a vector index is a real failure mode — the
+retriever surfaces a sentence the document *deleted*. `clean_text` removes it; `provenance_text`
+instead keeps each deletion as a marker so it's recorded-as-deleted, not silently dropped:
+
+```python
+res = st.detect_pdf("contract.pdf")
+res["clean_text"]           # 'The fee is billed monthly.'
+st.provenance_text(res)     # 'The fee is [deleted: the old rate of 5%] billed monthly.'
+```
+
 ## Low-level building blocks
 
 ```python
@@ -165,7 +195,11 @@ handler; `warnings` stay reserved for caller-facing hazards.
 pdf-strikethrough detect contract.pdf                       # native pages (scanned pages are
                                                             #   skipped with a warning)
 pdf-strikethrough detect scan.pdf --ocr rapidocr            # include scanned pages
+pdf-strikethrough detect scan.tiff --ocr rapidocr           # a raster image file (or multi-page TIFF)
+pdf-strikethrough detect contract.docx                      # a Word doc (strike + tracked deletions)
 pdf-strikethrough detect scan.pdf --di-result di.json       # use a pre-fetched Azure DI result
+pdf-strikethrough detect scan.pdf --textract-result t.json  # ...or AWS Textract / Google DocAI
+pdf-strikethrough detect doc.pdf --provenance prov.txt      # deletions kept as [deleted: ...] markers
 pdf-strikethrough detect doc.pdf --method both              # max-recall native detection
 pdf-strikethrough detect doc.pdf --method annot             # explicit /StrikeOut annotations only
 pdf-strikethrough detect doc.pdf --pages 1-5,12             # only these pages (1-based)
@@ -179,10 +213,11 @@ cat doc.pdf | pdf-strikethrough detect -                    # read the PDF from 
 pdf-strikethrough --version
 ```
 
-Other flags: `--dpi` (raster DPI for scanned pages, default 200), `--overlay-dpi` (overlay render
-DPI, default 150), `--limit` (max words in plain output), `--scan-config
-auto|azure-di|confidence-free`. Exit codes: `0` ok, `1` usage/file error,
-`2` encrypted / OCR required, `3` `--fail-if-found` matched. Full help: `pdf-strikethrough detect -h`.
+Other flags: `--dpi` (raster DPI for scanned pages, default 200; read from image metadata for image
+files), `--overlay-dpi` (overlay render DPI, default 150), `--limit` (max words in plain output),
+`--scan-config auto|azure-di|confidence-free`, `--markdown`, `--docai-result`. Exit codes: `0` ok,
+`1` usage/file error, `2` encrypted / OCR required, `3` `--fail-if-found` matched. Full help:
+`pdf-strikethrough detect -h`.
 
 ## Examples
 
@@ -193,6 +228,7 @@ sample PDFs (no assets to download) so every snippet is copy-paste runnable:
 python examples/native_quickstart.py     # build a redline PDF, detect strikes, print clean text
 python examples/scanned_quickstart.py    # rasterize it to a "scan", run OCR + CNN  ([rapidocr])
 python examples/overlay_quickstart.py     # print strike evidence + write a before/after overlay
+python examples/rag_provenance.py         # clean_text vs provenance_text ([deleted: ...] markers)
 ```
 
 ## How it works
@@ -210,15 +246,15 @@ python examples/overlay_quickstart.py     # print strike evidence + write a befo
 
 ## API surface
 
-The top-level package (`import pdf_strikethrough as st`) exports ~30 names; the most-used:
+The top-level package (`import pdf_strikethrough as st`) exports ~35 names; the most-used:
 
 | Group | Names |
 |---|---|
-| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `detect_pdf`, `detect_scanned_image`, `open_pdf`, `render_page_gray`, `render_overlay`, `save_overlays` |
+| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `provenance_text`, `detect_pdf`, `detect_image_file`, `detect_scanned_image`, `strikethroughs_in_docx`, `open_pdf`, `render_page_gray`, `render_overlay`, `save_overlays` |
 | Native detectors | `native_page_strikes`, `native_flag_strikes`, `native_annot_strikes`, `native_doc_strikes`, `page_strikes`, `native_markdown`, `strip_struck_markdown` |
 | Scanned geometry + classifier | `strike_lines`, `ink_mask`, `to_gray_u8`, `analyze_scanned_page`, `ScanConfig`, `classify_page_source`, `apply_cnn_verdict` |
 | CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta` |
-| OCR | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di` |
+| OCR (backends + cloud-result adapters) | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di`, `words_from_textract`, `words_from_docai` |
 | Errors | `OcrRequiredError`, `EncryptedPdfError` |
 | Types | `StruckWord`, `DetectResult`, `Passage` (in `pdf_strikethrough.types`) |
 

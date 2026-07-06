@@ -18,7 +18,7 @@ from typing import List, Literal, Optional, Tuple, TypedDict
 BBoxFrac = Tuple[float, float, float, float]
 # (start, end) character offsets into ``text`` that the strike covers.
 CharSpan = Tuple[int, int]
-Tier = Literal["vector", "flag", "annot", "auto", "review", "weak"]
+Tier = Literal["vector", "flag", "annot", "auto", "review", "weak", "docx"]
 Verdict = Literal["struck", "clean", "unsure"]
 
 
@@ -44,6 +44,13 @@ class StruckWord(TypedDict, total=False):
     annot_modified: Optional[str]   # /M           (PDF date string)  "...and when"
     annot_color: Optional[Tuple[float, float, float]]    # annotation stroke color, RGB in [0, 1]
     annot_id: Optional[str]         # /NM annotation name/id
+    # docx only (tier 'docx') — no bbox/page; ``para`` is the paragraph index
+    para: int
+    docx_change: Literal["format", "deletion"]   # strike formatting vs a tracked w:del deletion
+    docx_double: bool            # True for double-strike (w:dstrike)
+    docx_author: Optional[str]   # tracked-deletion author (w:del/@w:author)
+    docx_date: Optional[str]     # tracked-deletion timestamp (w:del/@w:date)
+    docx_id: Optional[str]       # tracked-deletion id (w:del/@w:id)
     # scanned only
     score: float                 # layer-1 geometric score
     cnn_prob: Optional[float]    # StrikeNet probability (None if the crop was too small to score)

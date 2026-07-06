@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)   # "pdf_strikethrough.detect"; DEBUG diagnost
 
 IMG_COVER_SCANNED = 0.70    # raster images cover >= this frac of the page -> scanned
 RENDER_DPI = 200
+# Standalone raster inputs detect_image_file (and the CLI) accept — a photo/scan/fax that never
+# was a PDF. Multi-page TIFFs are one frame per page.
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
 
 class OcrRequiredError(ValueError):
@@ -190,6 +193,112 @@ def detect_scanned_image(gray, words, config=ScanConfig(), meta=None, dpi=RENDER
     return apply_cnn_verdict(struck, gray, meta)
 
 
+def _image_frames(source):
+    """Yield ``(gray_uint8, dpi_or_None)`` for each frame of a raster image (path/bytes/PIL image).
+    Multi-page TIFFs yield one item per frame; single-image formats yield one. ``dpi`` is the
+    x-resolution recorded in the image metadata, or None when it carries none."""
+    import io
+
+    import numpy as np
+    from PIL import Image, ImageSequence
+
+    if hasattr(source, "seek") and hasattr(source, "mode"):     # already a PIL image
+        img = source
+    elif isinstance(source, (bytes, bytearray)):
+        img = Image.open(io.BytesIO(bytes(source)))
+    else:
+        img = Image.open(source)
+    frames = []
+    for frame in ImageSequence.Iterator(img):
+        gray = np.asarray(frame.convert("L"), dtype=np.uint8)
+        dpi = frame.info.get("dpi") or img.info.get("dpi")
+        xdpi = None
+        if dpi:
+            try:
+                xdpi = int(round(float(dpi[0]))) or None
+            except (TypeError, ValueError, IndexError):
+                xdpi = None
+        frames.append((gray, xdpi))
+    return frames
+
+
+def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_config=None,
+                      dpi=None, meta=None, include_markdown=True):
+    """Detect strikethroughs in a standalone raster image (``.png/.jpg/.tiff``, incl. multi-page
+    TIFF) — a photo/scan/fax that never was a PDF.
+
+    Every frame is a scanned page, so it needs OCR words: pass an `ocr` backend (run per frame),
+    a `words` list (a single-frame image), or `words_by_page` (``{0-based frame: list[Word]}`` —
+    e.g. ``words_from_textract(resp)``). DPI drives the geometry tunables: an explicit `dpi=`
+    wins; otherwise it's read from the image metadata, falling back to 200.
+
+    Returns the same dict shape as :func:`detect_pdf` (``page_sources`` all ``"scanned"``); there
+    is no `pages` subset and no native path. A frame with no word source raises
+    ``OcrRequiredError``.
+    """
+    import numpy as np
+
+    from .lines import to_gray_u8
+    frames = _image_frames(source)
+    wbp = _normalize_words_by_page(words_by_page)
+    if words is not None and len(frames) > 1 and wbp is None:
+        raise ValueError("words= covers a single-frame image; for a multi-page TIFF pass an ocr "
+                         "backend or words_by_page={frame: [...]}")
+    if scan_config is None:
+        # An image has no Azure-DI calibration source; every realistic word source here (rapidocr/
+        # tesseract via ocr=, Textract/DocAI via words_by_page, a raw words= list) carries
+        # confidences the classifier isn't calibrated to — so default to confidence-free.
+        scan_config = ScanConfig.confidence_free()
+    src_name = None if isinstance(source, (bytes, bytearray)) else str(source)
+
+    all_words, warns, page_md, page_clean, passages = [], [], [], [], []
+    for pno, (gray, meta_dpi) in enumerate(frames):
+        use_dpi = dpi if dpi is not None else (meta_dpi or RENDER_DPI)
+        if wbp is not None and pno in wbp:
+            page_words = wbp[pno]
+        elif words is not None and len(frames) == 1:
+            page_words = words
+        elif ocr is not None:
+            t0 = time.perf_counter()
+            page_words = ocr(np.stack([gray] * 3, axis=-1))
+            log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
+                      pno, len(page_words), (time.perf_counter() - t0) * 1e3)
+        else:
+            raise OcrRequiredError(
+                f"image frame {pno} has no OCR words; pass ocr=rapidocr_backend(), a words= list "
+                f"(single-frame), or words_by_page={{{pno}: [...]}}")
+        if meta is None:
+            meta = cnn.get_model_meta()
+        recs = detect_scanned_image(to_gray_u8(gray), page_words, config=scan_config,
+                                    meta=meta, dpi=use_dpi)
+        for r in recs:
+            r["page"] = pno
+        all_words.extend(recs)
+        if include_markdown:
+            by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
+            seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
+                   for w in page_words if (w.text or "").strip()]
+            page_md.append(_md.page_markdown(seq))
+            page_clean.append(_md.page_clean_text(seq))
+            for ps in _md.group_passages(seq):
+                ps["page"] = pno
+                passages.append(ps)
+
+    result = {
+        "source": src_name,
+        "page_count": len(frames),
+        "page_sources": ["scanned"] * len(frames),
+        "words": all_words,
+        "n_struck_final": sum(1 for w in all_words if w.get("final")),
+        "warnings": warns,
+    }
+    if include_markdown:
+        result["markdown"] = "\n\n".join(page_md)
+        result["clean_text"] = "\n\n".join(c for c in page_clean if c).strip()
+        result["passages"] = passages
+    return result
+
+
 def _native_word_seq(page, words=None):
     """Reading-order [(text, bbox_frac)] for a native page, boxes in rendered-page fractions.
     ``words`` optionally supplies this page's ``get_text("words")`` output (default None =
@@ -287,9 +396,20 @@ def _normalize_pages(pages, page_count):
     return sorted(out)
 
 
+def _normalize_words_by_page(words_by_page):
+    """Coerce a ``words_by_page`` value to a ``{0-based page: list[Word]}`` dict. Accepts that
+    dict directly (e.g. from ``words_from_textract``/``words_from_docai``) or any sequence indexed
+    by page. None passes through."""
+    if words_by_page is None:
+        return None
+    if isinstance(words_by_page, dict):
+        return {int(k): v for k, v in words_by_page.items()}
+    return {i: v for i, v in enumerate(words_by_page)}
+
+
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
                include_markdown=True, method=None, on_missing_ocr="raise",
-               pages=None, progress=None, native_method=None):
+               pages=None, progress=None, words_by_page=None, native_method=None):
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
@@ -304,6 +424,12 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             JSON, an {'analyzeResult': ...} envelope, or ``sdk_result.as_dict()``. When given,
             its per-page words are used instead of running `ocr` (and `scan_config` defaults to
             Azure-DI calibration).
+        words_by_page: pre-fetched OCR words as ``{0-based page: list[Word]}`` (or a sequence
+            indexed by page) — the provider-neutral counterpart to `di_result` for any cloud/OCR
+            engine, e.g. ``words_from_textract(resp)`` / ``words_from_docai(doc)``. Used for the
+            scanned pages it covers, in preference to running `ocr`. Since these confidences
+            aren't calibrated to the classifier, `scan_config` defaults to
+            ``ScanConfig.confidence_free()`` when it's given (and `di_result` isn't).
         include_markdown: also assemble struck-aware ``markdown``, surviving ``clean_text``, and
             grouped deletion ``passages`` (cheap; reuses the words already extracted).
         method: native-page detector — 'vector' (default), 'flag', 'annot', or 'both' — see
@@ -340,8 +466,14 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         log.debug("detect_pdf: %d-page doc, processing %d page(s); native method=%r",
                   doc.page_count, len(page_indices), method)
         di_pages = _di_pages(di_result)
+        wbp = _normalize_words_by_page(words_by_page)
         if scan_config is None:
-            scan_config = ScanConfig.azure_di() if di_pages is not None else ScanConfig()
+            if di_pages is not None:
+                scan_config = ScanConfig.azure_di()
+            elif wbp is not None:
+                scan_config = ScanConfig.confidence_free()
+            else:
+                scan_config = ScanConfig()
         meta = None
         words, warns = [], []
         page_md, page_clean, passages = [], [], []
@@ -363,6 +495,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 page_words = None
                 if di_pages is not None and pno < len(di_pages):
                     page_words = words_from_azure_di(di_pages[pno])
+                elif wbp is not None and pno in wbp:
+                    page_words = wbp[pno]
                 elif ocr is not None:
                     t0 = time.perf_counter()
                     page_words = ocr(_render_rgb(page, dpi))
@@ -408,8 +542,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 else:
                     raise OcrRequiredError(
                         f"page {pno} is scanned and no OCR backend was provided; pass "
-                        f"ocr=rapidocr_backend() (or another backend) or di_result=..., or "
-                        f"use on_missing_ocr='skip'")
+                        f"ocr=rapidocr_backend() (or another backend), di_result=/words_by_page=, "
+                        f"or use on_missing_ocr='skip'")
 
             words.extend(recs)
             if include_markdown:

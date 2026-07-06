@@ -8,8 +8,10 @@ type — ``Word`` — with adapters that convert each engine's native output int
     Word.confidence is 0..1 or None.
 
 A "backend" is just a callable ``(image_ndarray) -> list[Word]``. Build one with
-``rapidocr_backend()`` / ``tesseract_backend()``, or convert a pre-fetched Azure DI page with
-``words_from_azure_di()``.
+``rapidocr_backend()`` / ``tesseract_backend()``, or convert a pre-fetched cloud-OCR result with
+``words_from_azure_di()`` (one page) / ``words_from_textract()`` / ``words_from_docai()`` (whole
+document → ``{page: [Word]}`` for ``detect_pdf(..., words_by_page=...)``). None of the three
+clouds flag strikethrough natively; these adapters add that layer on top.
 
 Confidence caveat: the scanned classifier's confidence thresholds are calibrated to Azure
 Document Intelligence, whose struck words drop to 0.43-0.94 while clean text sits at 0.976-1.0.
@@ -74,6 +76,116 @@ def words_from_azure_di(di_page) -> list[Word]:
         bbox = (min(xs) / pw, min(ys) / ph, max(xs) / pw, max(ys) / ph)
         out.append(Word(text, bbox, w.get("confidence")))
     return out
+
+
+# --------------------------------------------------------------------------- AWS Textract
+
+def _as_dict(obj):
+    """Coerce an SDK result object to a plain dict (boto3 already returns dicts; the DocAI SDK
+    exposes ``.to_dict()``/``as_dict()``). Pass through anything already dict-like."""
+    for attr in ("to_dict", "as_dict"):
+        fn = getattr(obj, attr, None)
+        if callable(fn):
+            return fn()
+    return obj
+
+
+def words_from_textract(result) -> "dict[int, list[Word]]":
+    """Convert an AWS Textract ``AnalyzeDocument``/``DetectDocumentText`` result into per-page
+    Words: ``{0-based page: [Word, ...]}``. Textract ``WORD`` blocks already carry a normalized
+    ``Geometry.BoundingBox`` (Left/Top/Width/Height in [0,1]) and a 0..100 ``Confidence`` (scaled
+    to 0..1 here). Blocks tag their 1-based ``Page`` on multi-page input (absent ⇒ page 1).
+
+    Textract does not flag strikethrough; feed the result to ``detect_pdf(pdf,
+    words_by_page=...)`` (or ``detect_image_file(img, words_by_page=...)``) to add the strike
+    layer. Its confidences aren't calibrated to the scanned classifier, so pass
+    ``ScanConfig.confidence_free()`` (``detect_pdf`` defaults to it for ``words_by_page``)."""
+    result = _as_dict(result)
+    by_page: dict[int, list[Word]] = {}
+    for block in result.get("Blocks", []):
+        if block.get("BlockType") != "WORD":
+            continue
+        text = block.get("Text", "")
+        if not text.strip():
+            continue
+        box = (block.get("Geometry") or {}).get("BoundingBox") or {}
+        left, top = box.get("Left"), box.get("Top")
+        width, height = box.get("Width"), box.get("Height")
+        if None in (left, top, width, height):
+            continue
+        conf = block.get("Confidence")
+        conf = float(conf) / 100.0 if conf is not None else None
+        page = int(block.get("Page", 1)) - 1
+        by_page.setdefault(page, []).append(
+            Word(text, (left, top, left + width, top + height), conf))
+    return by_page
+
+
+# --------------------------------------------------------------------------- Google Document AI
+
+def _docai_key(d, *names):
+    """First present of the given keys — DocAI is camelCase over REST/JSON but snake_case once a
+    proto goes through the Python SDK's ``Document.to_dict()``."""
+    for n in names:
+        if n in d:
+            return d[n]
+    return None
+
+
+def _docai_token_text(full_text, layout):
+    anchor = _docai_key(layout, "textAnchor", "text_anchor") or {}
+    segs = _docai_key(anchor, "textSegments", "text_segments") or []
+    parts = []
+    for seg in segs:
+        start = int(_docai_key(seg, "startIndex", "start_index") or 0)
+        end = int(_docai_key(seg, "endIndex", "end_index") or 0)
+        parts.append(full_text[start:end])
+    return "".join(parts)
+
+
+def _docai_bbox(layout, pw, ph):
+    poly = _docai_key(layout, "boundingPoly", "bounding_poly") or {}
+    norm = _docai_key(poly, "normalizedVertices", "normalized_vertices")
+    if norm:
+        xs = [float(v.get("x", 0.0)) for v in norm]
+        ys = [float(v.get("y", 0.0)) for v in norm]
+        return (min(xs), min(ys), max(xs), max(ys))
+    verts = poly.get("vertices")
+    if verts and pw and ph:                      # pixel vertices — normalize by page dimension
+        xs = [float(v.get("x", 0.0)) / pw for v in verts]
+        ys = [float(v.get("y", 0.0)) / ph for v in verts]
+        return (min(xs), min(ys), max(xs), max(ys))
+    return None
+
+
+def words_from_docai(document) -> "dict[int, list[Word]]":
+    """Convert a Google Document AI ``Document`` (REST JSON or ``document.to_dict()``) into
+    per-page Words: ``{0-based page: [Word, ...]}``. Each page's ``tokens`` carry a ``layout``
+    with a ``textAnchor`` (offsets into the document ``text``) and a ``boundingPoly``; normalized
+    vertices are used directly, pixel vertices are divided by the page ``dimension``.
+
+    Like Textract, DocAI does not flag strikethrough — feed the result to ``detect_pdf(pdf,
+    words_by_page=...)`` and run confidence-free (its ``layout.confidence`` isn't calibrated to
+    the scanned classifier)."""
+    document = _as_dict(document)
+    full_text = document.get("text", "") or ""
+    by_page: dict[int, list[Word]] = {}
+    for i, page in enumerate(document.get("pages", [])):
+        dim = _docai_key(page, "dimension") or {}
+        pw, ph = dim.get("width"), dim.get("height")
+        words = []
+        for tok in _docai_key(page, "tokens") or []:
+            layout = _docai_key(tok, "layout") or {}
+            text = _docai_token_text(full_text, layout)
+            if not text.strip():
+                continue
+            bbox = _docai_bbox(layout, pw, ph)
+            if bbox is None:
+                continue
+            conf = _docai_key(layout, "confidence")
+            words.append(Word(text, bbox, float(conf) if conf is not None else None))
+        by_page[i] = words
+    return by_page
 
 
 # --------------------------------------------------------------------------- RapidOCR (free, pip-only)
