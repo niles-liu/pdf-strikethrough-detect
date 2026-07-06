@@ -186,22 +186,35 @@ def _render_rgb(page, dpi=RENDER_DPI):
     return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
 
 
-def apply_cnn_verdict(struck, gray, meta=None):
+def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     """Score every non-weak struck record with the CNN and set verdict/final in place.
     Returns the list of records that survive (tier != 'weak'), each with 'final' bool.
     Gate semantics (corpus-validated): auto words need CNN confirmation at p_hi — a scored
     non-confirmation drops them; an unscoreable crop offers no counter-evidence and is kept.
-    Review words are decided by the CNN outright."""
+    Review words are decided by the CNN outright.
+
+    `config` may carry ``cnn_p_hi``/``cnn_p_lo`` operating-point overrides (see ScanConfig);
+    when set they replace the model's shipped thresholds for this pass. `crop_sink`, if given, is
+    a list that receives ``(std_crop, record)`` for every scored word (used by the active-learning
+    export in :mod:`pdf_strikethrough.active`)."""
     if meta is None:
         meta = cnn.get_model_meta()
+    if config is not None and (getattr(config, "cnn_p_hi", None) is not None
+                               or getattr(config, "cnn_p_lo", None) is not None):
+        meta = {**meta,
+                "p_hi": config.cnn_p_hi if config.cnn_p_hi is not None else meta["p_hi"],
+                "p_lo": config.cnn_p_lo if config.cnn_p_lo is not None else meta["p_lo"]}
     kept, crops, owner = [], [], []
     for h in struck:
         if h.get("tier") == "weak":
             continue
         crop = cnn.word_crop_px(gray, h["bbox_frac"])
         if crop is not None:
-            crops.append(cnn.std_crop(crop))
+            std = cnn.std_crop(crop)
+            crops.append(std)
             owner.append(h)
+            if crop_sink is not None:
+                crop_sink.append((std, h))
         kept.append(h)
     probs = cnn.score_crops(crops) if crops else []
     for h, p in zip(owner, probs):
@@ -223,14 +236,15 @@ def apply_cnn_verdict(struck, gray, meta=None):
     return kept
 
 
-def detect_scanned_image(gray, words, config=ScanConfig(), meta=None, dpi=RENDER_DPI):
+def detect_scanned_image(gray, words, config=ScanConfig(), meta=None, dpi=RENDER_DPI,
+                         crop_sink=None):
     """Struck-word records for a single scanned page image + its OCR words. `gray` is a HxW
     grayscale array (RGB / float inputs are coerced); `dpi` must be the resolution the image
     was rendered/scanned at. Runs layer-1 classification then the CNN verdict."""
     from .lines import to_gray_u8
     gray = to_gray_u8(gray)
     _tagged, struck = analyze_scanned_page(gray, words, config=config, dpi=dpi)
-    return apply_cnn_verdict(struck, gray, meta)
+    return apply_cnn_verdict(struck, gray, meta, config=config, crop_sink=crop_sink)
 
 
 def _image_frames(source):
@@ -263,7 +277,7 @@ def _image_frames(source):
 
 
 def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_config=None,
-                      dpi=None, meta=None, include_markdown=True):
+                      dpi=None, meta=None, include_markdown=True, _crop_sink=None):
     """Detect strikethroughs in a standalone raster image (``.png/.jpg/.tiff``, incl. multi-page
     TIFF) — a photo/scan/fax that never was a PDF.
 
@@ -314,7 +328,7 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         if meta is None:
             meta = cnn.get_model_meta()
         recs = detect_scanned_image(to_gray_u8(gray), page_words, config=scan_config,
-                                    meta=meta, dpi=use_dpi)
+                                    meta=meta, dpi=use_dpi, crop_sink=_crop_sink)
         for r in recs:
             r["page"] = pno
         all_words.extend(recs)
@@ -453,7 +467,8 @@ def _normalize_words_by_page(words_by_page):
 
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
                include_markdown=True, method=None, on_missing_ocr="raise",
-               pages=None, progress=None, words_by_page=None, native_method=None):
+               pages=None, progress=None, words_by_page=None, native_method=None,
+               _crop_sink=None):
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
@@ -559,7 +574,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         meta = cnn.get_model_meta()
                     t0 = time.perf_counter()
                     recs = detect_scanned_image(gray, page_words, config=scan_config,
-                                                meta=meta, dpi=page_dpi)
+                                                meta=meta, dpi=page_dpi, crop_sink=_crop_sink)
                     log.debug("page %d: geometry+CNN -> %d struck record(s) in %.0f ms",
                               pno, len(recs), (time.perf_counter() - t0) * 1e3)
                     for r in recs:

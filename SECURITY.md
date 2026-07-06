@@ -16,6 +16,10 @@ A few defensive choices worth knowing:
   file) uses `torch.load(..., weights_only=True)`, so a malicious checkpoint cannot execute
   arbitrary pickle code.
 - The shipped model's crop/pad geometry is validated against the code constants at load time.
+- `cnn.ensure_model(url, sha256, ...)` (opt-in, for loading a model off the network) verifies the
+  downloaded bytes against the caller-supplied sha256 *before* the model is written or loaded; a
+  mismatch raises and nothing is kept, so a tampered host or a man-in-the-middle cannot swap in a
+  different ONNX graph. It fetches only `http`/`https`/`file` URLs you pass explicitly.
 
 ## Resource limits
 

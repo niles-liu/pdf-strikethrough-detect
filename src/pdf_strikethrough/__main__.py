@@ -165,6 +165,21 @@ def _cmd_detect_single(args, path):
     else:
         scan_config = st.ScanConfig()
 
+    if args.dump_crops:
+        from . import active
+        dc_source = sys.stdin.buffer.read() if path == "-" else path
+        try:
+            summary = active.dump_crops(
+                dc_source, args.dump_crops, ocr=ocr, scan_config=scan_config, dpi=args.dpi,
+                di_result=di_result, words_by_page=words_by_page,
+                pages=None if is_image else page_subset, image=is_image)
+        except st.OcrRequiredError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        print(f"wrote {summary['n_crops']} crop(s) to {summary['out_dir']} "
+              f"(manifest: {summary['manifest']})")
+        return 0
+
     if is_image:
         if page_subset is not None:
             print("warning: --pages does not apply to an image file; ignored", file=sys.stderr)
@@ -330,7 +345,8 @@ def _cmd_detect_batch(args, inputs):
     for val, flag in ((args.markdown, "--markdown"), (args.clean_text, "--clean-text"),
                       (args.provenance, "--provenance"), (args.overlay, "--overlay"),
                       (args.di_result, "--di-result"), (args.textract_result, "--textract-result"),
-                      (args.docai_result, "--docai-result"), (args.pages, "--pages")):
+                      (args.docai_result, "--docai-result"), (args.pages, "--pages"),
+                      (args.dump_crops, "--dump-crops")):
         if val:
             print(f"warning: {flag} is ignored in batch mode (multiple inputs)", file=sys.stderr)
 
@@ -439,6 +455,9 @@ def main(argv=None):
                         "an image extension. One image per struck page")
     d.add_argument("--overlay-dpi", dest="overlay_dpi", type=int, default=150,
                    help="render DPI for --overlay images")
+    d.add_argument("--dump-crops", dest="dump_crops", metavar="DIR",
+                   help="active-learning export: write each scored word crop (PNG) + a crops.jsonl "
+                        "manifest under DIR for labeling (scanned PDF / image input; single file)")
     d.add_argument("--fail-if-found", dest="fail_if_found", action="store_true",
                    help="exit 3 if any struck word is found (for CI gating)")
     d.set_defaults(func=_cmd_detect)

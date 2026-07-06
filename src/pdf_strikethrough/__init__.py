@@ -31,8 +31,11 @@ Low-level, on your own image (no PDF):
 import logging as _logging
 import warnings as _warnings
 
-from . import cnn, detect, docx, lines, markdown, native, ocr, overlay, scanned, types
-from .cnn import (get_model_meta, score_crops, score_word, std_crop, verdict_of, word_crop_px)
+from . import (active, calibration, cnn, detect, docx, lines, markdown, native, ocr, overlay,
+               scanned, types)
+from .active import dump_crops
+from .cnn import (ensure_model, get_model_meta, score_crops, score_word, std_crop, verdict_of,
+                  word_crop_px)
 from .detect import (EncryptedPdfError, OcrRequiredError, apply_cnn_verdict,
                      classify_page_source, detect_image_file, detect_pdf, detect_scanned_image)
 from .docx import strikethroughs_in_docx
@@ -51,7 +54,7 @@ from .types import DetectResult, Passage, StruckWord
 # ``warnings`` stays reserved for caller-facing hazards (silent-[] on scans, scanned-fallback, ...).
 _logging.getLogger("pdf_strikethrough").addHandler(_logging.NullHandler())
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     # high-level
@@ -71,10 +74,14 @@ __all__ = [
     "words_from_textract", "words_from_docai",
     # CNN
     "score_word", "score_crops", "std_crop", "word_crop_px", "verdict_of", "get_model_meta",
+    "ensure_model",
+    # active learning + calibration
+    "dump_crops",
     # typing
     "StruckWord", "DetectResult", "Passage",
     # submodules
-    "cnn", "docx", "lines", "native", "ocr", "overlay", "scanned", "detect", "markdown", "types",
+    "active", "calibration", "cnn", "docx", "lines", "native", "ocr", "overlay", "scanned",
+    "detect", "markdown", "types",
 ]
 
 

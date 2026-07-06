@@ -1,0 +1,6 @@
+# Dependencies for the Gradio demo (demo/app.py) — also usable as a Hugging Face Space's
+# requirements.txt. The package itself is lean; this adds the demo UI and a scanned-page OCR
+# backend so the demo can handle scans as well as born-digital PDFs.
+gradio>=4.0
+pdf-strikethrough-detect[markdown]
+rapidocr-onnxruntime

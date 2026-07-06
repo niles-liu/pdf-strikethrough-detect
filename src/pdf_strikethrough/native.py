@@ -414,9 +414,10 @@ def page_strikes(page, page_index, method="vector", words=None):
                  author/date/color forensics (see :func:`native_annot_strikes`)
       'both'   — union of all three: vector records, plus flag/annot records for words no
                  earlier record covers (maximum recall)
-    In validation on 12 public redline PDFs (33k struck words), 99.9-100% of vector detections
-    are independently confirmed by the flag signal; the flag signal typically marks additional
-    words on top — 'both' captures them. Reproduce with ``benchmarks/confirmation_rate.py``.
+    In validation on 10 public redline PDFs (54.7k struck words), 99.8% of vector detections
+    are independently confirmed by the flag signal (92.5-100% per document); the flag signal
+    typically marks additional words on top — 'both' captures them. Reproduce with
+    ``benchmarks/confirmation_rate.py``.
 
     ``words`` optionally supplies this page's ``get_text("words")`` output; passing it means
     'both' extracts the word list once instead of once per detector (default None = extract here).

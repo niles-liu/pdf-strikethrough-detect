@@ -77,11 +77,11 @@ st.strikethroughs_in_pdf("contract.pdf", method="annot")   # explicit /StrikeOut
 st.strikethroughs_in_pdf("contract.pdf", method="both")    # union of all three — maximum recall
 ```
 
-**Validated across domains.** On 12 public redline PDFs (federal & state regulations, court
-rules, procurement clauses, municipal codes, university policy; 33k struck words),
-**99.9–100% of vector detections are independently confirmed by MuPDF's strikeout signal**,
-and the flag method adds ~2% more words (font-attribute strikes and edge cases) — use
-`method="both"` to capture them. `pymupdf4llm` is not used for detection at all; it is only an
+**Validated across domains.** On 10 public redline PDFs (federal regulatory redlines from the
+Copyright Office, FDIC, CEQ and EPA; California privacy-regulation redlines; a municipal
+development code — 54.7k struck words), **99.8% of vector detections are independently confirmed
+by MuPDF's strikeout signal** (92.5–100% per document; 8 of 10 ≥99.9%), and the flag method adds
+~2.6% more words (font-attribute strikes and edge cases) — use `method="both"` to capture them. `pymupdf4llm` is not used for detection at all; it is only an
 optional `[markdown]` extra for richer layout in `clean_markdown()`.
 
 ## Any PDF — routed per page, scanned pages use OCR + CNN
@@ -120,19 +120,21 @@ everything from the native pages. Password-protected PDFs raise `EncryptedPdfErr
 ### Choosing an OCR backend
 
 The geometry + CNN carry the detection and are **OCR-independent**; OCR only supplies word boxes
-to attribute strikes to, plus a confidence prior. Benchmarked on a heavily-edited document
-(Azure DI as reference):
+to attribute strikes to, plus a confidence prior. Benchmarked by rasterizing born-digital redline
+pages into image-only "scans" and taking the native detector's strikes on the born-digital
+originals as ground truth (3 documents, 24 pages, 2,170 known strikes; reproduce with
+[`benchmarks/scanned_recovery.py`](benchmarks/scanned_recovery.py)):
 
-| Backend | Setup | Struck **regions** | Spatial agreement | Word granularity |
-|---|---|---|---|---|
-| Azure Document Intelligence | cloud, paid | reference | — | exact word boxes |
-| **RapidOCR** | `pip`, no binary | **100% covered** | **~99%** | ~4× coarser (phrase-level) |
-| Tesseract | needs system binary | — | — | genuine word-level |
+| Backend | Setup | Strike recovery | Word granularity |
+|---|---|---|---|
+| Azure Document Intelligence | cloud, paid | **95%** of known strikes | exact word boxes |
+| **RapidOCR** | `pip`, no binary | **97%** of known strikes | ~4× coarser (phrase-level) |
+| Tesseract | needs system binary | not benchmarked here | genuine word-level |
 
 Use `ScanConfig.confidence_free()` with RapidOCR (its confidences cluster near 1.0 and don't
 separate struck from clean text); the default `ScanConfig()` is calibrated to Azure DI, whose
-struck words drop to 0.43–0.94. The DI-decoupled classifier reproduces the original Azure-DI
-pipeline to **99.5%** (1477 vs 1484 struck words on the validation doc).
+struck words drop to 0.43–0.94. Across backends the scanned path recovers **95–97% of the exact
+native strike set** — the geometry + CNN, not the OCR engine, carry the detection.
 
 ## Beyond PDFs — images, Word docs, cloud OCR
 
@@ -208,6 +210,7 @@ pdf-strikethrough detect doc.pdf --json -                   # ...or stream JSON 
 pdf-strikethrough detect doc.pdf --clean-text clean.txt     # surviving text, deletions removed
 pdf-strikethrough detect doc.pdf --markdown marked.md       # deletions as ~~struck~~
 pdf-strikethrough detect doc.pdf --overlay out/             # page images with strikes boxed
+pdf-strikethrough detect scan.pdf --ocr rapidocr --dump-crops crops/  # export scored crops to label
 pdf-strikethrough detect doc.pdf --fail-if-found            # exit 3 if any strike found (CI gate)
 cat doc.pdf | pdf-strikethrough detect -                    # read the PDF from stdin
 pdf-strikethrough --version
@@ -264,13 +267,28 @@ resolution buys nothing but cost). Output boxes are page fractions, so this is i
 A hard raster budget caps a single page at 128 Mpix, so a hostile huge-mediabox page is
 auto-downsampled with a warning instead of OOMing the process (see [`SECURITY.md`](SECURITY.md)).
 
+**Operating points.** The CNN's struck/clean decision threshold is an explicit choice, not a
+buried constant. `ScanConfig.recall_first()` biases toward catching every deletion (legal / audit
+review — never miss a struck word); `ScanConfig.precision_first()` biases toward never dropping
+live text as if deleted (RAG / indexing). Calibrate the threshold from your own labeled data with
+`pdf_strikethrough.calibration` (`threshold_for_recall`, `threshold_for_precision`,
+`conformal_threshold` for a distribution-free recall floor) and pass it as
+`recall_first(cnn_p_hi=…)`.
+
+**Improving the model.** `--dump-crops DIR` (or `st.dump_crops`) exports every crop the pipeline
+scored plus its verdict as a labeling set; label it, retrain with
+[`training/train_strikenet.py`](training/), and load your weights via
+`PDF_STRIKETHROUGH_MODEL_DIR`, `cnn.set_model_dir`, or `cnn.ensure_model(url, sha256, …)`
+(digest-verified download). A ["contribute a failing page"](.github/ISSUE_TEMPLATE/failing-page.md)
+report feeds the same loop, and [`demo/`](demo/) is a drag-and-drop Gradio app for trying it.
+
 **Scope — validated scripts & layouts.** Detection assumes **horizontal, left-to-right** text; a
 strike is a near-horizontal stroke through a word's middle band. Reading-order assembly is
 column-aware (two-column pages read down each column; tables read across rows).
 
 | Case | Status |
 |---|---|
-| Latin / Western, horizontal | validated (12-PDF redline benchmark, 33k struck words) |
+| Latin / Western, horizontal | validated (10-PDF redline benchmark, 54.7k struck words) |
 | CJK, **horizontal** set (native + scanned) | detected — strikes are horizontal regardless of script (regression-tested) |
 | Two-column / newspaper layout, struck table rows, hyphenated-line-break strikes | handled |
 | **Vertical** writing modes (CJK/Mongolian), RTL strike axes | out of scope (roadmap) |
@@ -279,16 +297,23 @@ column-aware (two-column pages read down each column; tables read across rows).
 RapidOCR (the recommended scanned backend) is strongest on Chinese, so horizontal-CJK scans work
 end to end today; full vertical-text support is future work.
 
+**Handwritten strikes** are the main known gap: the geometry gate looks for a near-straight,
+near-horizontal stroke, and the CNN was trained on rendered digital strikes, so a wavy pen
+scribble or a heavy cross-out may be missed. If you hit one, a
+[failing-page report](.github/ISSUE_TEMPLATE/failing-page.md) with `--dump-crops` output is the
+fastest way to turn it into a fix — it becomes both a regression test and training data.
+
 ## API surface
 
-The top-level package (`import pdf_strikethrough as st`) exports ~35 names; the most-used:
+The top-level package (`import pdf_strikethrough as st`) exports ~37 names; the most-used:
 
 | Group | Names |
 |---|---|
 | High-level | `strikethroughs_in_pdf`, `clean_markdown`, `provenance_text`, `detect_pdf`, `detect_image_file`, `detect_scanned_image`, `strikethroughs_in_docx`, `open_pdf`, `render_page_gray`, `render_overlay`, `save_overlays` |
 | Native detectors | `native_page_strikes`, `native_flag_strikes`, `native_annot_strikes`, `native_doc_strikes`, `page_strikes`, `native_markdown`, `strip_struck_markdown` |
 | Scanned geometry + classifier | `strike_lines`, `ink_mask`, `to_gray_u8`, `analyze_scanned_page`, `ScanConfig`, `classify_page_source`, `apply_cnn_verdict` |
-| CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta` |
+| CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta`, `ensure_model` |
+| Active learning + calibration | `dump_crops`, `pdf_strikethrough.calibration` (`threshold_for_recall`, `threshold_for_precision`, `conformal_threshold`, `pr_curve`) |
 | OCR (backends + cloud-result adapters) | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di`, `words_from_textract`, `words_from_docai` |
 | Errors | `OcrRequiredError`, `EncryptedPdfError` |
 | Types | `StruckWord`, `DetectResult`, `Passage` (in `pdf_strikethrough.types`) |

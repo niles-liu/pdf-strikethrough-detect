@@ -43,11 +43,18 @@ class ScanConfig:
     gate, the ink-fail rescue, and the confidence term in the evidence score (the remaining
     geometry terms are renormalized so the auto/review/weak thresholds keep their meaning).
     Use it for engines whose confidence doesn't separate struck from clean text (e.g. RapidOCR);
-    detection then rests on geometry + the CNN alone."""
+    detection then rests on geometry + the CNN alone.
+
+    ``recall_first()`` / ``precision_first()`` pick the CNN *operating point* — the strike/clean
+    decision threshold applied to StrikeNet's probability. ``cnn_p_hi``/``cnn_p_lo`` (None = the
+    model's shipped thresholds) override it; calibrate them from labeled data with
+    :mod:`pdf_strikethrough.calibration`."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # fill<FILL_STRONG: some struck word must OCR at or below this
     inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued if OCR is this damaged
     page_edited_min: float = 0.03     # frac words conf<=0.90 >= this -> page has pen edits
+    cnn_p_hi: float | None = None     # override the CNN struck threshold (operating point); None = model default
+    cnn_p_lo: float | None = None     # override the CNN clean threshold; None = model default
 
     @classmethod
     def azure_di(cls):
@@ -57,6 +64,21 @@ class ScanConfig:
     def confidence_free(cls):
         """For engines whose confidence doesn't separate struck from clean (e.g. RapidOCR)."""
         return cls(confidence_gating=False)
+
+    @classmethod
+    def recall_first(cls, cnn_p_hi=0.50, **kw):
+        """Recall-first operating point (legal / audit review): bias toward catching every
+        deletion. Lowers the CNN's struck-confirmation bar so a borderline strike still counts as
+        struck — more false positives and more manual review, but a deleted word is not silently
+        missed. Combine with ``confidence_gating=False`` for a confidence-free OCR engine."""
+        return cls(cnn_p_hi=cnn_p_hi, **kw)
+
+    @classmethod
+    def precision_first(cls, cnn_p_hi=0.97, **kw):
+        """Precision-first operating point (RAG / indexing): bias toward never dropping live text
+        as if it were deleted. Only high-confidence CNN strikes are reported; an uncertain strike
+        falls back to 'unsure'/clean rather than being removed."""
+        return cls(cnn_p_hi=cnn_p_hi, **kw)
 
 
 def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):

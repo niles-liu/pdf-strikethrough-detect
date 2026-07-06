@@ -1,4 +1,8 @@
-"""DI-parity — reproduces the "1477 vs 1484 struck words (99.5%)" claim.
+"""DI-parity (legacy) — reproduces the "1477 vs 1484 struck words (99.5%)" claim.
+
+Superseded on this repo by ``scanned_recovery.py``, which scores the scanned path against the
+native detector's *known* strikes and so needs no vanished pipeline. This script remains for anyone
+who has a genuinely scanned corpus AND the original pipeline's recorded reference counts.
 
 The package's scanned classifier is a from-scratch reimplementation of the original Azure
 Document Intelligence-based pipeline. This script feeds a stored DI analyze-result through

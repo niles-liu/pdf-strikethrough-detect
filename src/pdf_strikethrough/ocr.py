@@ -220,7 +220,14 @@ def rapidocr_backend(engine=None, **engine_kwargs):
     def backend(image) -> list[Word]:
         if holder["eng"] is None:
             import rapidocr
-            _require_rapidocr_3_2(getattr(rapidocr, "__version__", "0"))
+            version = getattr(rapidocr, "__version__", None)
+            if not version:                        # rapidocr 3.x doesn't set a module __version__
+                import importlib.metadata as _md
+                try:
+                    version = _md.version("rapidocr")
+                except _md.PackageNotFoundError:
+                    version = "0"
+            _require_rapidocr_3_2(version)
             from rapidocr import RapidOCR
             holder["eng"] = RapidOCR(**engine_kwargs)
         h, w = image.shape[:2]

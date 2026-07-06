@@ -60,6 +60,57 @@ def set_model_dir(path):
         _model = None
 
 
+def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
+                 cache_dir=None, timeout=30):
+    """Download a StrikeNet model to a local cache, VERIFY its sha256, and point the loader at it.
+
+    `url` is the ONNX model and `sha256` its expected hex digest. The bytes are hashed after
+    download and a mismatch raises ``ValueError`` (nothing is written) — so a tampered host or a
+    man-in-the-middle cannot swap the graph you run; nothing unverified is ever loaded. The ONNX
+    loader also needs a meta JSON (thresholds + crop geometry): supply it as `meta_url`
+    (+ `meta_sha256` to verify) or as a `meta` dict written verbatim.
+
+    Downloads land in `cache_dir` (default:
+    ``~/.cache/pdf_strikethrough/models/<sha256[:12]>``); an already-present, hash-matching file is
+    reused. Accepts ``http(s)`` and ``file`` URLs. Returns the cache directory (already applied via
+    :func:`set_model_dir`)."""
+    import hashlib
+    import pathlib
+    import urllib.parse
+    import urllib.request
+
+    def _fetch_verify(u, digest, dest):
+        scheme = urllib.parse.urlparse(u).scheme
+        if scheme not in ("http", "https", "file"):
+            raise ValueError(f"unsupported URL scheme {scheme!r} (use http, https, or file)")
+        if dest.exists() and digest and hashlib.sha256(dest.read_bytes()).hexdigest() == digest:
+            return
+        with urllib.request.urlopen(u, timeout=timeout) as r:
+            data = r.read()
+        got = hashlib.sha256(data).hexdigest()
+        if digest and got != digest:
+            raise ValueError(f"sha256 mismatch for {u}: expected {digest}, got {got} "
+                             "(download rejected; nothing was written)")
+        dest.write_bytes(data)
+
+    if cache_dir is None:
+        cache_dir = pathlib.Path.home() / ".cache" / "pdf_strikethrough" / "models" / sha256[:12]
+    cache_dir = pathlib.Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _fetch_verify(url, sha256, cache_dir / "strike_verdict_cnn.onnx")
+    meta_path = cache_dir / "strike_verdict_cnn.meta.json"
+    if meta_url is not None:
+        _fetch_verify(meta_url, meta_sha256, meta_path)
+    elif meta is not None:
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    elif not meta_path.exists():
+        raise ValueError(
+            "no model meta: pass meta_url=(+meta_sha256) or meta={...} (the ONNX loader needs "
+            "strike_verdict_cnn.meta.json — thresholds + crop geometry — alongside the model)")
+    set_model_dir(str(cache_dir))
+    return str(cache_dir)
+
+
 def word_crop_px(gray, bbox_frac, pad_x=PAD_X, pad_y=PAD_Y):
     """Grey page raster (0=black..255=white; uint8 or float — [0,1] floats are handled) +
     normalized word box (x0,y0,x1,y1 as PAGE FRACTIONS in [0,1], origin top-left) -> padded

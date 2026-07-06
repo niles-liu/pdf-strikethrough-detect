@@ -1,5 +1,102 @@
 {
-  "description": "Public redline PDF corpus for pdf-strikethrough-detect benchmarks. The files are not committed; download them into benchmarks/corpus/ (git-ignored) and list them here. See benchmarks/README.md for the entry schema and how each field is used.",
+  "description": "Public redline PDF corpus for pdf-strikethrough-detect benchmarks. Files are not committed; run `python benchmarks/fetch_corpus.py` to download them into benchmarks/corpus/ (git-ignored). See benchmarks/README.md for the entry schema. All entries are public government/regulatory redline documents whose deletions use genuine strikethrough text markup.",
   "corpus_dir": "corpus",
-  "pdfs": []
+  "pdfs": [
+    {
+      "name": "US Copyright Office 37 CFR 201.10 proposed rule (redline)",
+      "file": "copyright-201-10-redline.pdf",
+      "url": "https://www.copyright.gov/docs/201-10-proposed-redline.pdf",
+      "sha256": "570ed6ee9f2f126fcded6e257d2234c614c167c1eaaca15fa1de3ae7055a76b7",
+      "scanned_pages": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "scanned_pdf": "copyright-201-10-redline.scanned.pdf",
+      "scanned_di_result": "copyright-201-10-redline.scanned.di.json"
+    },
+    {
+      "name": "FDIC Fair Lending laws & regulations (redlined changes)",
+      "file": "fdic-fair-lending-redline.pdf",
+      "url": "https://www.fdic.gov/redlined-document-identifying-changes.pdf",
+      "sha256": "1ae8de143bf38d43bcce8fdf2aa5a178ffe0d6bf13b3e16d1d9d22e40d2ea2db",
+      "scanned_pages": [
+        0,
+        1,
+        2,
+        23,
+        24,
+        25,
+        33,
+        34,
+        37,
+        42,
+        43,
+        53
+      ],
+      "scanned_pdf": "fdic-fair-lending-redline.scanned.pdf",
+      "scanned_di_result": "fdic-fair-lending-redline.scanned.di.json"
+    },
+    {
+      "name": "Gretna, LA Unified Development Code substantive edits (redline)",
+      "file": "gretna-udo-edits.pdf",
+      "url": "https://www.gretnala.com/wp-content/uploads/2019/11/substantive-code-edits-draft-11-6-19.pdf",
+      "sha256": "fa42105c31a3814b5d52564e0adfaf874e697a34790659eddf727f624c70faa9",
+      "scanned_pages": [
+        2,
+        3,
+        11,
+        14,
+        18,
+        19,
+        20,
+        21
+      ],
+      "scanned_pdf": "gretna-udo-edits.scanned.pdf",
+      "scanned_di_result": "gretna-udo-edits.scanned.di.json"
+    },
+    {
+      "name": "California CCPA regulations - text of modified regs (redline, 2020)",
+      "file": "ccpa-mod-redline-2020.pdf",
+      "url": "https://oag.ca.gov/sites/all/files/agweb/pdfs/privacy/ccpa-text-of-mod-redline-020720.pdf",
+      "sha256": "edc9a55907879cfdb41de94922822e91569318489a4bd8ea22fca4e70b6768bc"
+    },
+    {
+      "name": "CEQ NEPA implementing regulations - redline for final rule",
+      "file": "ceq-nepa-regs-redline.pdf",
+      "url": "https://ceq.doe.gov/docs/laws-regulations/CEQ%20Regulations-Redline-for-Final-Rule.pdf",
+      "sha256": "b96bd715f1b8b24c3b761756d173fa84b8e6d6a90bf6df4645b563c8d1adf407"
+    },
+    {
+      "name": "CEQ NEPA implementing regulations - redline for proposed rule",
+      "file": "ceq-nepa-regs-redline-proposed.pdf",
+      "url": "https://ceq.doe.gov/docs/laws-regulations/CEQ-Regulations-Redline-for-Proposed-Rule.pdf",
+      "sha256": "e008d15ce4c50b07c3977009a5aaca15db2714b739f7430168e2ecc2c8b3cd5d"
+    },
+    {
+      "name": "EPA light/medium-duty multi-pollutant NPRM reg text (redline)",
+      "file": "epa-lmdv-multipollutant-nprm-redline.pdf",
+      "url": "https://www.epa.gov/system/files/documents/2023-04/lmdv-multi-pollutant-emissions-nprm-redline-memo-2023-04.pdf",
+      "sha256": "b890c66fedbe7ad2eff1e6675d174b52c2ceef9a536cbf33d4862dbec7e7c839"
+    },
+    {
+      "name": "EPA heavy-duty 2027 NPRM reg text (redline)",
+      "file": "epa-hd2027-nprm-reg-redline.pdf",
+      "url": "https://www.epa.gov/system/files/documents/2022-03/hd2027-nprm-reg-redline-memo-2020-02.pdf",
+      "sha256": "2fc4082c3b7b6f57b83bbdcbfdddc6e532c3a8a50fb8476fe6fcd4e8d42ad87e"
+    },
+    {
+      "name": "EPA 40 CFR 63 Subpart EEE amendments (redline-strikeout)",
+      "file": "epa-40cfr63-subparteee-redline.pdf",
+      "url": "https://www.epa.gov/system/files/documents/2025-11/redline-strikeout-for-amendments-to-40-cfr-63-subpart-eee.pdf",
+      "sha256": "e4d3d2199c3d118f9028fb9df761bc95f818d1c2b6a7f7c6841a13fd28454df0"
+    },
+    {
+      "name": "California CPPA proposed CCPA revisions (redline, Dec 2023)",
+      "file": "cppa-ccpa-revisions-2023.pdf",
+      "url": "https://cppa.ca.gov/meetings/materials/20231208_agenda_item3_proposed_revisions.pdf",
+      "sha256": "660cfd6645504c2d50a2093c6269345c225fc88b1a068cdd3251bbb8a1dec610"
+    }
+  ]
 }
