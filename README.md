@@ -59,8 +59,9 @@ final}` (`tier` is `"vector"`, `"flag"`, or `"annot"`). Vector records also carr
 `stroke_color`/`stroke_width` (the paint + thickness of the dominant stroke — red = opposing
 counsel is evidence); annotation records carry `annot_author`/`annot_created`/`annot_modified`/
 `annot_color`/`annot_id` (the redline's "who and when"). Scanned records replace `coverage` with
-the evidence that decided them — `score`, `cnn_prob`, `cnn_agrees`, `conf` — and `tier` is
-`"auto"`/`"review"`. The keys are documented as `TypedDict`s in `pdf_strikethrough.types`
+the evidence that decided them — `score`, `cnn_prob`, `cnn_agrees`, `conf`, `geom_corroborated`
+(and `conf_veto: True` when the calibrated-confidence gate downgrades a high-confidence word) — and
+`tier` is `"auto"`/`"review"`. The keys are documented as `TypedDict`s in `pdf_strikethrough.types`
 (`StruckWord`, `DetectResult`, `Passage`); the package ships `py.typed`, so type checkers see them.
 Partial strikes (`semi-` of `semi-monthly`) are resolved to a char range. `bbox_frac` is in
 fractions of the rendered page (rotation-aware), so it maps directly onto a rendered pixmap.

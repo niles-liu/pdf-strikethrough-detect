@@ -233,6 +233,22 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
         else:                                              # review (incl. orphans)
             h["verdict"] = cnn.verdict_of(p, meta) if p is not None else "unsure"
             h["final"] = h["verdict"] == "struck"
+
+    # Fix A (0.9.1) — DI-confidence veto. On the calibrated-confidence (DI) path a word that OCRs
+    # ABOVE max_clean_conf is clean printed text (a struck word's OCR is damaged to at-or-below it —
+    # same boundary as the chain gate's strict >). If such a word ALSO lacks corroborating strike
+    # geometry (no in-band through-glyph shattered strike — i.e. it rode the CNN alone, or a solid
+    # rule / underline), the struck verdict is StrikeNet over-firing on a faint scan. Downgrade it.
+    # Guardrails: never on confidence alone (a genuinely struck word keeps its geometry, so it is
+    # spared) and never on the confidence-free path (RapidOCR etc.), so recall there cannot regress.
+    if getattr(config, "confidence_gating", False):
+        max_clean = getattr(config, "max_clean_conf", 1.0)
+        for h in kept:
+            if h.get("tier") in ("vector", "flag") or not h.get("final"):
+                continue
+            conf = h.get("conf")
+            if conf is not None and conf > max_clean and not h.get("geom_corroborated"):
+                h["final"], h["verdict"], h["conf_veto"] = False, "unsure", True
     return kept
 
 

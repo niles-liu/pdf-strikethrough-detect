@@ -4,6 +4,52 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-07-26
+
+Correctness patch for scanned, tightly-ruled tables and forms analyzed via Azure Document
+Intelligence (issue #4): the detector over-flagged clean printed text as struck. On a private
+8-document ruled-table benchmark the struck-final count dropped **188 → 115** overall, and the
+dangerous high-OCR-confidence over-flags (clean body text / header fields / footer boilerplate that
+would be deleted downstream) dropped **95 → 22 (−77%)**, with **no real strike lost** and the
+confidence-free (RapidOCR) path unchanged. Two root causes were fixed; the residual faint-scan false
+positives are the known CNN-saturation limit tracked for a post-1.0 retrain (issue #4·C/D). No API
+changes; pure precision.
+
+### Fixed
+- **Table-rule / underline ink test on in-band lines** (issue #4·B) — the strike-vs-underline
+  through-glyph ink test (`_ink_above_below`) was skipped for in-band long lines, so a solid
+  full-width table rule rode its high spine-fill straight to tier `auto`. `scanned.classify_lines`
+  now runs the ink test for **every** hit and rejects an in-band, long (`len ≥ TABLE_RULE_MIN_LEN_IN`),
+  high-fill (`fill ≥ FILL_STRONG`) line whose ink is **one-sided** (a rule/underline, not a strike).
+  Real strikes shatter on the glyphs (fill below the solid-rule threshold) and keep ink on both
+  sides, so they are unaffected — covered by the synthetic and full-height-glyph fixtures.
+- **DI-confidence veto at the verdict stage** (issue #4·A) — StrikeNet saturates (prob → 1.0) on
+  faint ~200-DPI scans and confirmed nearly every candidate; the confidence gate lived only inside
+  the marginal-fill branch, so a high-fill line bypassed it and a word OCR'd at 0.99 could not
+  defend itself. `detect.apply_cnn_verdict` now downgrades a struck candidate to `final=False` /
+  `verdict="unsure"` (flagged `conf_veto`) when its OCR confidence is **> `ScanConfig.max_clean_conf`
+  AND** it lacks corroborating strike geometry (a new per-record `geom_corroborated` flag: an
+  in-band, both-sided-ink, shattered-fill strike). The veto is **conf AND missing-geometry, never
+  confidence alone** (a genuinely struck high-confidence word keeps its geometry and is spared) and
+  is **scoped to the calibrated-confidence DI path** — `ScanConfig.confidence_free()` / RapidOCR
+  never trigger it, so weak-confidence recall cannot regress.
+
+### Added
+- **Struck-record fields** — scanned records now carry `geom_corroborated` (bool) and, when the
+  DI-confidence veto fires, `conf_veto: True`.
+- **Regression tests** — `tests/test_correctness_0_9_1.py` reproduces the issue-#4 geometry on
+  synthetic rasters (one-sided table rule rejected; two-sided strike kept; the veto drops a
+  high-confidence uncorroborated word, spares a corroborated one, and stays off under
+  `confidence_free`).
+- **Precision benchmark** — `benchmarks/confidence_veto.py` reports the struck-final count per
+  document split by OCR confidence, over a local directory of scanned ruled-table PDFs + their
+  cached DI results (private data, not committed; see `.gitignore`).
+
+### Changed
+- **CI / lint hygiene** (unrelated to the fix) — pinned ruff and made `[tool.ruff.lint]` `select`
+  explicit (`E4/E7/E9/F`, the documented intent) so a floating newer ruff no longer fails `lint`
+  with rules the project never opted into. `dev` extra and the `ruff-action` version now match.
+
 ## [0.9.0] — 2026-07-06
 
 Prove it: the evidence & model program. This release ships the *machinery* — operating points,

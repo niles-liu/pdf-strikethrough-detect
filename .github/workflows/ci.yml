@@ -23,6 +23,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/ruff-action@v3   # reads [tool.ruff] from pyproject.toml
         with:
+          version: 0.15.20               # pinned == the dev extra, so local lint == CI lint
           args: check
 
   test:
