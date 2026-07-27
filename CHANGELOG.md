@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`ScanConfig.ruled_forms()` — printed-rule veto for degraded, heavily-ruled scans** (issue #7,
+  the follow-up to #4). On faint Statement-of-Facts–style forms, a table/form rule that crosses text
+  is geometrically indistinguishable from a pen strike at the point of attribution (in-band,
+  two-sided ink, shattered fill) and StrikeNet saturates on both — so 0.9.1's fixes reduced *raw*
+  detections but left the *post-gate* over-flagging. This opt-in drops a detected line whose
+  appearance is a drawn rule: **solid** (`fill > 0.88`) and/or **dead-straight** (perpendicular
+  wobble `< 1.80` px @200 dpi). On the private 8-doc ruled-table benchmark it cuts struck-final
+  false positives **≈111 → 40 (−64%)** with **both** validated real-strike morphologies kept intact
+  (IOC's printed-style phrase strikes *and* ANT's handwritten one). It is **off by default**: on a
+  *clean* scan a real strike is also solid and straight, so this trades pristine-strike recall for
+  precision and must be enabled only when inputs are known-degraded ruled forms. Geometry-only, so
+  it applies on any OCR engine.
+- **`straightness` line field** — `lines.strike_lines` now reports each line's perpendicular ink
+  wobble (RMS px, normalized to `RENDER_DPI`), the metric behind the printed-rule veto.
+- **Regression tests** — `tests/test_printed_rule_veto.py` pins the default-off no-regression
+  behavior, the opt-in drop, and that a genuinely degraded (shattered + wobbly) strike is spared.
+
+### Notes
+- The issue-#7 proposal to veto via **Azure DI `tables[]` cell geometry** was implemented and
+  **rejected**: on the rotated/faint corpus the true strikes sit inside the same ruled cells with the
+  same edge-distance and column-span as the false positives, so a DI-table veto killed only ~4 FPs
+  without harming recall — or destroyed recall when loosened. The straightness/solidity signal
+  above is what actually separates them. The residual ~40 FPs (faint letterhead / handwritten-
+  ambiguous text with no clean geometric tell) remain for the post-1.0 CNN retrain (issue #4·C).
+
 ## [0.9.1] — 2026-07-26
 
 Correctness patch for scanned, tightly-ruled tables and forms analyzed via Azure Document

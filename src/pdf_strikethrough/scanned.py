@@ -31,6 +31,15 @@ INK_SHORT_LEN_IN    = 0.50   # pixel test REQUIRED only for lines shorter than t
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
                              # strike, unless it shows through-glyph ink on BOTH sides (Fix B, 0.9.1)
+# --- printed-rule veto (issue #7 / v0.9.2): the strong scanned-FP driver. A degraded-scan
+# table rule / form line rides a dead-straight, near-solid path; a pen or typed strike crossing
+# raised glyphs SHATTERS (fill drops) and WANDERS (perpendicular wobble rises). Both known
+# real-strike morphologies on the SOF corpus -- IOC's printed-style phrase strikes and ANT's
+# handwritten one -- clear both bars (fill<=0.79, wobble>=2.3 px@200dpi); the FP rules do not.
+# Balanced point (validated: FP 106->37 on the 8-doc corpus, 0 loss on either real strike).
+# Geometry-only, so it applies on every OCR engine (no confidence needed).
+PRINTED_RULE_FILL_MAX     = 0.88  # fill above this = a solid drawn rule, not a shattered strike
+PRINTED_RULE_STRAIGHT_MAX = 1.80  # wobble px @RENDER_DPI below this = a drawn rule, not a strike
 TWIN_MIN_LEN_IN     = 0.60   # substantial line: >=2 fully-struck words, or one word + long line
 FULL_CHAR_COVER     = 0.70   # unioned char coverage >= this -> whole word counts as struck
 
@@ -59,10 +68,21 @@ class ScanConfig:
     page_edited_min: float = 0.03     # frac words conf<=0.90 >= this -> page has pen edits
     cnn_p_hi: float | None = None     # override the CNN struck threshold (operating point); None = model default
     cnn_p_lo: float | None = None     # override the CNN clean threshold; None = model default
+    veto_printed_rules: bool = False  # drop solid/dead-straight lines as drawn rules (issue #7)
 
     @classmethod
     def azure_di(cls):
         return cls()
+
+    @classmethod
+    def ruled_forms(cls, **kw):
+        """Precision bias for DEGRADED, HEAVILY-RULED scans (e.g. Statement-of-Facts forms) where a
+        faint table/form rule crossing text mimics a pen strike and the CNN over-fires on it. Turns
+        on the printed-rule veto (:func:`_is_printed_rule`): a detected line that is solid and/or
+        dead-straight is a drawn rule, not a strike. Off by default because on a CLEAN scan a real
+        strike is ALSO solid and straight — enable this only when inputs are known-degraded ruled
+        forms and precision matters more than catching a pristine strike. See issue #7."""
+        return cls(veto_printed_rules=True, **kw)
 
     @classmethod
     def confidence_free(cls):
@@ -107,6 +127,13 @@ def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):
     return float(above), float(below)
 
 
+def _is_printed_rule(ln):
+    """A detected line whose appearance is a drawn rule (solid and/or dead-straight), not a strike.
+    Keyed on stored line geometry only (no raster access). See the PRINTED_RULE_* constants."""
+    return (ln.get("fill", 1.0) > PRINTED_RULE_FILL_MAX
+            or ln.get("straightness", 99.0) < PRINTED_RULE_STRAIGHT_MAX)
+
+
 def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
     """(tagged_lines, struck_words) from detected strokes + OCR words.
     `words`: list of ocr.Word (bbox in [0,1] fractions). `gray`: the page raster the lines were
@@ -128,6 +155,10 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
         # at a different height over each word — a single global center mis-attributes them all).
         (sx, sy), (ex, ey) = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
         short_line = ln.get("len_in", 0.0) < INK_SHORT_LEN_IN
+
+        if config.veto_printed_rules and _is_printed_rule(ln):
+            tagged.append({**ln, "label": "rule", "struck": [], "rel": None, "words": []})
+            continue
 
         def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None, strike_geom=False):
             wx0, wy0, wx1, wy1 = wbox
