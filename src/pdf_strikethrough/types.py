@@ -56,6 +56,10 @@ class StruckWord(TypedDict, total=False):
     cnn_prob: Optional[float]    # StrikeNet probability (None if the crop was too small to score)
     cnn_agrees: Optional[bool]   # on 'auto' records: did the CNN confirm at p_hi? (None if unscored)
     conf: Optional[float]        # OCR word confidence, if the backend supplied one
+    geom_corroborated: bool      # has an in-band, through-glyph, shattered-fill strike (real-strike
+                                 # geometry) — spares the word from the DI-confidence veto
+    conf_veto: bool              # True when the 0.9.1 DI-confidence veto downgraded this record
+                                 # (OCR conf > max_clean_conf AND no corroborating geometry)
 
 
 class Passage(TypedDict, total=False):

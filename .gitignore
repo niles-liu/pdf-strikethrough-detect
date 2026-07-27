@@ -13,3 +13,6 @@ venv/
 
 # benchmark corpus — public PDFs listed in benchmarks/manifest.json, downloaded locally
 /benchmarks/corpus/
+
+# private benchmark corpora (e.g. the issue-#4 confidence-veto ruled-table set) — never commit
+/benchmarks/private/

@@ -25,8 +25,12 @@ PARTIAL_MIN_WCOV    = 0.12   # ...and >= this fraction of the word width
 PARTIAL_ISO_MAX_OFF = 0.08   # isolated partial (line strikes nothing else): must sit dead-center
 INK_MAX_OFF         = 0.40   # pixel test still considered up to this |off| (box-lies rescue)
 INK_MIN_FRAC        = 0.35   # min fraction of covered columns with glyph ink above resp. below
+INK_ONESIDE_MAX     = 0.15   # a side with less ink than this is "empty": the underline/table-rule
+                             # signature is ink well on ONE side and ~none on the other (Fix B, 0.9.1)
 INK_SHORT_LEN_IN    = 0.50   # pixel test REQUIRED only for lines shorter than this (+ rescues)
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
+TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
+                             # strike, unless it shows through-glyph ink on BOTH sides (Fix B, 0.9.1)
 TWIN_MIN_LEN_IN     = 0.60   # substantial line: >=2 fully-struck words, or one word + long line
 FULL_CHAR_COVER     = 0.70   # unioned char coverage >= this -> whole word counts as struck
 
@@ -125,7 +129,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
         (sx, sy), (ex, ey) = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
         short_line = ln.get("len_in", 0.0) < INK_SHORT_LEN_IN
 
-        def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None):
+        def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None, strike_geom=False):
             wx0, wy0, wx1, wy1 = wbox
             f0 = (max(lx0, wx0) - wx0) / max(wx1 - wx0, 1e-9)
             f1 = (min(lx1, wx1) - wx0) / max(wx1 - wx0, 1e-9)
@@ -134,7 +138,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
             return {"text": txt, "chars": txt[c0:c1], "char_span": (c0, c1), "strong": strong,
                     "bbox_frac": wbox, "off": round(off, 2), "wcov": round(wcov, 2),
                     "cover_frac": (round(f0, 2), round(f1, 2)), "line_idx": li, "ink_ok": ink_ok,
-                    "conf": conf}
+                    "conf": conf, "strike_geom": strike_geom}
 
         hits, weak_band = [], []
         best = None
@@ -154,30 +158,53 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
             if abs(off) > INK_MAX_OFF or wcov < PARTIAL_MIN_WCOV:
                 continue
             in_band = abs(off) <= STRIKE_TOL
+            # Through-glyph ink at this word (see _ink_above_below). As of 0.9.1 this runs for EVERY
+            # hit — it was skipped for in-band lines, so a full-width table rule rode high fill
+            # straight to tier 'auto' (issue #4). `both_ink` requires substantial ink on both sides;
+            # `one_sided` is the underline/rule signature (well on one side, ~none on the other) and
+            # is kept distinct so a real strike over SPARSE text still reads as two-sided, not one.
+            wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
+            ends = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
+            above, below = _ink_above_below(ink, ends, ln.get("run_px", 3.0), wpx)
+            both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
+            one_sided = max(above, below) >= INK_MIN_FRAC and min(above, below) < INK_ONESIDE_MAX
+            line_fill = ln.get("fill", 1.0)
             if (not in_band) or short_line:
-                wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
-                ends = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
-                above, below = _ink_above_below(ink, ends, ln.get("run_px", 3.0), wpx)
-                if above < INK_MIN_FRAC or below < INK_MIN_FRAC:
+                if not both_ink:
                     # OCR damage is the tiebreaker — only meaningful when confidences are
                     # calibrated, so the rescue is off under confidence_free()
                     rescue = (config.confidence_gating and in_band
                               and conf is not None and conf <= config.inkfail_max_conf)
                     if not rescue:
                         continue
+            elif (line_fill >= FILL_STRONG and ln.get("len_in", 0.0) >= TABLE_RULE_MIN_LEN_IN
+                  and one_sided):
+                # Fix B (0.9.1): a long, solid (high-fill) in-band line with ink on only ONE side
+                # is a table rule / underline, not a strike. Previously in-band long lines skipped
+                # the ink test entirely and rode high fill straight to 'auto'. Real strikes SHATTER
+                # on the glyphs (fill < FILL_STRONG) and keep ink on BOTH sides, so they are spared.
+                continue
             ink_ok = not in_band
+            # Strike-geometry corroboration (0.9.1): a genuine pen strike crosses the x-height
+            # (in-band), keeps substantial ink on BOTH sides, and SHATTERS on the glyphs (fill below
+            # the solid-rule threshold). The DI-confidence veto (detect.apply_cnn_verdict) uses this
+            # so only strong two-sided geometry earns a high-OCR-confidence word a reprieve.
+            strike_geom = in_band and both_ink and line_fill < FILL_STRONG
             wbox = (wx0, wy0, wx1, wy1)
             if wcov >= MIN_WORD_XOVER:
-                hits.append(make_hit(wbox, txt, off, wcov, strong=True, ink_ok=ink_ok, conf=conf))
+                hits.append(make_hit(wbox, txt, off, wcov, strong=True, ink_ok=ink_ok, conf=conf,
+                                     strike_geom=strike_geom))
             elif lcov >= PARTIAL_MIN_LCOV and len(txt) >= 2:
-                h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf)
+                h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf,
+                             strike_geom=strike_geom)
                 if h["char_span"][1] - h["char_span"][0] >= PARTIAL_MIN_CHARS:
                     hits.append(h)
             else:
-                weak_band.append((wbox, txt, off, wcov, ink_ok, conf))
+                weak_band.append((wbox, txt, off, wcov, ink_ok, conf, strike_geom))
         if any(h["strong"] for h in hits):
-            for wbox, txt, off, wcov, ink_ok, conf in weak_band:
-                h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf)
+            for wbox, txt, off, wcov, ink_ok, conf, strike_geom in weak_band:
+                h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf,
+                             strike_geom=strike_geom)
                 if h["char_span"][1] - h["char_span"][0] >= PARTIAL_MIN_CHARS:
                     hits.append(h)
         else:
@@ -239,6 +266,9 @@ def consolidate_struck(hits, tagged, use_conf=True):
             "line_idx": sorted({h["line_idx"] for h in hs}),
         }
         rec["twin"] = any(h.get("twin") for h in hs)
+        # True when any fragment carries genuine strike geometry (in-band, through-glyph ink,
+        # shattered fill). The DI-confidence veto keeps such a word even at high OCR confidence.
+        rec["geom_corroborated"] = any(h.get("strike_geom") for h in hs)
         rec["score"] = score_struck(rec, tagged, use_conf=use_conf)
         rec["tier"] = ("auto" if rec["score"] >= AUTO_SCORE
                        else ("review" if rec["score"] >= REVIEW_SCORE else "weak"))
@@ -321,7 +351,7 @@ def promote_context_orphans(struck, words):
                     promoted.append({
                         "text": txt, "chars": txt, "char_span": (0, len(txt)), "partial": False,
                         "bbox_frac": wbox, "conf": conf, "off": None, "wcov": 0.0,
-                        "line_idx": [], "twin": False, "orphan": True,
+                        "line_idx": [], "twin": False, "orphan": True, "geom_corroborated": False,
                         "score": round(0.22 + 0.18 * frac, 2), "tier": "review",
                     })
             i = j

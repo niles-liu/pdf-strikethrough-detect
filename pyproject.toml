@@ -42,7 +42,7 @@ rapidocr = ["rapidocr>=3.2", "onnxruntime>=1.16"]   # free, pip-only scanned-wor
                                                     # (>=3.2: nested word_results shape)
 tesseract = ["pytesseract>=0.3.10"]    # needs the tesseract system binary too
 torch = ["torch>=2.0"]                 # optional .pt fallback for the CNN
-dev = ["pytest>=7.0", "ruff>=0.6"]     # tests + the linter CONTRIBUTING/CI run
+dev = ["pytest>=7.0", "ruff==0.15.20"]   # tests + the linter CONTRIBUTING/CI run (pinned == CI)
 
 [project.scripts]
 pdf-strikethrough = "pdf_strikethrough.__main__:main"
@@ -60,7 +60,12 @@ version = { attr = "pdf_strikethrough.__version__" }
 line-length = 100        # the codebase targets ~99 cols
 
 [tool.ruff.lint]
-# ruff's default select is E4/E7/E9 + F. Allow the project's deliberate compact style:
+# Pin the rule set explicitly to ruff's documented historical default (E4/E7/E9 + F). Without a
+# select, newer ruff releases expand the implicit default and flag rules (I/UP/RUF/PLR/B/FURB/S)
+# the project never opted into, breaking `lint` on unrelated PRs. The ruff version is pinned too
+# (dev extra + ruff-action) so local == CI.
+select = ["E4", "E7", "E9", "F"]
+# Allow the project's deliberate compact style:
 ignore = [
     "E741",  # single-letter names (l = line) are intentional in the stroke-geometry math
     "E702",  # a handful of compact "a; b" statements in tests/helpers
