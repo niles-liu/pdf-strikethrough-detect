@@ -31,13 +31,12 @@ INK_SHORT_LEN_IN    = 0.50   # pixel test REQUIRED only for lines shorter than t
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
                              # strike, unless it shows through-glyph ink on BOTH sides (Fix B, 0.9.1)
-# --- printed-rule veto (issue #7 / v0.9.2): the strong scanned-FP driver. A degraded-scan
-# table rule / form line rides a dead-straight, near-solid path; a pen or typed strike crossing
-# raised glyphs SHATTERS (fill drops) and WANDERS (perpendicular wobble rises). Both known
-# real-strike morphologies on the SOF corpus -- IOC's printed-style phrase strikes and ANT's
-# handwritten one -- clear both bars (fill<=0.79, wobble>=2.3 px@200dpi); the FP rules do not.
-# Balanced point (validated: FP 106->37 on the 8-doc corpus, 0 loss on either real strike).
-# Geometry-only, so it applies on every OCR engine (no confidence needed).
+# --- printed-rule veto (issue #7 / v0.10.0), opt-in via ScanConfig.ruled_forms(): a degraded-scan
+# table rule / form line rides a dead-straight, near-solid path, while a pen or typed strike crossing
+# raised glyphs SHATTERS (fill drops) and WANDERS (wobble rises). Geometry-only, so it needs no OCR
+# confidence. PROVISIONAL and thin: calibrated on ONE positive document -- the benchmark corpus holds
+# 3 real strikes, all the same morphology, and they clear both bars. Do not tighten these without
+# more labeled positives; the measured distribution is in the corpus ground-truth.json _calibration.
 PRINTED_RULE_FILL_MAX     = 0.88  # fill above this = a solid drawn rule, not a shattered strike
 PRINTED_RULE_STRAIGHT_MAX = 1.80  # wobble px @RENDER_DPI below this = a drawn rule, not a strike
 TWIN_MIN_LEN_IN     = 0.60   # substantial line: >=2 fully-struck words, or one word + long line
@@ -61,7 +60,10 @@ class ScanConfig:
     ``recall_first()`` / ``precision_first()`` pick the CNN *operating point* — the strike/clean
     decision threshold applied to StrikeNet's probability. ``cnn_p_hi``/``cnn_p_lo`` (None = the
     model's shipped thresholds) override it; calibrate them from labeled data with
-    :mod:`pdf_strikethrough.calibration`."""
+    :mod:`pdf_strikethrough.calibration`.
+
+    ``ruled_forms()`` is a **provisional** precision bias for degraded, heavily-ruled scans; it is
+    outside the v1.0 stability contract and may be removed. See its docstring."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # fill<FILL_STRONG: some struck word must OCR at or below this
     inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued if OCR is this damaged
@@ -75,14 +77,21 @@ class ScanConfig:
         return cls()
 
     @classmethod
-    def ruled_forms(cls, **kw):
-        """Precision bias for DEGRADED, HEAVILY-RULED scans (e.g. Statement-of-Facts forms) where a
-        faint table/form rule crossing text mimics a pen strike and the CNN over-fires on it. Turns
-        on the printed-rule veto (:func:`_is_printed_rule`): a detected line that is solid and/or
-        dead-straight is a drawn rule, not a strike. Off by default because on a CLEAN scan a real
-        strike is ALSO solid and straight — enable this only when inputs are known-degraded ruled
-        forms and precision matters more than catching a pristine strike. See issue #7."""
-        return cls(veto_printed_rules=True, **kw)
+    def ruled_forms(cls, veto_printed_rules=True, **kw):
+        """**PROVISIONAL** (0.10.0) — precision bias for DEGRADED, HEAVILY-RULED scans (e.g.
+        Statement-of-Facts forms) where a faint table/form rule crossing text mimics a pen strike and
+        the CNN over-fires on it. Turns on the printed-rule veto (:func:`_is_printed_rule`): any
+        detected line that is solid and/or dead-straight is treated as printed furniture rather than
+        a strike. In practice most of what it removes is short solid/straight *fragments* — glyph
+        strokes and pieces of rules thrown off by a degraded scan — not just full-width rules. Off by
+        default because on a CLEAN scan a real strike is ALSO solid and straight — enable this only
+        when inputs are known-degraded ruled forms and precision matters more than catching a
+        pristine strike. See issue #7.
+
+        This is a stopgap for one input class, and its thresholds are calibrated on a small labeled
+        set. It is **not covered by the v1.0 stability contract** and is expected to be removed once
+        StrikeNet handles ruled forms natively (issue #4·C); pin exactly if you depend on it."""
+        return cls(veto_printed_rules=veto_printed_rules, **kw)
 
     @classmethod
     def confidence_free(cls):
@@ -129,9 +138,15 @@ def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):
 
 def _is_printed_rule(ln):
     """A detected line whose appearance is a drawn rule (solid and/or dead-straight), not a strike.
-    Keyed on stored line geometry only (no raster access). See the PRINTED_RULE_* constants."""
-    return (ln.get("fill", 1.0) > PRINTED_RULE_FILL_MAX
-            or ln.get("straightness", 99.0) < PRINTED_RULE_STRAIGHT_MAX)
+    Keyed on stored line geometry only (no raster access). See the PRINTED_RULE_* constants.
+
+    A True answer DROPS the detection, so a missing or None metric must read as "not a rule" — both
+    directions here fail safe. ``classify_lines`` accepts caller-built line dicts, and defaulting an
+    absent `fill` to a high number (as this did before 0.10.0) silently discarded every detection.
+    """
+    fill, wobble = ln.get("fill"), ln.get("straightness")
+    return ((fill is not None and fill > PRINTED_RULE_FILL_MAX)
+            or (wobble is not None and wobble < PRINTED_RULE_STRAIGHT_MAX))
 
 
 def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
@@ -148,6 +163,13 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
 
     tagged, struck_words = [], []
     for li, ln in enumerate(lines):
+        # Decided before any attribution work: a drawn rule gets no words, so there is nothing to
+        # attribute. NOTE `tagged` must stay index-aligned with `lines` — score_struck() looks lines
+        # up as tagged[line_idx] — so every branch appends exactly one entry per input line.
+        if config.veto_printed_rules and _is_printed_rule(ln):
+            tagged.append({**ln, "label": "rule", "struck": [], "rel": None, "words": []})
+            continue
+
         x0, y0, x1, y1 = ln["bbox_px"]
         lx0, lx1 = x0 / pix_w, x1 / pix_w
         llen = max(lx1 - lx0, 1e-9)
@@ -155,10 +177,6 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
         # at a different height over each word — a single global center mis-attributes them all).
         (sx, sy), (ex, ey) = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
         short_line = ln.get("len_in", 0.0) < INK_SHORT_LEN_IN
-
-        if config.veto_printed_rules and _is_printed_rule(ln):
-            tagged.append({**ln, "label": "rule", "struck": [], "rel": None, "words": []})
-            continue
 
         def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None, strike_geom=False):
             wx0, wy0, wx1, wy1 = wbox
