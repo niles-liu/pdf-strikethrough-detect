@@ -4,33 +4,67 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] — unreleased
+
+Minor bump, not a patch: this adds public API (`ScanConfig.ruled_forms()`, the
+`veto_printed_rules` field, the `straightness` line field). Nothing changes by default.
 
 ### Added
 - **`ScanConfig.ruled_forms()` — printed-rule veto for degraded, heavily-ruled scans** (issue #7,
-  the follow-up to #4). On faint Statement-of-Facts–style forms, a table/form rule that crosses text
-  is geometrically indistinguishable from a pen strike at the point of attribution (in-band,
-  two-sided ink, shattered fill) and StrikeNet saturates on both — so 0.9.1's fixes reduced *raw*
-  detections but left the *post-gate* over-flagging. This opt-in drops a detected line whose
-  appearance is a drawn rule: **solid** (`fill > 0.88`) and/or **dead-straight** (perpendicular
-  wobble `< 1.80` px @200 dpi). On the private 8-doc ruled-table benchmark it cuts struck-final
-  false positives **≈111 → 40 (−64%)** with **both** validated real-strike morphologies kept intact
-  (IOC's printed-style phrase strikes *and* ANT's handwritten one). It is **off by default**: on a
-  *clean* scan a real strike is also solid and straight, so this trades pristine-strike recall for
-  precision and must be enabled only when inputs are known-degraded ruled forms. Geometry-only, so
-  it applies on any OCR engine.
+  the follow-up to #4). **PROVISIONAL — see Stability.** On faint Statement-of-Facts–style forms a
+  printed table/form rule that crosses text is, at the point of attribution, indistinguishable from a
+  pen strike (in-band, two-sided ink, shattered fill), so 0.9.1 cut *raw* detections but left the
+  *post-gate* over-flagging. This opt-in drops any detected line that looks like printed furniture —
+  **solid** (`fill > 0.88`) or **dead-straight** (perpendicular wobble `< 1.80` px @200 dpi) — which
+  in practice is mostly short solid/straight *fragments* (glyph strokes, pieces of rules) rather than
+  full-width rules. Geometry-only, so it works on any OCR engine, including confidence-free ones
+  where the CNN-confidence machinery never fires.
+
+  **Off by default**, and it must stay that way for general input: on a *clean* scan a real strike is
+  also solid and straight, so this trades pristine-strike recall for precision. Enable it only where
+  the inputs are known-degraded ruled forms. On the private 8-document ruled-table benchmark, scored
+  against a verified label set, it cuts false positives **113 → 42 (−63%)** with **recall unchanged**.
+  Reproduce with `python benchmarks/confidence_veto.py --ab`.
 - **`straightness` line field** — `lines.strike_lines` now reports each line's perpendicular ink
-  wobble (RMS px, normalized to `RENDER_DPI`), the metric behind the printed-rule veto.
-- **Regression tests** — `tests/test_printed_rule_veto.py` pins the default-off no-regression
-  behavior, the opt-in drop, and that a genuinely degraded (shattered + wobbly) strike is spared.
+  wobble (RMS px, normalized to `RENDER_DPI`), the metric behind the veto. It is **`None` when the
+  wobble is not measurable**; treat None as "unknown", never as "straight".
+- **`benchmarks/confidence_veto.py --ab`** — runs the corpus with the veto off and on and scores
+  TP/FP/FN against a `ground-truth.json` label set, flagging recall loss and unlabeled documents. A
+  raw struck-final count is *not* a false-positive count: it includes the real strikes.
+
+### Fixed
+- **The veto could silently discard every detection.** `_is_printed_rule` defaulted a missing `fill`
+  to `1.0` — above the "solid" bar — so a caller passing hand-built line dicts to `classify_lines`
+  with the veto on lost all output, with no error. Missing and `None` metrics now read as "not a
+  rule"; the veto only drops on a metric it actually has.
+- **An unmeasurable wobble no longer reads as dead-straight.** It returned `0.0`, below the veto's
+  bar, which dropped the line; it now returns a sentinel surfaced as `None`.
+- **`strike_lines` is 1.7–2.3x faster.** Computing `straightness` ran a per-sample Python loop
+  costing ~37% of `strike_lines` runtime on *every* scanned page, including the default path where the
+  veto is off. Now vectorized, verified value-identical across 1,698 calls on the corpus.
+
+### Stability
+- `ruled_forms()`, `veto_printed_rules` and `straightness` are **provisional** and **not covered by
+  the v1.0 stability contract**. This is a stopgap for one input class, its thresholds are calibrated
+  on a single positive document, and it is expected to be **removed** once the model handles ruled
+  forms natively (issue #4·C). Pin exactly if you depend on it.
 
 ### Notes
-- The issue-#7 proposal to veto via **Azure DI `tables[]` cell geometry** was implemented and
-  **rejected**: on the rotated/faint corpus the true strikes sit inside the same ruled cells with the
-  same edge-distance and column-span as the false positives, so a DI-table veto killed only ~4 FPs
-  without harming recall — or destroyed recall when loosened. The straightness/solidity signal
-  above is what actually separates them. The residual ~40 FPs (faint letterhead / handwritten-
-  ambiguous text with no clean geometric tell) remain for the post-1.0 CNN retrain (issue #4·C).
+- **Corrects the unreleased 0.9.2 notes for this work**, which claimed `≈111 → 40 (−64%)` with "both
+  validated real-strike morphologies kept intact". Both halves were wrong: the count was unscored, so
+  it mixed real strikes in with false positives; and the second "morphology" — a handwritten `draft`
+  — is itself a false positive, the crossbar of a cursive `ft` ligature on a page that deletes
+  nothing. The benchmark corpus holds **3 real strikes on 1 document**, so this veto rests on one
+  validated morphology, and its thresholds were partly tuned to preserve a false positive.
+- **The residual 42 false positives are three classes:** printed form captions and typed remark text
+  at high OCR confidence with a corroborating shared line; faint letterhead and address blocks; and
+  handwritten form entries where the classifier fires on the writer's own ink. Only the last is
+  unreachable by geometry. All three are hard-negative material for the CNN retrain (issue #4·C).
+- **Rejected on measurement, not opinion:** an Azure DI `tables[]` cell-geometry veto (true strikes
+  sit in the same ruled cells as the false positives); detrending `straightness` to catch dotted
+  fill-in rules (missed them, and halved the real strikes' margin); and raising the wobble threshold
+  (would buy 1 false positive of 42 for a 0.19 px margin on one document). Rationale and measurements
+  are recorded at each site in the source.
 
 ## [0.9.1] — 2026-07-26
 
