@@ -145,6 +145,49 @@ def _spine_run_thickness(ink, center, u, length, max_k=20):
     return float(np.percentile(runs[base], 25))
 
 
+STRAIGHTNESS_MIN_SAMPLES = 3     # fewer ink-bearing samples than this: wobble is not measurable
+
+
+def _spine_straightness(ink, center, u, length, run_px):
+    """RMS perpendicular wobble (px) of the local ink centroid about the straight spine, sampled
+    along the major axis. A printed rule rides a dead-straight path (~0-1 px); a pen or typed
+    strike crossing raised glyphs on a degraded scan wanders more. Returned in raw px at the
+    caller's dpi — normalize to RENDER_DPI outside so a threshold is resolution-independent.
+
+    Returns ``inf`` when the wobble is not measurable (non-finite `run_px`, or fewer than
+    ``STRAIGHTNESS_MIN_SAMPLES`` ink-bearing samples). ``inf`` is the fail-SAFE direction: the
+    scanned printed-rule veto reads a LOW value as "drawn rule, drop the detection", so an
+    unmeasurable line must never come back low or a real strike is silently lost.
+
+    TRIED AND REJECTED (2026-07-29): **detrending** the deviations — residual RMS about a fitted line
+    instead of scatter about their mean — to stop a spine/ink angular mismatch (a linear ramp) from
+    inflating the wobble of dotted pre-printed rules. Measured, it missed them anyway (their wobble is
+    jitter across sparse dots, not a ramp) and halved the real strikes' margin above the veto bar.
+    Dotted fill-in rules are underlines below the baseline; they need a positional discriminator.
+    """
+    if not np.isfinite(run_px):
+        return float("inf")
+    n = max(int(length), 2)
+    ts = np.linspace(-length / 2.0, length / 2.0, n)
+    v = np.array([-u[1], u[0]])                       # unit perpendicular
+    H, W = ink.shape
+    win = max(3, int(round(run_px * 2)))
+    offs = np.arange(-win, win + 1)
+    # Sample the whole (n x 2*win+1) perpendicular neighbourhood in one shot. This runs on the
+    # DEFAULT path for every detected line — a per-sample Python loop cost ~37% of strike_lines.
+    cx = center[0] + ts * u[0]
+    cy = center[1] + ts * u[1]
+    xs = np.clip(np.round(cx[:, None] + offs[None, :] * v[0]), 0, W - 1).astype(np.intp)
+    ys = np.clip(np.round(cy[:, None] + offs[None, :] * v[1]), 0, H - 1).astype(np.intp)
+    hit = ink[ys, xs]
+    cnt = hit.sum(axis=1)
+    inked = cnt > 0
+    if int(inked.sum()) < STRAIGHTNESS_MIN_SAMPLES:
+        return float("inf")
+    devs = (hit * offs[None, :]).sum(axis=1)[inked] / cnt[inked]
+    return float(np.std(devs))
+
+
 def _collect_fragments(ink, dpi, scale=1.0):
     """Per-angle opening + gap-bridging with PERMISSIVE per-fragment filters.
        Returns fragments as (start_xy, end_xy) endpoint pairs along the major axis.
@@ -229,7 +272,9 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
 def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     """Detect near-horizontal straight-ish lines (strikes / underlines / rules) on a grayscale
     page raster (uint8 HxW ndarray). Returns dicts:
-        {bbox_px, ends_px, len_in, angle_deg, fill, run_px}
+        {bbox_px, ends_px, len_in, angle_deg, fill, run_px, straightness}
+    `straightness` is perpendicular ink wobble in px normalized to RENDER_DPI, or **None** when it
+    is not measurable — treat None as "unknown", never as "straight" (see `_spine_straightness`).
     `dpi` is the raster's px-per-inch — pass the DPI the image was rendered at; both the length
     tunables and the pixel-space tunables (calibrated at 200 dpi) rescale from it. Pass `ink`
     (a bool mask) to reuse a precomputed binarization.
@@ -263,6 +308,10 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
         # floored: unfloored, a 2-px strike at 72 dpi faces a "> 1.44 px" gate and is rejected
         if run_px > max(2.0, MAX_STROKE_RUN_PX * scale):
             return None, True
+        # perpendicular wobble, normalized to RENDER_DPI so the scanned-path printed-rule veto's
+        # threshold is dpi-independent (issue #7). Reported as None, never a number, when it is not
+        # measurable: the veto reads LOW as "drawn rule", and None keeps the field JSON-safe.
+        wobble = _spine_straightness(ink, center, u, length, run_px) / max(scale, 1e-9)
         x0, y0 = int(min(start[0], end[0])), int(min(start[1], end[1]))
         x1, y1 = int(max(start[0], end[0])), int(max(start[1], end[1]))
         x1 = max(x1, x0 + 1)                   # never a zero-area box: near-horizontal lines
@@ -274,6 +323,7 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
             "angle_deg": round(angle, 1),
             "fill": round(fill, 2),
             "run_px": round(run_px, 1),
+            "straightness": round(wobble, 2) if np.isfinite(wobble) else None,
             "_len": length,
         }, False
 
