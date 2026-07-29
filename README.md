@@ -277,16 +277,12 @@ live text as if deleted (RAG / indexing). Calibrate the threshold from your own 
 `recall_first(cnn_p_hi=…)`.
 
 **Degraded ruled forms (provisional).** On faint, heavily-ruled scans — Statement-of-Facts forms,
-dense tables — a printed form rule that crosses text is hard to tell from a pen strike at the point
-of attribution, and the classifier over-fires on it. `ScanConfig.ruled_forms()` turns on a
-geometry-only *printed-rule veto*: a detected line that is solid or dead-straight is treated as a
-drawn rule rather than a strike. It is **off by default**, because on a clean scan a real strike is
-also solid and straight — so it trades pristine-strike recall for precision, and belongs only where
-you know the inputs are degraded ruled forms.
-
-> Treat this as **provisional**. It is a stopgap for one input class, its thresholds are calibrated
-> on a small labeled set, it is **not covered by the v1.0 stability contract**, and it is expected to
-> be removed once the model handles ruled forms natively. Pin exactly if you depend on it.
+dense tables — a printed rule crossing text is hard to tell from a pen strike, and the classifier
+over-fires on it. `ScanConfig.ruled_forms()` turns on a geometry-only veto that discards solid or
+dead-straight lines as printed furniture. **Off by default:** on a clean scan a real strike is also
+solid and straight, so it trades pristine-strike recall for precision. Treat it as **provisional and
+outside the v1.0 stability contract** — a stopgap calibrated on a small labeled set, expected to be
+removed once the model handles ruled forms natively. Pin exactly if you depend on it.
 
 **Improving the model.** `--dump-crops DIR` (or `st.dump_crops`) exports every crop the pipeline
 scored plus its verdict as a labeling set; label it, retrain with
