@@ -4,62 +4,6 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-- **`benchmarks/confidence_veto.py --switches`** — scores all four combinations of the two
-  provisional precision switches against the label set, reporting what each buys alone and how much
-  they overlap. The `--ab` mode only ever compared the default against `ruled_forms()`.
-
-### Performance
-- **`lines.strike_lines` ~1.5x faster**, which is ~75% of the per-page cost on the scanned path.
-  `_stitch_fragments` (the hottest loop — thousands of fragments on a dense scan) rebuilt its
-  candidate list as a fresh Python slice per fragment and tested every pair scalar-wise; the pair
-  tests are now vectorized behind a sorted-order `searchsorted` bound, taking it from ~3.8s to ~0.46s
-  on a dense page. The near-duplicate dedup made a scalar IoU call per candidate/kept pair (~257k on
-  that page) and now runs one vectorized IoU pass per candidate. `_spine_fill` samples all
-  perpendicular offsets in one indexing pass instead of looping.
-
-  **Output is unchanged, and verified so:** every line field and every stitch-group partition was
-  compared against the previous implementation across 41 corpus pages — 0 differences — and the
-  corpus false-positive counts are identical (113 / 42 / 95 / 28).
-- **`ScanConfig.rescue_clean_chains` — an independent second precision switch for degraded ruled
-  scans** (issue #7 follow-up). **PROVISIONAL — see Stability.** `classify_lines` rejects a
-  marginal-fill line whose every word OCRs *cleanly* as a glyph chain, on the principle that a real
-  strike corrupts what it crosses. An escape spared such a line anyway when the page looked
-  pen-edited (`edit_prior >= page_edited_min`) and the line was substantial, handing the decision to
-  the CNN — which, saturated on faint scans, confirmed nearly all of them. That escape is now a flag.
-
-  **`True` by default, and NOT bundled into `ruled_forms()`** — opt in per switch. The two switches
-  are separate code paths and each costs recall on its own terms, so a caller who has validated one
-  should not acquire the other by upgrading:
-
-  | configuration | struck-final | false positives | recall |
-  |---|---|---|---|
-  | `ScanConfig()` | 115 | 113 | 2/3 |
-  | `ruled_forms()` — printed-rule veto only | 44 | 42 (−63%) | 2/3 |
-  | `ScanConfig(rescue_clean_chains=False)` — this switch only | 97 | 95 (−16%) | 2/3 |
-  | `ruled_forms(rescue_clean_chains=False)` — **both** | 30 | **28 (−75%)** | 2/3 |
-
-  Private 8-document ruled-table corpus, scored against its verified label set; **recall is unchanged
-  at 2/3 in every configuration.** The two overlap on only 4 false positives (89 removed separately,
-  85 together), so they are substantially complementary rather than redundant. Reproduce:
-  `python benchmarks/confidence_veto.py --switches`.
-
-  **Why the escape misfires on ruled forms** (measured 2026-08-05): `edit_prior` is the fraction of a
-  page's words OCRing below 0.90, which on a degraded multilingual scan tracks *scan quality*, not pen
-  edits. Across the corpus it is **anti-correlated with real edits** — the one page carrying genuine
-  strikes scores `0.027`, below the `0.03` floor, while edit-free degraded scans score `0.09`–`0.32`.
-  The escape is not needed for those strikes either: all three damage their word's OCR
-  (`0.71` / `0.84` / `0.94` against neighbours at `0.98`–`1.0`), so the gate's primary condition
-  already spares them. A row-local variant of the edit test was **rejected on measurement** — a
-  damaged word in the line's own row band is present for 41 escape-taking lines and absent for 46.
-
-  **Left ON by default** because that evidence is one document wide, and a real strike that leaves
-  OCR undamaged is exactly the case the escape exists for. ⚠️ **Limitation:** the whole chain gate
-  sits behind `confidence_gating`, so unlike the printed-rule veto this switch is **inert on
-  confidence-free engines** (RapidOCR) and when words carry no confidence.
-
 ## [0.10.0] — 2026-07-29
 
 Minor, not patch: adds public API (`ScanConfig.ruled_forms()`, `veto_printed_rules`, the

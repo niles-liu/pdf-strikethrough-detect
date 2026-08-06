@@ -63,16 +63,7 @@ class ScanConfig:
     :mod:`pdf_strikethrough.calibration`.
 
     ``ruled_forms()`` is a **provisional** precision bias for degraded, heavily-ruled scans; it is
-    outside the v1.0 stability contract and may be removed. See its docstring.
-
-    ``rescue_clean_chains`` controls the chain gate's escape hatch (see :func:`classify_lines`). Set
-    it False on degraded ruled forms, where it is a dominant false-positive source: corpus FP 113
-    default, 95 with this alone, 42 with the printed-rule veto alone, 28 with both — recall unchanged
-    throughout. Deliberately NOT bundled into ``ruled_forms()``; the two overlap on only 4 FPs and
-    each costs recall on its own terms. ⚠ Unlike the veto it needs calibrated confidences, so it is
-    **inert when ``confidence_gating`` is off**. Rationale and per-switch measurements: the
-    ``rescue_clean_chains`` entry in ``CHANGELOG.md``, reproducible with
-    ``benchmarks/confidence_veto.py --switches``."""
+    outside the v1.0 stability contract and may be removed. See its docstring."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # fill<FILL_STRONG: some struck word must OCR at or below this
     inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued if OCR is this damaged
@@ -80,7 +71,6 @@ class ScanConfig:
     cnn_p_hi: float | None = None     # override the CNN struck threshold (operating point); None = model default
     cnn_p_lo: float | None = None     # override the CNN clean threshold; None = model default
     veto_printed_rules: bool = False  # drop solid/dead-straight lines as drawn rules (issue #7)
-    rescue_clean_chains: bool = True  # let an EDITED page's clean-OCR glyph chain reach the CNN
 
     @classmethod
     def azure_di(cls):
@@ -100,12 +90,7 @@ class ScanConfig:
 
         This is a stopgap for one input class, and its thresholds are calibrated on a small labeled
         set. It is **not covered by the v1.0 stability contract** and is expected to be removed once
-        StrikeNet handles ruled forms natively (issue #4·C); pin exactly if you depend on it.
-
-        Controls the printed-rule veto ONLY. On degraded ruled forms you usually also want
-        ``ruled_forms(rescue_clean_chains=False)``, the best-measured configuration; the two are
-        opted into separately so a caller who has validated one does not silently acquire the other.
-        """
+        StrikeNet handles ruled forms natively (issue #4·C); pin exactly if you depend on it."""
         return cls(veto_printed_rules=veto_printed_rules, **kw)
 
     @classmethod
@@ -281,12 +266,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
             if min_conf > config.max_clean_conf:
                 n_strong = sum(1 for h in hits if h["strong"])
                 substantial = n_strong >= 2 or (n_strong >= 1 and ln.get("len_in", 0) >= TWIN_MIN_LEN_IN)
-                # The escape: on a page that looks pen-edited, a substantial clean-OCR line might
-                # still be a real strike, so let the CNN call it. Turn OFF on degraded ruled forms —
-                # there `edit_prior` reads scan quality rather than edits (it is anti-correlated
-                # with real edits on the corpus) and the saturated CNN confirms whatever it is given.
-                if (config.rescue_clean_chains and substantial
-                        and edit_prior >= config.page_edited_min):
+                if edit_prior >= config.page_edited_min and substantial:
                     for h in hits:
                         h["twin"] = True       # pixel-twin on an edited page: CNN decides (->review)
                 else:
