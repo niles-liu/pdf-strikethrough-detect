@@ -89,16 +89,30 @@ def line_kernel(length, angle_deg):
     return k
 
 
+def _bbox_iou(a, b):
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    ix = max(0, min(ax1, bx1) - max(ax0, bx0))
+    iy = max(0, min(ay1, by1) - max(ay0, by0))
+    inter = ix * iy
+    if inter <= 0:
+        return 0.0
+    union = (ax1 - ax0) * (ay1 - ay0) + (bx1 - bx0) * (by1 - by0) - inter
+    return inter / max(union, 1)
+
+
 def _spine_fill(ink, center, u, length, halfwidth=2):
     """Fraction of steps along the major axis with raw ink within +/-halfwidth px perpendicular."""
     n = max(int(length), 2)
     ts = np.linspace(-length / 2.0, length / 2.0, n)
     v = np.array([-u[1], u[0]])
+    hit = np.zeros(n, dtype=bool)
     H, W = ink.shape
-    offs = np.arange(-halfwidth, halfwidth + 1)          # all perpendicular offsets in one pass
-    xs = np.clip(np.round(center[0] + ts * u[0] + offs[:, None] * v[0]).astype(int), 0, W - 1)
-    ys = np.clip(np.round(center[1] + ts * u[1] + offs[:, None] * v[1]).astype(int), 0, H - 1)
-    return float(ink[ys, xs].any(axis=0).mean())
+    for off in range(-halfwidth, halfwidth + 1):
+        xs = np.clip(np.round(center[0] + ts * u[0] + off * v[0]).astype(int), 0, W - 1)
+        ys = np.clip(np.round(center[1] + ts * u[1] + off * v[1]).astype(int), 0, H - 1)
+        hit |= ink[ys, xs]
+    return float(hit.mean())
 
 
 def _spine_run_thickness(ink, center, u, length, max_k=20):
@@ -228,30 +242,21 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
             a = parent[a]
         return a
 
-    if n:
-        # Endpoint arrays in start-x order. This is the pipeline's hottest loop (n runs to thousands
-        # on a dense scan), so the pair tests are vectorized per fragment; native dtype is preserved
-        # so the comparisons match the scalar ones exactly.
-        pts = np.asarray(frags)                       # (n, 2, 2): [frag][start|end][x|y]
-        order = np.argsort(pts[:, 0, 0], kind="stable")
-        sx, sy = pts[order, 0, 0], pts[order, 0, 1]
-        ex, ey = pts[order, 1, 0], pts[order, 1, 1]
-        idx = order.tolist()
-        for oi in range(n - 1):
-            # Only later fragments whose START lies within max_gap of i's END can stitch; start-x is
-            # sorted, so the rest are unreachable (what the scalar loop's `break` relied on). The
-            # bound is slack by a hair and the exact gap test is reapplied below.
-            hi = int(np.searchsorted(sx, ex[oi] + max_gap + 1e-3, side="right"))
-            lo = oi + 1
-            if hi <= lo:
+    order = sorted(range(n), key=lambda i: frags[i][0][0])
+    for oi, i in enumerate(order):
+        si, ei = frags[i]
+        for j in order[oi + 1:]:
+            sj, ej = frags[j]
+            gap = sj[0] - ei[0]
+            if gap > max_gap:
+                break
+            if sj[0] - si[0] > 0 and ej[0] - ei[0] < 0:
+                continue                      # j fully inside i's x-range: dedup handles overlap
+            if abs(ei[1] - sj[1]) > dy:
                 continue
-            ok = (sx[lo:hi] - ex[oi]) <= max_gap
-            ok &= np.abs(ey[oi] - sy[lo:hi]) <= dy
-            ok &= ~((sx[lo:hi] > sx[oi]) & (ex[lo:hi] < ex[oi]))  # j inside i: dedup handles overlap
-            for j in np.flatnonzero(ok):
-                ra, rb = find(idx[oi]), find(idx[lo + int(j)])
-                if ra != rb:
-                    parent[rb] = ra
+            ra, rb = find(i), find(j)
+            if ra != rb:
+                parent[rb] = ra
     groups = {}
     for i in range(n):
         groups.setdefault(find(i), []).append(i)
@@ -334,23 +339,10 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
                     cands.append(sub)
 
     cands.sort(key=lambda c: -c["_len"])                       # longest first, then drop overlaps
-    # Vectorized equivalent of "keep c unless it overlaps anything already kept": one IoU pass per
-    # candidate against every kept box at once, instead of a scalar call per pair.
     kept = []
-    boxes = np.empty((len(cands), 4), dtype=np.float64)
     for c in cands:
-        x0, y0, x1, y1 = c["bbox_px"]
-        if kept:
-            k = boxes[:len(kept)]
-            ix = np.minimum(k[:, 2], x1) - np.maximum(k[:, 0], x0)
-            iy = np.minimum(k[:, 3], y1) - np.maximum(k[:, 1], y0)
-            inter = np.maximum(ix, 0) * np.maximum(iy, 0)
-            union = (k[:, 2] - k[:, 0]) * (k[:, 3] - k[:, 1]) + (x1 - x0) * (y1 - y0) - inter
-            iou = np.where(inter > 0, inter / np.maximum(union, 1), 0.0)
-            if (iou >= DEDUP_IOU).any():
-                continue
-        boxes[len(kept)] = (x0, y0, x1, y1)
-        kept.append(c)
+        if all(_bbox_iou(c["bbox_px"], k["bbox_px"]) < DEDUP_IOU for k in kept):
+            kept.append(c)
     for c in kept:
         del c["_len"]
     return kept
