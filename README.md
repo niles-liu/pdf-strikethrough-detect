@@ -278,11 +278,20 @@ live text as if deleted (RAG / indexing). Calibrate the threshold from your own 
 
 **Degraded ruled forms (provisional).** On faint, heavily-ruled scans — Statement-of-Facts forms,
 dense tables — a printed rule crossing text is hard to tell from a pen strike, and the classifier
-over-fires on it. `ScanConfig.ruled_forms()` turns on a geometry-only veto that discards solid or
-dead-straight lines as printed furniture. **Off by default:** on a clean scan a real strike is also
-solid and straight, so it trades pristine-strike recall for precision. Treat it as **provisional and
-outside the v1.0 stability contract** — a stopgap calibrated on a small labeled set, expected to be
-removed once the model handles ruled forms natively. Pin exactly if you depend on it.
+over-fires on it. Two switches address it, both **off by default** and opted into separately:
+
+- `ScanConfig.ruled_forms()` — a geometry-only veto discarding solid or dead-straight lines as
+  printed furniture. Works with any OCR engine.
+- `rescue_clean_chains=False` — stops the chain gate handing a clean-OCR glyph chain to the CNN
+  because the page *looks* pen-edited; on degraded scans that signal reads scan quality, not edits.
+  Needs calibrated confidences, so it does nothing under `confidence_free()`.
+
+False positives on the private ruled-forms corpus, **recall unchanged in every configuration**:
+**113** default → **42** veto only → **95** chain switch only → **28** with both, i.e.
+`ScanConfig.ruled_forms(rescue_clean_chains=False)`. Not bundled, because each trades away recall on
+its own terms — on a clean scan a real strike is also solid and straight, and a real strike can leave
+OCR undamaged. Treat both as **provisional and outside the v1.0 stability contract**, expected to be
+removed once the model handles ruled forms natively. Pin exactly if you depend on them.
 
 **Improving the model.** `--dump-crops DIR` (or `st.dump_crops`) exports every crop the pipeline
 scored plus its verdict as a labeling set; label it, retrain with
