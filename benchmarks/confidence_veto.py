@@ -17,7 +17,11 @@ harness at a local copy — one subfolder per document, each holding a `*.pdf` a
 (an Azure DI `prebuilt-layout` analyze result, so no cloud call is made), plus an optional
 `ground-truth.json` at the corpus root (schema documented in its own `_schema` key):
 
-    python benchmarks/confidence_veto.py [CORPUS_DIR] [--ab]
+``--switches`` scores all four combinations of the two provisional precision switches
+(``veto_printed_rules`` and ``rescue_clean_chains``), since they are independent and opted into
+separately — it reports what each buys alone and how much they overlap.
+
+    python benchmarks/confidence_veto.py [CORPUS_DIR] [--ab | --switches]
 
 CORPUS_DIR defaults to `benchmarks/private/ruled-tables/` or the PDF_STRIKETHROUGH_CORPUS_DIR env var.
 """
@@ -160,22 +164,77 @@ def run_ab(corpus_dir, docs):
     return 0
 
 
-def run(corpus_dir, ab=False):
+def run_switches(corpus_dir, docs):
+    """Every combination of the two provisional precision switches, scored the same way as --ab.
+
+    They are independent and opted into separately, so the useful question is what each buys ALONE
+    and whether they overlap. One row per document, then per-configuration totals.
+    """
+    gt = load_ground_truth(corpus_dir)
+    if gt is None:
+        print("!! no ground-truth.json at the corpus root: this mode needs labels to report FP.")
+        return 1
+    configs = {
+        "default": st.ScanConfig(),
+        "veto only": st.ScanConfig.ruled_forms(),
+        "chain only": st.ScanConfig(rescue_clean_chains=False),
+        "both": st.ScanConfig.ruled_forms(rescue_clean_chains=False),
+    }
+    totals = {k: dict(n=0, fp=0, tp=0, fn=0) for k in configs}
+    print(f"{'document':26s} " + " ".join(f"{k:>11s}" for k in configs) + "   (false positives)")
+    unlabeled = []
+    for name, pdf, di in docs:
+        pdf_bytes, di_result = _load(pdf, di)
+        if name not in gt:
+            unlabeled.append(name)
+        truth = gt.get(name, {"strikes": []})
+        cells = []
+        for k, cfg in configs.items():
+            final = _analyze(pdf_bytes, di_result, cfg)
+            tp, fp, fn = score(final, truth)
+            t = totals[k]
+            t["n"] += len(final); t["fp"] += fp; t["tp"] += tp; t["fn"] += fn
+            cells.append(fp)
+        print(f"{name:26s} " + " ".join(f"{c:11d}" for c in cells))
+    print(f"{'TOTAL FP':26s} " + " ".join(f"{totals[k]['fp']:11d}" for k in configs))
+
+    base = totals["default"]["fp"]
+    print()
+    for k, t in totals.items():
+        delta = 100.0 * (t["fp"] - base) / max(base, 1)
+        print(f"{k:12s} struck-final={t['n']:<4d} FP={t['fp']:<4d} ({delta:+.0f}% vs default)  "
+              f"recall={t['tp']}/{t['tp'] + t['fn']}")
+    apart = (base - totals["veto only"]["fp"]) + (base - totals["chain only"]["fp"])
+    together = base - totals["both"]["fp"]
+    print(f"\nseparately the two switches remove {apart} FPs, together {together} — "
+          f"an overlap of {apart - together}.")
+    if unlabeled:
+        print(f"\n!! {len(unlabeled)} document(s) absent from ground-truth.json, scored as having NO "
+              f"real strikes: {', '.join(unlabeled)}. Label them or these counts are wrong.")
+    if min(t["tp"] for t in totals.values()) < totals["default"]["tp"]:
+        print("\n!! a switch COST RECALL on this corpus — it must not ship in that state.")
+    return 0
+
+
+def run(corpus_dir, ab=False, switches=False):
     docs = _docs_in(corpus_dir)
     if not docs:
         print(f"no document subfolders under {corpus_dir!r}\n"
               "point the harness at a local corpus (PDF_STRIKETHROUGH_CORPUS_DIR=... or pass the "
               "path as an argument); each subfolder needs a *.pdf and a di-result.json.")
         return 1
+    if switches:
+        return run_switches(corpus_dir, docs)
     return run_ab(corpus_dir, docs) if ab else run_conf_split(docs)
 
 
 if __name__ == "__main__":
+    KNOWN = {"--ab", "--switches"}
     flags = [a for a in sys.argv[1:] if a.startswith("--")]
-    if set(flags) - {"--ab"}:
-        print(f"{__file__}: unknown option(s) {' '.join(sorted(set(flags) - {'--ab'}))}\n"
-              "usage: confidence_veto.py [CORPUS_DIR] [--ab]")
+    if set(flags) - KNOWN:
+        print(f"{__file__}: unknown option(s) {' '.join(sorted(set(flags) - KNOWN))}\n"
+              "usage: confidence_veto.py [CORPUS_DIR] [--ab | --switches]")
         raise SystemExit(2)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     target = args[0] if args else os.environ.get("PDF_STRIKETHROUGH_CORPUS_DIR", DEFAULT_DIR)
-    raise SystemExit(run(target, ab="--ab" in flags))
+    raise SystemExit(run(target, ab="--ab" in flags, switches="--switches" in flags))
