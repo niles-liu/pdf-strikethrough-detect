@@ -18,6 +18,15 @@ lists each document with its source URL and a sha256; you download the files int
 | [`ocr_backend_table.py`](ocr_backend_table.py) | *(legacy)* the OCR-backend table against a **scanned** corpus with DI references | a scanned corpus + per-doc DI result + `[rapidocr,tesseract]` |
 | [`di_parity.py`](di_parity.py) | *(legacy)* "1477 vs 1484 (99.5% parity)" against the **original** Azure-DI pipeline | a scanned corpus + per-doc DI result + the original pipeline's reference count |
 | [`confidence_veto.py`](confidence_veto.py) | the ruled-forms precision numbers (issues #4, #7) — `--ab` scores the printed-rule veto, `--switches` scores all four combinations of the two provisional switches | a **private** ruled-form corpus + per-doc `di-result.json` + a `ground-truth.json` label set |
+| [`degrade_ladder.py`](degrade_ladder.py) | *(archived — a closed gate, not a claim)* whether **synthetic scan degradation** reproduces the regime that over-flags on real forms. It does not | PDFs + `scanned_pages` + `[rapidocr]` |
+| [`gating_control.py`](gating_control.py) | *(archived — a control, not a claim)* whether that over-flagging regime survives `ScanConfig.confidence_free()`, the config the ladder ran under. It does, three times over | the same **private** corpus + per-doc `di-result.json` + `ground-truth.json` |
+
+The last two differ in kind from the rest. Every other script here **reproduces a claim the package
+makes**; these two tested whether a *training-data route* was viable and whether one of their own
+runs was confounded. Their output is a direction to read, not a number to quote. **The route is
+closed** — the write-up, including the pre-commitment made before the sweep ran and the reason no
+further tuning helps, is [`POSITIVES.md`](POSITIVES.md) §3. They live on the `explore/positives-pull`
+branch so those tables can be re-derived, and are not carried on `main`.
 
 `confirmation_rate.py` needs only the PDFs and no cloud access — start there. `scanned_recovery.py`
 is the reproducible scanned-path benchmark on this (born-digital) corpus: it rasterizes the redline
