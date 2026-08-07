@@ -32,7 +32,15 @@ dependencies = [
     "pillow>=9.0",
     "scipy>=1.10",
     "onnxruntime>=1.16",
-    "pymupdf>=1.26",         # >=1.26: TEXT_COLLECT_STYLES + FZ_STEXT_STRIKEOUT (flag detector)
+    # >=1.26 for TEXT_COLLECT_STYLES + FZ_STEXT_STRIKEOUT (the flag detector). The floor is 1.26.6
+    # because 1.26.3/1.26.4/1.26.5 SEGFAULT in it: get_text("dict") with TEXT_COLLECT_VECTORS
+    # raises a native access violation in JM_make_textpage_dict on ordinary real-world PDFs (page 0
+    # of every document in the public benchmark corpus). It is a process crash, so method='flag'
+    # and method='both' take the host down with nothing to catch. Measured, not guessed: 1.26.5
+    # crashes, 1.26.6 does not. 1.26.3 was also numerically different on the scanned path where it
+    # did not crash, so the quoted false-positive figures are reproduced on 1.28.2. Runtime guard
+    # for environments that already resolved a bad version: native.FLAG_MIN_PYMUPDF.
+    "pymupdf>=1.26.6",
 ]
 
 [project.optional-dependencies]
