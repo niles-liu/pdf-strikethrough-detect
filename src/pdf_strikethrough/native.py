@@ -37,6 +37,25 @@ DASH_MAX_GAP = 4.0       # pt; max x-gap between dashes of one chained strike
 
 FLAG_MIN_WCOV = 0.15     # flag path: a struck span must cover >= this of a word to count
 
+# The flag detector is the only path that extracts with TEXT_COLLECT_VECTORS, and PyMuPDF
+# 1.26.3-1.26.5 SEGFAULT on it -- a native access violation inside JM_make_textpage_dict, on
+# ordinary real-world PDFs. `pyproject.toml` pins the floor so a fresh resolve cannot land there;
+# this guard is for an environment that already has one installed, where the alternative outcome is
+# a process crash with no exception to catch. Bisected: 1.26.5 crashes, 1.26.6 does not.
+FLAG_MIN_PYMUPDF = (1, 26, 6)
+
+
+def _pymupdf_version():
+    """(major, minor, patch) of the installed PyMuPDF binding, or None if it cannot be parsed.
+    Unparseable is treated as unguarded on purpose: a version string this does not recognize must
+    not disable a detector for someone whose build is otherwise fine."""
+    raw = getattr(pymupdf, "VersionBind", None) or getattr(pymupdf, "__version__", "")
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", str(raw))
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+_PYMUPDF_VERSION = _pymupdf_version()
+
 
 def _bbox_frac(page, x0, y0, x1, y1):
     """Unrotated-space rect -> (x0, y0, x1, y1) fractions of the rendered (rotated) page."""
@@ -290,8 +309,12 @@ def _snap_rects_to_words(page, page_index, page_words, rects, tier, extra=None):
 
 def native_flag_strikes(page, page_index, words=None):
     """Struck words from MuPDF's own strikeout detection — the FZ_STEXT_STRIKEOUT char flag,
-    enabled by extracting with COLLECT_STYLES|COLLECT_VECTORS (base PyMuPDF >= 1.26, no
+    enabled by extracting with COLLECT_STYLES|COLLECT_VECTORS (base PyMuPDF >= 1.26.6, no
     pymupdf4llm needed; this is the same signal pymupdf4llm renders as ``~~``).
+
+    Raises ``RuntimeError`` on PyMuPDF 1.26.3–1.26.5, which segfault on that extraction rather
+    than raising (see :data:`FLAG_MIN_PYMUPDF`). The ``'vector'`` and ``'annot'`` detectors never
+    pass the flag and are unaffected.
 
     Struck spans are snapped onto the page's ``get_text("words")`` boxes, so records carry the
     SAME exact word boxes and text as the vector detector — a span covering only part of a word
@@ -303,6 +326,14 @@ def native_flag_strikes(page, page_index, words=None):
     :func:`native_page_strikes`); the ``get_text("dict", ...)`` styled-span pass this detector
     also needs is separate and always runs.
     """
+    if _PYMUPDF_VERSION is not None and _PYMUPDF_VERSION < FLAG_MIN_PYMUPDF:
+        have, want = (".".join(map(str, v)) for v in (_PYMUPDF_VERSION, FLAG_MIN_PYMUPDF))
+        raise RuntimeError(
+            f"the flag detector needs PyMuPDF >= {want}; {have} is installed and crashes the "
+            "interpreter on this extraction (access violation in JM_make_textpage_dict, no "
+            f"traceback). Run `pip install -U 'pymupdf>={want}'`, or use method='vector' or "
+            "'annot', which do not collect vectors.")
+
     flags = pymupdf.TEXTFLAGS_DICT | pymupdf.TEXT_COLLECT_STYLES | pymupdf.TEXT_COLLECT_VECTORS
     strike_bit = pymupdf.mupdf.FZ_STEXT_STRIKEOUT
     if words is None:

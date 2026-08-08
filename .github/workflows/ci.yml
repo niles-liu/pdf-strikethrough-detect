@@ -151,9 +151,19 @@ jobs:
       - name: Install dependency floors, then the package with --no-deps
         run: |
           python -m pip install --upgrade pip
-          # the exact lower bounds declared in pyproject.toml [project.dependencies]
+          # The lower bounds declared in pyproject.toml [project.dependencies]. These are HAND-MIRRORED
+          # -- nothing here reads pyproject, and --no-deps below means pip never validates them against
+          # it either, so a floor raised there and not here goes unnoticed.
+          #
+          # pymupdf is pinned EXACTLY because it is the one floor that is patch-level (1.26.3-1.26.5
+          # segfault in the flag detector). A "1.26.*" wildcard resolves to the NEWEST 1.26.x, which is
+          # the opposite of what this job exists to test: it never exercised the declared floor, and
+          # while 1.26.5 was the newest of that series it installed a version the package now forbids
+          # -- and passed, because that crash needs a real PDF and CI has no corpus. The other four
+          # floors are minor-level, so a ".*" wildcard is a faithful enough reading of them.
+          # tests/test_corpus_flag_detector.py fails if this pin drops below the declared floor.
           pip install "numpy==1.24.*" "pillow==9.0.*" "scipy==1.10.*" \
-                      "onnxruntime==1.16.*" "pymupdf==1.26.*"
+                      "onnxruntime==1.16.*" "pymupdf==1.26.6"
           pip install --no-deps -e .
           pip install pytest
           pip list | grep -Ei "pymupdf|numpy|scipy|pillow|onnxruntime"

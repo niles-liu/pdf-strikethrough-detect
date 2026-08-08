@@ -10,6 +10,12 @@ All notable changes to this project are documented here. The format follows
 - **`benchmarks/confidence_veto.py --switches`** — scores all four combinations of the two
   provisional precision switches against the label set, reporting what each buys alone and how much
   they overlap. The `--ab` mode only ever compared the default against `ruled_forms()`.
+- **`tests/test_corpus_flag_detector.py`** — regression guard for the crash below, in two halves.
+  Corpus-gated tests run the flag detector over whatever PDFs are in `benchmarks/corpus/` and skip
+  when it is unpopulated; version-guard tests pin `native.FLAG_MIN_PYMUPDF`, hold it equal to the
+  `pymupdf>=` floor in `pyproject.toml`, and run everywhere, since CI has no corpus. Closes the gap
+  that hid the crash: every other flag-detector test builds its PDF with fitz in-test, and those
+  synthetic pages did not trigger it.
 
 ### Performance
 - **`lines.strike_lines` ~1.5x faster**, which is ~75% of the per-page cost on the scanned path.
@@ -59,6 +65,29 @@ All notable changes to this project are documented here. The format follows
   OCR undamaged is exactly the case the escape exists for. ⚠️ **Limitation:** the whole chain gate
   sits behind `confidence_gating`, so unlike the printed-rule veto this switch is **inert on
   confidence-free engines** (RapidOCR) and when words carry no confidence.
+
+### Fixed
+- **`pymupdf` floor raised to `>=1.26.6` — 1.26.3/1.26.4/1.26.5 segfault in the flag detector.**
+  `native_flag_strikes` extracts with `TEXT_COLLECT_VECTORS` (which is what populates
+  `FZ_STEXT_STRIKEOUT`), and on those versions `get_text("dict", flags=…)` raises a native access
+  violation inside `JM_make_textpage_dict` — on **page 0 of every document in the public benchmark
+  corpus**, i.e. ordinary real-world PDFs, not exotic ones. It is a process-level crash, so
+  `method='flag'` and `method='both'` take the host process down and leave the caller nothing to
+  catch. Bisected rather than guessed: 1.26.5 crashes, 1.26.6 does not. `method='vector'` (the
+  default) and `method='annot'` never collect vectors and were never affected.
+
+  **The full test suite passed throughout**, because every existing flag-detector test builds its
+  PDF with fitz in-test and those synthetic pages do not trigger it — so this shipped undetected.
+  `tests/test_corpus_flag_detector.py` closes that gap. ⚠️ 1.26.3 was also **numerically different**
+  on the scanned path where it did not crash (one corpus document scored 8 false positives instead
+  of 10), so it was quietly wrong as well as crash-prone; the figures in this file are reproduced on
+  1.28.2.
+- **`native_flag_strikes` now raises instead of crashing on a bad PyMuPDF.** The floor above only
+  binds a fresh resolve; an environment that already had 1.26.3–1.26.5 installed kept segfaulting
+  with no traceback and nothing pointing at the cause. The detector checks
+  `native.FLAG_MIN_PYMUPDF` first and raises `RuntimeError` naming the installed version, the
+  upgrade command, and the two methods that still work. An unparseable version string fails
+  **open** — unknown is not evidence of a bad build.
 
 ## [0.10.0] — 2026-07-29
 
