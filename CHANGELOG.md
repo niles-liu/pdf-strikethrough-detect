@@ -12,9 +12,10 @@ All notable changes to this project are documented here. The format follows
   they overlap. The `--ab` mode only ever compared the default against `ruled_forms()`.
 - **`tests/test_corpus_flag_detector.py`** — regression guard for the crash below, in two halves.
   Corpus-gated tests run the flag detector over whatever PDFs are in `benchmarks/corpus/` and skip
-  when it is unpopulated; version-guard tests pin `native.FLAG_MIN_PYMUPDF` and run everywhere,
-  since CI has no corpus. Closes the gap that hid the crash: every other flag-detector test builds
-  its PDF with fitz in-test, and those synthetic pages did not trigger it.
+  when it is unpopulated; version-guard tests pin `native.FLAG_MIN_PYMUPDF`, hold it equal to the
+  `pymupdf>=` floor in `pyproject.toml`, and run everywhere, since CI has no corpus. Closes the gap
+  that hid the crash: every other flag-detector test builds its PDF with fitz in-test, and those
+  synthetic pages did not trigger it.
 
 ### Performance
 - **`lines.strike_lines` ~1.5x faster**, which is ~75% of the per-page cost on the scanned path.

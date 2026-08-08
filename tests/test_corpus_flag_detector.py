@@ -19,6 +19,7 @@ check the PyMuPDF version first (`pyproject.toml` documents the floor and why).
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -67,6 +68,28 @@ def test_installed_pymupdf_clears_the_flag_floor():
     every corpus test above is a coin flip on whether pytest reports at all."""
     assert native._PYMUPDF_VERSION is not None, "could not parse the PyMuPDF version"
     assert native._PYMUPDF_VERSION >= native.FLAG_MIN_PYMUPDF
+
+
+def test_flag_floor_matches_the_declared_dependency_floor():
+    """`FLAG_MIN_PYMUPDF` and the `pymupdf>=` floor in pyproject.toml must not drift apart.
+
+    They are two statements of one fact in two files, and the failure is silent in both directions:
+    raise the pyproject floor alone and the runtime guard goes on permitting versions the package
+    forbids; raise the constant alone and a legal install starts refusing to run. Together with the
+    test above this also pins CI's `lowest-bounds` job, whose dependency floors are hand-mirrored
+    into the workflow and validated by nothing -- it installs an exact pymupdf and would fail here
+    if that pin ever fell below what pyproject declares.
+    """
+    pyproject = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
+    if not pyproject.is_file():
+        pytest.skip("running against an installed package, not a source checkout")
+    # regex rather than tomllib: this suite still supports Python 3.10, which has no tomllib
+    m = re.search(r'"pymupdf>=([0-9]+(?:\.[0-9]+)*)"', pyproject.read_text(encoding="utf-8"))
+    assert m, "no pinned `pymupdf>=` floor found in pyproject.toml [project.dependencies]"
+    declared = tuple(int(p) for p in m.group(1).split("."))
+    assert declared == native.FLAG_MIN_PYMUPDF, (
+        f"pyproject declares pymupdf>={m.group(1)} but native.FLAG_MIN_PYMUPDF is "
+        f"{'.'.join(map(str, native.FLAG_MIN_PYMUPDF))}")
 
 
 def test_flag_detector_refuses_a_crashing_pymupdf(monkeypatch):
