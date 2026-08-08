@@ -60,3 +60,10 @@ into a synthetic scan for testing.
 - Run `pytest` and `ruff check .` before opening the PR — CI runs both across Linux/macOS/Windows
   and Python 3.10–3.14.
 - Update `CHANGELOG.md` under the `## [Unreleased]` heading.
+- **Before blaming a red check on your diff, look at which step failed.** A job that dies in
+  `Set up job` at `Getting action download info` (`Service Unavailable` / `Bad Gateway` /
+  `Internal Server Error`, two retries, then abort) never reached checkout, install or pytest — it is
+  a GitHub Actions outage, not your code. The tell is a job that "failed" after several minutes when
+  its green siblings finish in well under one. Re-run the failed jobs rather than reverting; an
+  outage strikes a random subset of jobs per run, so an unrelated branch failing different jobs in
+  the same window is confirmation. This cost PR #10 a needless revert on 2026-08-06 (see #12).
