@@ -293,6 +293,15 @@ its own terms — on a clean scan a real strike is also solid and straight, and 
 OCR undamaged. Treat both as **provisional and outside the v1.0 stability contract**, expected to be
 removed once the model handles ruled forms natively. Pin exactly if you depend on them.
 
+**Shaded and highlighted blocks.** A grey or coloured ground behind text — a highlight block, a
+shaded table row, a call-out frame — is flattened back to white before the page is binarized and
+again inside each CNN crop, so a highlighted word is judged on its ink and not on its background
+(issue #15). Ordinary paper is untouched, and pages with no shaded region produce byte-identical
+results. Two caveats: the constants that decide *when* a ground counts as shaded rest on a single
+measured document and are marked provisional in the source; and a uniformly **dim** scan (no
+colour, paper around 110) is a different failure that this does not address — re-scan or
+pre-normalize such a page before running it.
+
 **Improving the model.** `--dump-crops DIR` (or `st.dump_crops`) exports every crop the pipeline
 scored plus its verdict as a labeling set; label it, retrain with
 [`training/train_strikenet.py`](training/), and load your weights via
