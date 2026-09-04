@@ -4,7 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.0] — 2026-09-04
+
+Minor, not patch: adds public API (`ScanConfig.rescue_clean_chains`). The headline is the shaded-
+and highlighted-block fix (issue #15), which changes scanned-path output on any page carrying a
+coloured or grey ground. Pages without one are unaffected, and verified so: per-document predictions
+on the 2170-strike recovery benchmark are identical to 0.10.0.
 
 ### Added
 - **`benchmarks/confidence_veto.py --switches`** — scores all four combinations of the two
