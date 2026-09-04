@@ -89,6 +89,24 @@ All notable changes to this project are documented here. The format follows
   upgrade command, and the two methods that still work. An unparseable version string fails
   **open** — unknown is not evidence of a bad build.
 
+### Notes
+- **Issue #7 is closed — the residual is *accepted*, not pending.** This supersedes the 0.10.0 note
+  below, which said it stays open pending the hard-negative retrain. Nothing regressed and no further
+  suppression shipped; what changed is the expected-value call. The acceptance bar on this document
+  class is **zero** false positives, strikethroughs are near-absent on it to begin with (3 real
+  strikes across 8 documents; a 315-document sweep turned up nothing the native path could not
+  handle), and so the best available configuration — 28 false positives against 2 recovered strikes,
+  ~14:1 against **after** a 75% improvement — is EV-negative. Precision tuning of this shape cannot
+  fix that ratio, and zero-FP is not reachable by moving a CNN operating point at all, because the
+  genuine and spurious distributions overlap fully at the top of the range.
+
+  **Guidance for degraded ruled forms: use the native vector path and keep the scanned path off**, or
+  route it to human review rather than an automatic scrub. If you do run it on this class, enable
+  both switches — `ScanConfig.ruled_forms(rescue_clean_chains=False)` — and treat the output as a
+  review queue. The retrain that would have made it unattended is **descoped**: the mechanism that
+  could meet the bar is abstention with a conformal guarantee, which needs mass negatives in the
+  failing regime, and no supply of them has been found. Full reasoning in the issue thread.
+
 ## [0.10.0] — 2026-07-29
 
 Minor, not patch: adds public API (`ScanConfig.ruled_forms()`, `veto_printed_rules`, the
