@@ -58,7 +58,19 @@ def to_gray_u8(image):
     all-white; out-of-range values are clipped (no mod-256 wraparound)."""
     a = np.asarray(image)
     if a.ndim == 3 and a.shape[2] in (3, 4):
-        a = a[..., :3].mean(axis=2)
+        # sRGB -> linear -> Rec.709 luminance -> sRGB, which is what PyMuPDF's csGRAY does on the
+        # PDF path. A channel MEAN puts a yellow highlighter at 170 where csGRAY puts it at 248, so
+        # the same highlighted page used to be readable through detect_pdf and solid ink through an
+        # RGB array.
+        c = a[..., :3].astype(np.float64)
+        if np.issubdtype(a.dtype, np.floating) and c.size and c.max() <= 1.0:
+            c = c * 255.0
+        elif np.issubdtype(a.dtype, np.integer) and np.iinfo(a.dtype).max > 255:
+            c = c * (255.0 / np.iinfo(a.dtype).max)
+        c = np.clip(c, 0, 255) / 255.0
+        lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+        y = lin @ np.array([0.2126, 0.7152, 0.0722])
+        a = np.where(y <= 0.0031308, y * 12.92, 1.055 * y ** (1 / 2.4) - 0.055) * 255.0
     if a.ndim != 2:
         raise ValueError(f"expected a (H, W) grayscale or (H, W, 3) RGB image, got shape {a.shape}")
     if a.dtype != np.uint8:
@@ -71,10 +83,32 @@ def to_gray_u8(image):
     return a
 
 
+BG_BLOCK_PX     = 64     # background-estimate grid for the shaded-page fallback below
+BG_INK_MAX      = 0.35   # a global-Otsu mask inkier than this has split SHADING from paper
+
+
 def ink_mask(gray):
-    """Binarized ink mask: global Otsu + OTSU_OFFSET (clean on dense text, keeps faint strokes)."""
+    """Binarized ink mask: global Otsu + OTSU_OFFSET (clean on dense text, keeps faint strokes).
+
+    One global threshold cannot serve a page holding both white and shaded regions: once a highlight
+    block's ground is dark enough, Otsu splits page-from-block instead of ink-from-paper and the
+    whole block comes back as ink (measured: ink fraction 0.07 at ground 211, 1.00 at 195, and every
+    downstream stage then returns nothing). So when the mask comes back implausibly inky, flatten the
+    paper block-wise and threshold that instead. The fallback is gated, not unconditional, because
+    every geometry filter downstream is calibrated against the plain global mask."""
     gray = to_gray_u8(gray)
-    return gray < (otsu_threshold(gray) + OTSU_OFFSET)
+    mask = gray < (otsu_threshold(gray) + OTSU_OFFSET)
+    if mask.mean() <= BG_INK_MAX:
+        return mask
+    H, W = gray.shape
+    by, bx = max(1, H // BG_BLOCK_PX), max(1, W // BG_BLOCK_PX)
+    ys = np.linspace(0, H, by + 1).astype(int)
+    xs = np.linspace(0, W, bx + 1).astype(int)
+    coarse = np.array([[np.percentile(gray[ys[i]:ys[i+1], xs[j]:xs[j+1]], 90) or 255.0
+                        for j in range(bx)] for i in range(by)], dtype=np.float64)
+    bg = ndimage.zoom(np.clip(coarse, 1, 255), (H / by, W / bx), order=1)[:H, :W]
+    flat = np.clip(gray.astype(np.float64) * (255.0 / bg), 0, 255).astype(np.uint8)
+    return flat < (otsu_threshold(flat) + OTSU_OFFSET)
 
 
 def line_kernel(length, angle_deg):

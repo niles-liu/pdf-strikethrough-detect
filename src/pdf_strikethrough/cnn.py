@@ -35,6 +35,12 @@ PAD_X, PAD_Y = 5, 7               # crop margin around the word box, in PIXELS
 # from a caller-supplied raster far below 200 dpi (e.g. score_word on a 72-dpi image) is still
 # off-distribution; there is no auto-upsampling and it isn't worth a re-export.
 
+SHADE_WHITE_FRAC = 0.85           # shaded-crop white point, as a fraction of the paper ground.
+                                  # PROVISIONAL: only issue #15's scan needs it below 1.0. On
+                                  # manufactured shading every value 1.0..0.75 clears the same
+                                  # false positives and lower ones only cost recall, so 0.85 is
+                                  # the edge of the safe range, not a measured optimum.
+
 _MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env var
 _lock = threading.Lock()
 _model = None                     # lazy singleton: (score_fn, meta dict)
@@ -132,7 +138,9 @@ def word_crop_px(gray, bbox_frac, pad_x=PAD_X, pad_y=PAD_Y):
 def std_crop(crop):
     """Raw grey crop (0=black..255=white; [0,1] floats are rescaled, values clipped — no mod-256
        wraparound) -> (CROP_H, CROP_W) float32, ink-positive, height-normalized isotropically;
-       width center-cropped/padded (a strike spans the word, so any window still shows it)."""
+       width center-cropped/padded (a strike spans the word, so any window still shows it).
+       A shaded ground (a grey highlight block) is flattened back to white first; ordinary paper is
+       untouched."""
     crop = np.asarray(crop)
     if np.issubdtype(crop.dtype, np.floating):
         if crop.size and float(crop.max()) <= 1.0:
@@ -143,6 +151,14 @@ def std_crop(crop):
         if np.iinfo(crop.dtype).max > 255:
             crop = crop.astype(np.float64) * (255.0 / np.iinfo(crop.dtype).max)
         crop = np.clip(crop, 0.0, 255.0)
+    # Clamp background color to near white
+    crop = np.asarray(crop, dtype=np.float32)
+    light = crop[crop >= 128]
+    if light.size:
+        bg = float(np.bincount(light.astype(np.intp), minlength=256).argmax())
+        if 120 <= bg < 240:                     # else ordinary paper, or too dark to be a highlight
+            cut = SHADE_WHITE_FRAC * bg
+            crop = np.where(crop >= cut, 255.0, crop * (255.0 / cut))
     ch, cw = crop.shape
     nw = max(12, int(round(cw * CROP_H / ch)))
     arr = np.asarray(Image.fromarray(crop.astype(np.uint8)).resize((nw, CROP_H), Image.LANCZOS),
