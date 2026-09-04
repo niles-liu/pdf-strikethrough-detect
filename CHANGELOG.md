@@ -67,6 +67,45 @@ All notable changes to this project are documented here. The format follows
   confidence-free engines** (RapidOCR) and when words carry no confidence.
 
 ### Fixed
+- **A word on a grey highlight block read as struck (issue #15).** Three independent causes, all in
+  how colour reaches the classifier. A reporter's shaded contract page returned 41 strikes under the
+  default `ScanConfig()` and 4 under a precision-tuned one; the page holds **none**.
+
+  1. **`cnn.std_crop` inverted the shaded ground into an ink pedestal.** `1 - gray/255` maps a grey
+     211 ground to a uniform 0.17 across the whole 32x160 net input, which StrikeNet reads as a wash
+     over the word and scores at **p=1.00** — off-distribution, not borderline, which is why raising
+     `cnn_p_hi` did nothing. The crop's paper ground is now taken as the **mode** of its light pixels
+     (a percentile reads the white margin `PAD_Y` pulls in, and misjudged 18 of 41) and clamped back
+     to white when it is shaded. Ordinary paper is untouched.
+  2. **`lines.to_gray_u8` collapsed RGB with a channel mean.** PyMuPDF's `csGRAY`, which the PDF path
+     renders through, uses Rec.709 luminance in linear light. A yellow highlighter lands at 170 under
+     the mean and 248 under `csGRAY`, so the same page was readable through `detect_pdf` and solid
+     ink through an RGB array. Converts properly now.
+  3. **`lines.ink_mask` used one global Otsu for the whole page.** A single threshold cannot serve a
+     page holding both white and shaded regions: once a block's ground is dark enough Otsu splits
+     page-from-block instead of ink-from-paper and the block returns entirely as ink (ink fraction
+     0.07 at ground 211, **1.00** at 195, and every downstream stage then finds nothing). Falls back
+     to a block-wise background flatten, **gated** on the mask coming back implausibly inky rather
+     than run unconditionally, because the geometry filters downstream are calibrated against the
+     plain global mask.
+
+  Fixes 2 and 3 are interdependent on strongly-coloured grounds — the fallback makes the words
+  detectable at all, the crop flatten makes the CNN judge them correctly.
+
+  **Measured.** Issue #15's page: 41 -> 2 under the default config, 160 -> 5 under
+  `confidence_free()`, and **4 -> 0** under the reporter's own configuration. Manufactured colour
+  grounds (image path), recall before -> after: magenta 0% -> 87%, pink 0% -> 92%, yellow 0% -> 83%,
+  green 0% -> 87%, cyan 0% -> 82%. Manufactured grey shading over 610 known strikes: 35-58 false
+  positives -> 0, at a cost of one recall point.
+
+  **No regression.** The 2170-strike recovery benchmark is unchanged at 96.1% with **per-document
+  predictions identical** to before, and the ruled-forms corpus improves (113/42/95/28 -> 109/38/92/25
+  false positives) at unchanged recall.
+
+  **Known limits.** `SHADE_WHITE_FRAC = 0.85` and `BG_INK_MAX = 0.35` each rest on a single measured
+  document and are marked provisional in the source. A uniformly **dim** scan (ground ~110, no
+  colour) still recovers ~4% and is a different failure, untouched here. The `ink_mask` fallback
+  costs ~550ms when it fires; it fires on neither benchmark corpus.
 - **`pymupdf` floor raised to `>=1.26.6` — 1.26.3/1.26.4/1.26.5 segfault in the flag detector.**
   `native_flag_strikes` extracts with `TEXT_COLLECT_VECTORS` (which is what populates
   `FZ_STEXT_STRIKEOUT`), and on those versions `get_text("dict", flags=…)` raises a native access
