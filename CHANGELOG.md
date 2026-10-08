@@ -20,6 +20,15 @@ All notable changes to this project are documented here. The format follows
   of change was checked against the rendered pages. `confirmation_rate.py` still reports 99.8% of
   vector detections confirmed by the flag signal, and the per-document floor rose from 92.5% to
   99.6%.
+- **The Azure DI calibration keeps crisp strikes.** 0.9.1's confidence veto (issue #4) drops a word
+  DI reads above `max_clean_conf` unless the line through it is strike geometry, and that required
+  the line to break up on the glyphs. A clean scan of a printed strike stays solid and DI reads the
+  word cleanly, so the default `di_result=` path kept 28% of the known strikes on the
+  scanned-recovery benchmark. Glyph ink on both sides of an in-band line is now enough, and the
+  default keeps 91% (`confidence_free()`: 96%). On the private ruled-forms corpus this adds 4 false
+  positives at default (109 → 113) and with the chain switch alone (92 → 96), none under
+  `ruled_forms()` (38) or with both switches (25); recall is unchanged at 2/3. A one-sided rule
+  still earns no reprieve.
 
 ### Added
 - **`schema_version` on every `detect_pdf` / `detect_image_file` result**, the same number the CLI

@@ -249,11 +249,13 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
                 # on the glyphs (fill < FILL_STRONG) and keep ink on BOTH sides, so they are spared.
                 continue
             ink_ok = not in_band
-            # Strike-geometry corroboration (0.9.1): a genuine pen strike crosses the x-height
-            # (in-band), keeps substantial ink on BOTH sides, and SHATTERS on the glyphs (fill below
-            # the solid-rule threshold). The DI-confidence veto (detect.apply_cnn_verdict) uses this
-            # so only strong two-sided geometry earns a high-OCR-confidence word a reprieve.
-            strike_geom = in_band and both_ink and line_fill < FILL_STRONG
+            # Strike-geometry corroboration (0.9.1): a genuine strike crosses the x-height (in-band)
+            # and keeps substantial ink on BOTH sides. The DI-confidence veto
+            # (detect.apply_cnn_verdict) uses this, so only two-sided geometry earns a
+            # high-OCR-confidence word a reprieve. Until 0.12.0 it also required the line to shatter
+            # on the glyphs (fill < FILL_STRONG), which vetoed every crisp printed strike on a clean
+            # scan: the bar stays solid and DI reads the word well. One-sided rules still fail here.
+            strike_geom = in_band and both_ink
             wbox = (wx0, wy0, wx1, wy1)
             if wcov >= MIN_WORD_XOVER:
                 hits.append(make_hit(wbox, txt, off, wcov, strong=True, ink_ok=ink_ok, conf=conf,
@@ -335,8 +337,8 @@ def consolidate_struck(hits, tagged, use_conf=True):
             "line_idx": sorted({h["line_idx"] for h in hs}),
         }
         rec["twin"] = any(h.get("twin") for h in hs)
-        # True when any fragment carries genuine strike geometry (in-band, through-glyph ink,
-        # shattered fill). The DI-confidence veto keeps such a word even at high OCR confidence.
+        # True when any fragment carries genuine strike geometry (in-band, ink on both sides).
+        # The DI-confidence veto keeps such a word even at high OCR confidence.
         rec["geom_corroborated"] = any(h.get("strike_geom") for h in hs)
         rec["score"] = score_struck(rec, tagged, use_conf=use_conf)
         rec["tier"] = ("auto" if rec["score"] >= AUTO_SCORE
