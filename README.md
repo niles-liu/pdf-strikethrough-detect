@@ -223,14 +223,17 @@ cat doc.pdf | pdf-strikethrough detect -                    # read the PDF from 
 pdf-strikethrough --version
 ```
 
-**Batch mode.** Pass several files, a directory, or a glob and each is processed independently —
-JSONL output (one result object per line), `--jobs N` to spread files across processes, and one
-bad file never aborts the run (its line carries an `error` key):
+**Batch mode.** Pass several files, a directory, or a glob (or ask for `--jsonl`) and each is
+processed independently — JSONL output (one result object per line, written as each file
+finishes), `--jobs N` to spread files across processes, and one bad file never aborts the run (its
+line carries an `error` key). The mode follows the arguments, not how many files they match, so a
+folder holding one file is still a batch. A directory means its top-level documents; a glob with
+`**` recurses:
 
 ```bash
 pdf-strikethrough detect ./contracts/ --jsonl out.jsonl        # every document in a directory
 pdf-strikethrough detect *.pdf --jobs 4 --jsonl -              # glob, 4 workers, stream to stdout
-pdf-strikethrough detect ./contracts/ --fail-if-found          # CI gate over a whole tree (exit 3)
+pdf-strikethrough detect 'contracts/**/*.pdf' --fail-if-found  # CI gate over a whole tree (exit 3)
 ```
 
 Per-file output flags (`--markdown`/`--overlay`/`--clean-text`/`--provenance`/cloud results/
@@ -241,7 +244,9 @@ files — very-high-dpi input is normalized to 200 internally, see below), `--ov
 render DPI, default 150), `--limit` (max words in plain output), `--jobs` / `--jsonl` (batch),
 `--scan-config auto|azure-di|confidence-free`, `--markdown`, `--docai-result`. Exit codes: `0` ok,
 `1` usage/file error (batch: ≥1 file errored), `2` encrypted / OCR required, `3` `--fail-if-found`
-matched. Full help: `pdf-strikethrough detect -h`.
+matched, `130` interrupted (a batch keeps the lines already written). Results go to stdout (UTF-8
+when written to `-`) and status lines to stderr, so `--json -` and `--markdown -` pipe cleanly.
+Full help: `pdf-strikethrough detect -h`.
 
 ## Examples
 

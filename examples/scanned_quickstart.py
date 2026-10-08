@@ -32,6 +32,9 @@ def rasterize_to_scan(pdf_bytes: bytes, dpi: int = 200) -> bytes:
 
 
 def main() -> int:
+    # OCR can read a struck glyph as a non-Latin one ('ł' for a struck 'l'); never let printing it
+    # crash on a narrow console encoding (a piped Windows stdout is cp1252).
+    sys.stdout.reconfigure(errors="replace")
     try:
         import rapidocr  # noqa: F401 — eager check; the backend imports it lazily otherwise
     except ImportError:

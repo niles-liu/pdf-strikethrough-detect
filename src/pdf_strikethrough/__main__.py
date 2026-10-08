@@ -8,17 +8,22 @@ pre-fetched cloud result (``--di-result`` Azure DI, ``--textract-result`` AWS Te
 native pages are still fully processed. A ``.docx`` reads strike formatting + tracked deletions
 straight from the markup (no OCR).
 
-Batch: pass several files, a directory, or a glob (`detect *.pdf --jobs 4 --jsonl out.jsonl`) and
-each file is processed independently — JSONL output (one result object per line), optional
-multiprocessing across files (``--jobs N``), and one bad file never aborts the run (its line
-carries an ``error`` key). Per-file output flags (--markdown/--overlay/cloud results/--pages) are
-single-file only.
+Batch: pass several files, a directory, or a glob (`detect *.pdf --jobs 4 --jsonl out.jsonl`), or
+ask for ``--jsonl``, and each file is processed independently — JSONL output (one result object
+per line, written as each file finishes), optional multiprocessing across files (``--jobs N``),
+and one bad file never aborts the run (its line carries an ``error`` key). The mode follows the
+form of the arguments, not the number of files they match: a directory holding one file is still
+a batch. Per-file output flags (--markdown/--overlay/cloud results/--pages) are single-file only.
+
+Results go to stdout (UTF-8 when written to '-') and status lines to stderr, so `--json -` and
+`--markdown -` pipe cleanly.
 
 Exit codes:
   0  success
   1  usage / file error (no such file, unreadable, bad --pages; in batch: >=1 file errored)
   2  encrypted PDF, or a scanned page with no OCR backend / cloud result
   3  --fail-if-found and at least one struck word was found (for CI gating)
+  130  interrupted (Ctrl-C); in batch, the lines already written are kept
 """
 from __future__ import annotations
 
@@ -60,23 +65,61 @@ def _load_json(path):
         return json.load(f)
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse exits 2 on a usage error, but this CLI documents 2 as "encrypted / OCR required"
+    — a CI gate keyed on it would read a mistyped flag as a scan that needs OCR. Usage errors exit
+    1, as documented. (Subparsers inherit the class.)"""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
+def _positive_int(text):
+    """argparse type for --dpi / --jobs style values: a positive integer."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {text!r}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value}")
+    return value
+
+
 def _open_out(path):
     """Return a text file handle for `path`, or stdout when path is '-'. The caller closes it
-    (a no-op contextmanager wraps stdout so `with` never closes the real stdout)."""
+    (a no-op contextmanager wraps stdout so `with` never closes the real stdout). Output to '-' is
+    UTF-8 whatever the console code page: a redirected Windows stdout is cp1252, which turned
+    struck non-Latin text into '?' and wrote JSON that was not valid UTF-8."""
     if path == "-":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # keep main()'s handler
+        except (AttributeError, ValueError):
+            pass                             # non-reconfigurable stream (e.g. captured in tests)
         return contextlib.nullcontext(sys.stdout)
     return open(path, "w", encoding="utf-8")
 
 
+def _is_glob(arg):
+    """A FILE arg is a pattern when it has glob characters and is not itself an existing path
+    ('report [final].pdf' is a file, not a character class)."""
+    return any(c in arg for c in "*?[") and not os.path.exists(arg)
+
+
 def _expand_inputs(patterns):
     """Expand the FILE args into a sorted, de-duplicated list of input paths. Each arg may be a
-    literal file, a directory (its top-level PDFs / images / .docx), or a glob (``*.pdf`` — expanded
-    here too, so it works on shells that don't glob, e.g. Windows). '-' (stdin) passes through.
+    literal file, a directory (its top-level PDFs / images / .docx), or a glob (``*.pdf``, and
+    ``**`` recurses — expanded here too, so it works on shells that don't glob, e.g. Windows); a
+    glob keeps only the files of those kinds, like a directory. '-' (stdin) passes through, alone.
     Returns None after printing an error when an arg matches nothing."""
     import glob as _glob
 
     import pdf_strikethrough as st
     exts = (".pdf", ".docx", *st.detect.IMAGE_SUFFIXES)
+    if "-" in patterns and len(patterns) > 1:
+        print("error: '-' reads one PDF from stdin and cannot be combined with other inputs",
+              file=sys.stderr)
+        return None
     out = []
     for pat in patterns:
         if pat == "-":
@@ -88,10 +131,11 @@ def _expand_inputs(patterns):
                 print(f"error: no PDF/image/.docx files in directory {pat}", file=sys.stderr)
                 return None
             out.extend(found)
-        elif any(c in pat for c in "*?["):
-            hits = sorted(_glob.glob(pat))
+        elif _is_glob(pat):
+            hits = sorted(f for f in _glob.glob(pat, recursive=True)
+                          if os.path.isfile(f) and os.path.splitext(f)[1].lower() in exts)
             if not hits:
-                print(f"error: no files match {pat}", file=sys.stderr)
+                print(f"error: no PDF/image/.docx files match {pat}", file=sys.stderr)
                 return None
             out.extend(hits)
         elif os.path.exists(pat):
@@ -108,12 +152,19 @@ def _expand_inputs(patterns):
 
 
 def _cmd_detect(args):
-    """Dispatch by input count: one file -> full single-file mode (every output flag); many files
-    (or a directory / glob) -> batch mode (JSONL, optional --jobs parallelism)."""
+    """Dispatch by the form of the arguments: one literal file -> full single-file mode (every
+    output flag); several files, a directory, a glob, or --jsonl -> batch mode (JSONL, optional
+    --jobs parallelism). Deciding by the number of files MATCHED silently dropped --jsonl when a
+    folder happened to hold one file, leaving yesterday's output in place."""
     inputs = _expand_inputs(args.files)
     if inputs is None:
         return 1
-    if len(inputs) == 1:
+    batch = (args.jsonl is not None or len(args.files) > 1
+             or any(os.path.isdir(f) or _is_glob(f) for f in args.files))
+    if batch and inputs == ["-"]:
+        print("error: --jsonl takes file inputs; '-' (stdin) is single-file only", file=sys.stderr)
+        return 1
+    if not batch:
         return _cmd_detect_single(args, inputs[0])
     return _cmd_detect_batch(args, inputs)
 
@@ -133,6 +184,12 @@ def _cmd_detect_single(args, path):
         return 1
 
     # Word sources: at most one pre-fetched cloud result, else the --ocr backend.
+    given = [f for f, v in (("--di-result", args.di_result),
+                            ("--textract-result", args.textract_result),
+                            ("--docai-result", args.docai_result)) if v]
+    if len(given) > 1:
+        print(f"error: pass at most one cloud result ({' / '.join(given)} given)", file=sys.stderr)
+        return 1
     di_result = words_by_page = None
     for flag, res_path, adapter in (("--di-result", args.di_result, None),
                                     ("--textract-result", args.textract_result,
@@ -148,7 +205,12 @@ def _cmd_detect_single(args, path):
         if adapter is None:
             di_result = data
         else:
-            words_by_page = adapter(data)
+            try:
+                words_by_page = adapter(data)
+            except (ValueError, TypeError, AttributeError) as e:
+                print(f"error: {flag}: {res_path} is not a result this adapter reads: {e}",
+                      file=sys.stderr)
+                return 1
 
     ocr = _build_ocr(args.ocr)
     # ScanConfig: honor an explicit --scan-config; otherwise pick the calibration that matches the
@@ -173,14 +235,18 @@ def _cmd_detect_single(args, path):
                 dc_source, args.dump_crops, ocr=ocr, scan_config=scan_config, dpi=args.dpi,
                 di_result=di_result, words_by_page=words_by_page,
                 pages=None if is_image else page_subset, image=is_image)
-        except st.OcrRequiredError as e:
+        except (st.OcrRequiredError, st.EncryptedPdfError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
+        except (OSError, RuntimeError, ValueError, IndexError) as e:
+            print(f"error: {path}: {e}", file=sys.stderr)
+            return 1
         print(f"wrote {summary['n_crops']} crop(s) to {summary['out_dir']} "
-              f"(manifest: {summary['manifest']})")
+              f"(manifest: {summary['manifest']})", file=sys.stderr)
         return 0
 
     if is_image:
+        from PIL import Image
         if page_subset is not None:
             print("warning: --pages does not apply to an image file; ignored", file=sys.stderr)
         try:
@@ -189,6 +255,10 @@ def _cmd_detect_single(args, path):
         except st.OcrRequiredError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
+        except (OSError, ValueError, Image.DecompressionBombError) as e:
+            # unreadable / truncated / not an image / larger than PIL will decode
+            print(f"error: cannot read {path}: {e}", file=sys.stderr)
+            return 1
         res["source"] = path
         return _emit_result(args, res, overlay_source=None)   # overlay needs a PDF page renderer
 
@@ -203,10 +273,15 @@ def _cmd_detect_single(args, path):
     except RuntimeError as e:                # pymupdf file errors (corrupt/truncated/not a PDF)
         print(f"error: cannot open {path}: {e}", file=sys.stderr)
         return 1
+    if page_subset is not None and page_subset[-1] >= doc.page_count:
+        print(f"error: --pages: page {page_subset[-1] + 1} is past the end of the "
+              f"{doc.page_count}-page document", file=sys.stderr)
+        doc.close()
+        return 1
 
     # Per-page progress on stderr when it's a TTY (long OCR+CNN runs otherwise read as a hang).
     def _progress(done, total, pno):
-        print(f"\r  page {done}/{total} (p{pno})...", end="", file=sys.stderr, flush=True)
+        print(f"\r  page {done}/{total} (p{pno + 1})...", end="", file=sys.stderr, flush=True)
         if done == total:
             print("", file=sys.stderr, flush=True)          # newline after the last page
     progress = _progress if sys.stderr.isatty() else None
@@ -224,6 +299,9 @@ def _cmd_detect_single(args, path):
     except st.OcrRequiredError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    except ValueError as e:                  # a cloud result that does not fit this document
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     finally:
         doc.close()
     # open_pdf handed detect_pdf a doc, so re-attach a human-facing source label.
@@ -233,37 +311,54 @@ def _cmd_detect_single(args, path):
 
 def _emit_result(args, res, overlay_source):
     """Write the requested outputs for a detect result (PDF or image) and return the exit code.
-    `overlay_source` is the input to re-render for --overlay, or None to skip it (image inputs)."""
-    import pdf_strikethrough as st
+    `overlay_source` is the input to re-render for --overlay, or None to skip it (image inputs).
+    Status lines ("wrote ...") go to stderr, so a result written to '-' is never mixed with them;
+    an output that cannot be written is a clean error (exit 1), not a traceback."""
     for w in res.get("warnings", []):
         print(f"warning: {w}", file=sys.stderr)
     final = [w for w in res["words"] if w.get("final")]
+    try:
+        _write_outputs(args, res, final, overlay_source)
+    except OSError as e:
+        if "-" in (args.json, args.markdown, args.clean_text, args.provenance):
+            _abandon_stdout()                # a closed pipe: do not fail again at exit
+        print(f"error: cannot write output: {e}", file=sys.stderr)
+        return 1
 
+    if not (args.json or args.markdown or args.clean_text or args.overlay or args.provenance):
+        print(f"{res['source']}: {res['page_count']} pages "
+              f"({', '.join(sorted(set(res['page_sources'])))}), "
+              f"{len(final)} struck words in {len(res.get('passages', []))} passages")
+        for w in final[: args.limit]:
+            kind = "partial" if w.get("partial") else "full"
+            print(f"  p{w['page'] + 1:<3} {kind:<7} {w.get('chars', w.get('text'))!r}")
+        if len(final) > args.limit:
+            print(f"  ... and {len(final) - args.limit} more (use --json to dump all)")
+
+    if args.fail_if_found and final:
+        return 3
+    return 0
+
+
+def _write_outputs(args, res, final, overlay_source):
+    """The file outputs of :func:`_emit_result`, in order; raises OSError on a write failure."""
+    import pdf_strikethrough as st
     if args.markdown:
         with _open_out(args.markdown) as f:
             f.write(res.get("markdown", ""))
         if args.markdown != "-":
-            print(f"wrote struck-aware markdown to {args.markdown}")
+            print(f"wrote struck-aware markdown to {args.markdown}", file=sys.stderr)
     if args.clean_text:
         with _open_out(args.clean_text) as f:
             f.write(res.get("clean_text", ""))
         if args.clean_text != "-":
-            print(f"wrote surviving clean text to {args.clean_text}")
+            print(f"wrote surviving clean text to {args.clean_text}", file=sys.stderr)
     if args.provenance:
         with _open_out(args.provenance) as f:
             f.write(st.provenance_text(res))
         if args.provenance != "-":
-            print(f"wrote audit-preserving (provenance) text to {args.provenance}")
-    if args.overlay:
-        if overlay_source is None:
-            print("warning: --overlay is only supported for PDF input; skipped", file=sys.stderr)
-        else:
-            from . import overlay as _ov
-            # reuse the results already computed; render reopens the source (doc handle is closed)
-            written = _ov.save_overlays(overlay_source, args.overlay, result=res,
-                                        dpi=args.overlay_dpi)
-            print(f"wrote {len(written)} overlay image(s)" +
-                  (f" to {args.overlay}" if written else " (no struck pages)"))
+            print(f"wrote audit-preserving (provenance) text to {args.provenance}",
+                  file=sys.stderr)
     if args.json:
         payload = {"schema_version": SCHEMA_VERSION, "source": res["source"],
                    "page_count": res["page_count"], "page_sources": res["page_sources"],
@@ -277,21 +372,17 @@ def _emit_result(args, res, overlay_source):
             if args.json == "-":
                 f.write("\n")
         if args.json != "-":
-            print(f"wrote {len(final)} struck words to {args.json}")
-
-    if not (args.json or args.markdown or args.clean_text or args.overlay or args.provenance):
-        print(f"{res['source']}: {res['page_count']} pages "
-              f"({', '.join(sorted(set(res['page_sources'])))}), "
-              f"{len(final)} struck words in {len(res.get('passages', []))} passages")
-        for w in final[: args.limit]:
-            kind = "partial" if w.get("partial") else "full"
-            print(f"  p{w['page']:<3} {kind:<7} {w.get('chars', w.get('text'))!r}")
-        if len(final) > args.limit:
-            print(f"  ... and {len(final) - args.limit} more (use --json to dump all)")
-
-    if args.fail_if_found and final:
-        return 3
-    return 0
+            print(f"wrote {len(final)} struck words to {args.json}", file=sys.stderr)
+    if args.overlay:                         # last: a bad overlay path must not cost the text
+        if overlay_source is None:
+            print("warning: --overlay is only supported for PDF input; skipped", file=sys.stderr)
+        else:
+            from . import overlay as _ov
+            # reuse the results already computed; render reopens the source (doc handle is closed)
+            written = _ov.save_overlays(overlay_source, args.overlay, result=res,
+                                        dpi=args.overlay_dpi)
+            print(f"wrote {len(written)} overlay image(s)" +
+                  (f" to {args.overlay}" if written else " (no struck pages)"), file=sys.stderr)
 
 
 def _cmd_detect_docx(args, path):
@@ -300,7 +391,9 @@ def _cmd_detect_docx(args, path):
     import pdf_strikethrough as st
     for val, flag in ((args.ocr != "none", "--ocr"), (args.overlay, "--overlay"),
                       (args.markdown, "--markdown"), (args.clean_text, "--clean-text"),
-                      (args.provenance, "--provenance")):
+                      (args.provenance, "--provenance"), (args.pages, "--pages"),
+                      (args.di_result, "--di-result"), (args.textract_result, "--textract-result"),
+                      (args.docai_result, "--docai-result"), (args.dump_crops, "--dump-crops")):
         if val:
             print(f"warning: {flag} does not apply to a .docx; ignored", file=sys.stderr)
     try:
@@ -315,12 +408,16 @@ def _cmd_detect_docx(args, path):
         payload = {"schema_version": SCHEMA_VERSION, "source": path, "kind": "docx",
                    "n_struck_final": len(final),
                    "words": [{k: r[k] for k in _JSON_EVIDENCE if k in r} for r in recs]}
-        with _open_out(args.json) as f:
-            json.dump(payload, f, indent=2, default=list, ensure_ascii=False)
-            if args.json == "-":
-                f.write("\n")
+        try:
+            with _open_out(args.json) as f:
+                json.dump(payload, f, indent=2, default=list, ensure_ascii=False)
+                if args.json == "-":
+                    f.write("\n")
+        except OSError as e:
+            print(f"error: cannot write output: {e}", file=sys.stderr)
+            return 1
         if args.json != "-":
-            print(f"wrote {len(final)} struck runs to {args.json}")
+            print(f"wrote {len(final)} struck runs to {args.json}", file=sys.stderr)
     else:
         print(f"{path}: {len(final)} struck run(s) (docx)")
         for r in final[: args.limit]:
@@ -338,54 +435,168 @@ def _cmd_detect_docx(args, path):
 # and `python -m`); this module only orchestrates output and the aggregate exit code.
 
 
+_POLL_S = 0.2       # how often a batch wakes while waiting on a worker, so Ctrl-C is seen promptly
+
+
+def _crash_record(path):
+    return {"schema_version": SCHEMA_VERSION, "source": path,
+            "error": "BrokenProcessPool: processing this file crashed its worker process (a native "
+                     "crash in a PDF or image library)"}
+
+
+def _wait(fut):
+    """``fut.result()``, waking every _POLL_S: a blocking wait on Windows notices Ctrl-C only
+    when a result arrives, which on a slow file is minutes."""
+    from concurrent.futures import TimeoutError as FutureTimeout
+    while True:
+        try:
+            return fut.result(timeout=_POLL_S)
+        except FutureTimeout:
+            continue
+
+
+def _pool_pass(paths, opts, jobs):
+    """Yield the payloads for `paths`, in order, from a pool of `jobs` workers with at most
+    ``2 * jobs`` files submitted at a time (so an interrupt cancels the rest instead of waiting for
+    them). Returns how many were reported, and whether the pool broke before the end."""
+    from collections import deque
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+    ex = ProcessPoolExecutor(max_workers=jobs)
+    inflight, nxt, done = deque(), 0, 0
+    try:
+        while done < len(paths):
+            while nxt < len(paths) and len(inflight) < 2 * jobs:
+                inflight.append(ex.submit(_batch_worker, (paths[nxt], opts)))
+                nxt += 1
+            payload = _wait(inflight.popleft())
+            done += 1
+            yield payload
+        return done, False
+    except BrokenProcessPool:
+        return done, True
+    except KeyboardInterrupt:
+        _stop_workers(ex)                    # a queued file would otherwise still run, and exit
+        raise                                # would wait for it
+    finally:
+        for fut in inflight:
+            fut.cancel()
+        ex.shutdown(wait=False, cancel_futures=True)
+
+
+def _stop_workers(ex):
+    """Terminate a pool's worker processes. Python 3.14 has ``terminate_workers()``; before it the
+    processes are reachable only through the executor's private ``_processes`` mapping."""
+    stop = getattr(ex, "terminate_workers", None)
+    if stop is not None:
+        stop()
+        return
+    for proc in list((getattr(ex, "_processes", None) or {}).values()):
+        proc.terminate()
+
+
+def _iter_payloads(inputs, opts, jobs):
+    """One payload per input, in input order, each yielded as soon as it is ready. With --jobs a
+    worker that dies (a native crash in a PDF library takes the process down with it) breaks the
+    whole pool, and which in-flight file killed it is unknown: the first file the pool did not
+    report is re-run alone in a fresh worker — its error record if it crashes again, its result if
+    not — and the rest continue in a new pool. So one bad file costs one error line, as without
+    --jobs."""
+    if jobs <= 1:
+        for path in inputs:
+            yield _detect_payload(path, opts)
+        return
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+    pending = list(inputs)
+    while pending:
+        done, broke = yield from _pool_pass(pending, opts, jobs)
+        if not broke:
+            return
+        suspect = pending[done]
+        with ProcessPoolExecutor(max_workers=1) as ex:
+            try:
+                yield _wait(ex.submit(_batch_worker, (suspect, opts)))
+            except BrokenProcessPool:
+                yield _crash_record(suspect)
+        pending = pending[done + 1:]
+
+
+def _abandon_stdout():
+    """After a write to a closed pipe (`... --jsonl - | head`), point stdout at the null device so
+    the interpreter's own flush at exit does not raise again (the recipe in the Python docs on
+    SIGPIPE)."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):
+        pass                                 # no real file descriptor (e.g. captured in tests)
+
+
 def _cmd_detect_batch(args, inputs):
-    """Detect across many files. Writes JSONL (one payload per line) to --jsonl / --json, or prints
-    a per-file summary; --jobs N spreads the files over N worker processes. Exit: 3 if
-    --fail-if-found matched any file, else 1 if any file errored, else 0."""
+    """Detect across many files. Writes JSONL (one payload per line, flushed as each file finishes)
+    to --jsonl / --json, or prints a per-file summary; --jobs N spreads the files over N worker
+    processes. The run's preconditions are checked and the output opened before any work, so a
+    bad path fails at once and a failed check leaves the previous output intact; an interruption
+    keeps every line already written. Exit: 130 if interrupted, else 3 if --fail-if-found matched
+    any file, else 1 if any file errored or the output could not be written, else 0."""
     for val, flag in ((args.markdown, "--markdown"), (args.clean_text, "--clean-text"),
                       (args.provenance, "--provenance"), (args.overlay, "--overlay"),
                       (args.di_result, "--di-result"), (args.textract_result, "--textract-result"),
                       (args.docai_result, "--docai-result"), (args.pages, "--pages"),
                       (args.dump_crops, "--dump-crops")):
         if val:
-            print(f"warning: {flag} is ignored in batch mode (multiple inputs)", file=sys.stderr)
+            print(f"warning: {flag} is ignored in batch mode", file=sys.stderr)
 
     opts = {"ocr": args.ocr, "dpi": args.dpi, "method": args.method,
             "scan_config": args.scan_config}
     jobs = max(1, args.jobs)
-    if jobs > 1:
-        _check_ocr_available(args.ocr)      # clean error in the parent before spawning workers
-        from concurrent.futures import ProcessPoolExecutor
-        with ProcessPoolExecutor(max_workers=jobs) as ex:
-            payloads = list(ex.map(_batch_worker, [(p, opts) for p in inputs]))
-    else:
-        payloads = [_detect_payload(p, opts) for p in inputs]
-
+    if sys.platform == "win32":
+        jobs = min(jobs, 61)                 # the Windows ProcessPoolExecutor limit
+    _check_ocr_available(args.ocr)          # a clean error before the output is truncated
     out_path = args.jsonl or args.json
-    if out_path:
-        with _open_out(out_path) as f:
-            for pl in payloads:
-                json.dump(pl, f, default=list, ensure_ascii=False)
-                f.write("\n")
-        if out_path != "-":
-            print(f"wrote {len(payloads)} result line(s) to {out_path}")
+    try:
+        out = _open_out(out_path) if out_path else contextlib.nullcontext(None)
+    except OSError as e:
+        print(f"error: cannot write {out_path}: {e}", file=sys.stderr)
+        return 1
 
-    errors = sum(1 for pl in payloads if "error" in pl)
-    for pl in payloads:
-        if "error" in pl:
-            print(f"error: {pl['source']}: {pl['error']}", file=sys.stderr)
-    if out_path != "-":                     # human summary (skipped only when JSONL went to stdout)
-        n_hits = sum(1 for p in payloads if p.get("n_struck_final"))
-        if not out_path:
-            for pl in payloads:
+    n = errors = hits = 0
+    with out as f:
+        try:
+            for pl in _iter_payloads(inputs, opts, jobs):
+                n += 1
+                if f is not None:
+                    json.dump(pl, f, default=list, ensure_ascii=False)
+                    f.write("\n")
+                    f.flush()
                 if "error" in pl:
-                    print(f"  {pl['source']}: ERROR")
-                else:
-                    print(f"  {pl['source']}: {pl.get('n_struck_final', 0)} struck "
-                          f"({pl.get('page_count', '?')} pages)")
-        print(f"{len(payloads)} file(s), {n_hits} with struck text, {errors} error(s)")
+                    errors += 1
+                    print(f"error: {pl['source']}: {pl['error']}", file=sys.stderr)
+                elif pl.get("n_struck_final"):
+                    hits += 1
+                if not out_path:
+                    print(f"  {pl['source']}: ERROR" if "error" in pl else
+                          f"  {pl['source']}: {pl.get('n_struck_final', 0)} struck "
+                          f"({pl.get('page_count', '?')} pages)", flush=True)
+        except KeyboardInterrupt:
+            print(f"\ninterrupted after {n} of {len(inputs)} file(s)"
+                  + (f"; {out_path} holds those {n} line(s)" if out_path not in (None, "-")
+                     else ""), file=sys.stderr)
+            return 130
+        except OSError as e:                 # the output went away mid-run (a closed pipe)
+            if out_path in (None, "-"):
+                _abandon_stdout()
+            print(f"error: cannot write output after {n} file(s): {e}", file=sys.stderr)
+            return 1
 
-    if args.fail_if_found and any(p.get("n_struck_final") for p in payloads):
+    if out_path and out_path != "-":
+        print(f"wrote {n} result line(s) to {out_path}", file=sys.stderr)
+    if out_path != "-":                     # human summary (skipped only when JSONL went to stdout)
+        print(f"{n} file(s), {hits} with struck text, {errors} error(s)",
+              file=sys.stderr if out_path else sys.stdout)
+
+    if args.fail_if_found and hits:
         return 3
     return 1 if errors else 0
 
@@ -398,21 +609,23 @@ def main(argv=None):
             stream.reconfigure(errors="replace")
         except (AttributeError, ValueError):
             pass                             # non-reconfigurable stream (e.g. captured in tests)
-    p = argparse.ArgumentParser(prog="pdf-strikethrough",
-                                description="Detect struck-through text in PDFs.",
-                                formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p = _Parser(prog="pdf-strikethrough",
+                description="Detect struck-through text in PDFs.",
+                formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--version", action="version",
                    version=f"%(prog)s {__import__('pdf_strikethrough').__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("detect", help="detect strikethroughs in a PDF",
                        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                        epilog="exit codes: 0 ok, 1 usage/file error (batch: >=1 file errored), "
-                              "2 encrypted / OCR required, 3 --fail-if-found matched")
+                              "2 encrypted / OCR required, 3 --fail-if-found matched, "
+                              "130 interrupted")
     d.add_argument("files", nargs="+", metavar="FILE",
                    help="one or more PDFs, images (.png/.jpg/.tiff), or .docx files; also a "
-                        "directory (its top-level documents) or a glob like '*.pdf'. A single "
-                        "file gets full output (--markdown/--overlay/...); several switch to "
-                        "batch mode (JSONL). '-' reads one PDF from stdin")
+                        "directory (its top-level documents) or a glob like '*.pdf' ('**' "
+                        "recurses). A single file gets full output (--markdown/--overlay/...); "
+                        "several files, a directory or a glob run batch mode (JSONL). '-' reads "
+                        "one PDF from stdin")
     d.add_argument("--ocr", default="none", choices=["none", "rapidocr", "tesseract"],
                    help="OCR backend for scanned pages / image files (none = native pages only)")
     d.add_argument("--di-result", dest="di_result", metavar="PATH",
@@ -427,7 +640,7 @@ def main(argv=None):
                    choices=["auto", "azure-di", "confidence-free"],
                    help="scanned-page calibration ('auto' picks azure-di with --di-result, "
                         "confidence-free with --ocr, else the default)")
-    d.add_argument("--dpi", type=int, default=None,
+    d.add_argument("--dpi", type=_positive_int, default=None,
                    help="raster DPI for scanned pages (default: 200 for PDFs; read from the image "
                         "metadata for image files, else 200)")
     d.add_argument("--pages", metavar="SPEC",
@@ -439,8 +652,9 @@ def main(argv=None):
     d.add_argument("--json", metavar="PATH", help="write full results as JSON ('-' = stdout); in "
                    "batch mode this is JSONL, one result object per file")
     d.add_argument("--jsonl", metavar="PATH",
-                   help="batch mode: write one JSON result per line to PATH ('-' = stdout)")
-    d.add_argument("--jobs", type=int, default=1, metavar="N",
+                   help="batch mode (also for a single file): write one JSON result per line to "
+                        "PATH as each file finishes ('-' = stdout)")
+    d.add_argument("--jobs", type=_positive_int, default=1, metavar="N",
                    help="batch mode: process files across N worker processes (default 1)")
     d.add_argument("--markdown", metavar="PATH",
                    help="write struck-aware markdown (~~deleted~~) ('-' = stdout)")
@@ -453,7 +667,7 @@ def main(argv=None):
                    help="write page images with the detected strikes boxed (red=full, "
                         "orange=partial); PATH is a directory, or a filename prefix if it ends in "
                         "an image extension. One image per struck page")
-    d.add_argument("--overlay-dpi", dest="overlay_dpi", type=int, default=150,
+    d.add_argument("--overlay-dpi", dest="overlay_dpi", type=_positive_int, default=150,
                    help="render DPI for --overlay images")
     d.add_argument("--dump-crops", dest="dump_crops", metavar="DIR",
                    help="active-learning export: write each scored word crop (PNG) + a crops.jsonl "
