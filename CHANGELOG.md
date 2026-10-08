@@ -12,6 +12,44 @@ All notable changes to this project are documented here. The format follows
   free CPU needs a Hugging Face PRO account and how to push to an existing one, and drop the libGL
   step: RapidOCR's headless OpenCV needs no system packages.
 
+### Added
+- **`training/train_strikenet.py` records what a model was trained on.** The exported meta carries
+  a `training` block: a sha256 of the labeled set (each labeled crop's sha256 and its label, in
+  manifest order), the struck and clean counts, the validation size, the hyperparameters including
+  the seed that draws the split, and the package and torch versions. The digest identifies the data
+  but cannot restore it, so keep the labeled directory. `--batch`, `--lr` and `--seed` are now
+  flags, with the old values as defaults.
+
+### Fixed
+- **The shipped StrikeNet weights were described as reproducible, and they are not.** The model
+  card, `training/README.md` and the training script said the shipped weights could be regenerated
+  from a labeled crop set with `training/train_strikenet.py`. The weights are byte-identical in
+  every release since 0.4.0 and predate that script, which did not produce them; their training
+  set, split and settings, and how their thresholds (0.85 / 0.15) were chosen, are not recorded in
+  this repository or any release. Those documents now say so, the model card says its scanned-path
+  figures measure the whole pipeline, not the model alone, and neither it nor the README says any
+  more what the model was trained on.
+- **`training/train_strikenet.py` could not export on current torch.** From torch 2.9
+  `torch.onnx.export` defaults to the dynamo exporter, which needs `onnxscript`, and either exporter
+  imports the `onnx` package, which no setup step listed; so a finished training run ended in an
+  import error with nothing written. The script uses the TorchScript exporter, as
+  `tools/export_model.py` already did, and checks for `torch` and `onnx` before it trains. The
+  export goes to a temporary file and replaces the output directory's model only when its logits
+  match the trained net's within 1e-3, so a failed export leaves the previous model and its meta as
+  they were. The README, `training/README.md`, `CONTRIBUTING.md` and `tools/export_model.py` now
+  list `onnx`.
+- **`training/train_strikenet.py` could write a model that calls every candidate struck.** With
+  fewer struck validation crops than `--alpha` needs (19 at the default 0.05), `conformal_threshold`
+  returns 0.0, so both thresholds came out 0; and a validation split with no struck or no clean crop
+  fell back to the shipped 0.85 / 0.15 without saying so. The script now stops and says how many
+  crops it needs.
+- `CONTRIBUTING.md` gave `tools/export_model.py` a `--checkpoint` flag; the flag is `--ckpt`.
+
+### Notes
+- **Corrects 0.9.0's "Closes the model reproducibility hole."** The training script trains a
+  replacement and records what it was trained on; it does not reproduce the shipped weights or the
+  process that made them (see **Fixed**).
+
 ## [0.12.0] — 2026-10-08
 
 A correctness release. An audit of the whole package (native path, scanned path, public API, CLI

@@ -13,7 +13,7 @@ pipeline_tag: image-classification
 <!--
 HF MODEL CARD for StrikeNet. Published copy lives at https://huggingface.co/niles-liu/strikenet
 (as that repo's README.md). This is the source of record; keep the two in sync when the model or
-numbers change. The v0.9.0 shipped weights (version "v3-corpus") are what is currently hosted.
+numbers change. The weights every release has shipped (version "v3-corpus") are what is hosted.
 -->
 
 # StrikeNet — strike/clean word classifier
@@ -30,11 +30,12 @@ vector strokes and annotations directly and never invokes this model.
   and inference preprocessing cannot drift.
 - **Output:** a single logit → sigmoid probability that the word is struck.
 - **Decision thresholds** (in the meta): `p_hi = 0.85`, `p_lo = 0.15`. A word scoring `≥ p_hi` is
-  struck, `≤ p_lo` is clean, and the `[p_lo, p_hi)` band is "unsure" and deferred to geometry. The
-  training script sets these from data: `p_hi` as a split-conformal threshold on held-out
-  struck-word probabilities (distribution-free recall floor of `1 − alpha`), `p_lo` mirrored on the
-  clean class. Override per-call with `ScanConfig.recall_first(cnn_p_hi=…)` /
-  `precision_first(cnn_p_lo=…)`.
+  struck, `≤ p_lo` is clean, and the `[p_lo, p_hi)` band is "unsure" and deferred to geometry. How
+  the shipped values were chosen is not recorded (see [Provenance](#provenance-and-training)); the
+  training script sets a retrained model's thresholds from data: `p_hi` as a split-conformal
+  threshold on held-out struck-word probabilities (a recall floor of `1 − alpha` for crops like the
+  validation set; see `training/README.md`), `p_lo` mirrored on the clean class. Override per-call
+  with `ScanConfig.recall_first(cnn_p_hi=…)` / `precision_first(cnn_p_lo=…)`.
 
 ## How it fits the pipeline
 
@@ -54,8 +55,11 @@ struck words, each `sha256`-pinned). Reproduce with `benchmarks/scanned_recovery
 | Scanned-path strike recovery (Azure DI) | **96%** with `confidence_free()`; 91% with the default DI calibration | same harness, Azure Document Intelligence words |
 | Native vector detections independently confirmed by the flag signal | 99.8% | `confirmation_rate.py` (context; native path, not this model) |
 
-A per-document precision/recall figure from a labeled-corpus retrain (R-cal) is planned; the hosted
-weights here are the reproducible v0.9.0 shipped model.
+The two scanned-path figures measure the whole pipeline (stroke geometry, OCR words and this model
+together), not the model on its own. Whether these documents overlap the model's training data is
+not recorded (see [Provenance](#provenance-and-training)). No held-out precision/recall figure for
+the model itself exists yet: it needs labeled crops the model cannot have seen, such as from
+documents published after July 2026, or a retrain on a recorded labeled set.
 
 ## Usage
 
@@ -75,10 +79,21 @@ assert "p_hi" in st.get_model_meta()          # thresholds + crop geometry now l
 result = st.detect_pdf("scanned-redline.pdf", ocr=st.rapidocr_backend())
 ```
 
-## Training & reproducibility
+## Provenance and training
 
-Trained from a labeled crop set exported by the detector itself, so the shipped weights are
-reproducible and the failing-page → better-model loop is one command per step:
+**The shipped weights cannot be reproduced from the package's repository.** The ONNX the package
+ships (`version: v3-corpus`, also hosted at `niles-liu/strikenet`) is byte-identical in every
+release since the first (0.4.0, July 2026). It predates `training/train_strikenet.py`, which did not
+produce it. Its training set, train/validation split and training settings are not recorded in the
+package's repository or any release, and neither is how its thresholds (0.85 / 0.15) were chosen:
+the first release's code calls them guardrails, nothing more.
+
+**Training a replacement.** `training/train_strikenet.py` trains StrikeNet on a labeled crop set the
+detector exports, sets `p_hi` / `p_lo` from held-out data, and records in the meta, under
+`training`, what the model was trained on: a digest of the labeled crops and their labels, the class
+counts, the validation size, the hyperparameters (the seed that draws the split among them) and the
+package and torch versions. The digest identifies the labeled set but cannot restore it, so keep
+the labeled directory. The failing-page → better-model loop is one command per step:
 
 ```bash
 pdf-strikethrough detect scan.pdf --ocr rapidocr --dump-crops crops_out/   # export scored crops
@@ -90,8 +105,8 @@ Full loop and label format: [`training/README.md`](https://github.com/niles-liu/
 
 ## Limitations
 
-- **Handwritten / freehand strikes** are the main known gap: trained on rendered digital strikes,
-  so a wavy pen scribble or heavy cross-out may be missed.
+- **Handwritten / freehand strikes** are the main known gap: untested, and nothing records that the
+  model saw any in training, so a wavy pen scribble or heavy cross-out may be missed.
 - **Horizontal, left-to-right text only.** Vertical writing modes (CJK/Mongolian) and RTL strike
   axes are out of scope.
 - The model only sees word crops the geometry stage flags as candidates; it does not itself find
