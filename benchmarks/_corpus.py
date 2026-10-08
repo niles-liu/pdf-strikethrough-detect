@@ -38,8 +38,8 @@ def corpus_dir(manifest_path=MANIFEST) -> pathlib.Path:
 
 def iter_corpus(manifest_path=MANIFEST, verify=True):
     """Yield ``(entry, path)`` for each PDF in the manifest. `entry` is the manifest dict (name,
-    url, sha256, file, ...); `path` is the resolved local file. Raises FileNotFoundError if a
-    listed file is missing (with the download URL) and ValueError on a sha256 mismatch."""
+    url, sha256, file, ...); `path` is the resolved local file. Raises as :func:`check_file`
+    does on a missing file or a sha256 mismatch."""
     manifest_path = pathlib.Path(manifest_path)
     manifest = load_manifest(manifest_path)
     cdir = corpus_dir(manifest_path)
@@ -50,14 +50,21 @@ def iter_corpus(manifest_path=MANIFEST, verify=True):
             f"entry schema) and drop the files under {cdir}/ before running a benchmark.")
     for entry in pdfs:
         path = cdir / entry["file"]
-        if not path.exists():
-            raise FileNotFoundError(
-                f"{entry['file']} not found under {corpus_dir}/ — download it from "
-                f"{entry.get('url', '<no url in manifest>')}")
-        if verify and entry.get("sha256"):
-            got = _sha256(path)
-            if got != entry["sha256"]:
-                raise ValueError(
-                    f"sha256 mismatch for {entry['file']}: manifest {entry['sha256']} != {got} "
-                    f"(the source document may have changed; update the manifest deliberately)")
+        check_file(path, entry.get("sha256") if verify else None, entry.get("url"))
         yield entry, path
+
+
+def check_file(path, sha256=None, url=None):
+    """Raise FileNotFoundError if the corpus file `path` is missing (naming where to get it) and
+    ValueError if it does not hash to `sha256`. No digest, no hash check."""
+    path = pathlib.Path(path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path.name} not found under {path.parent}/ — run `python benchmarks/fetch_corpus.py` "
+            f"or download it from {url or '<no url in manifest>'}")
+    if sha256:
+        got = _sha256(path)
+        if got != sha256:
+            raise ValueError(
+                f"sha256 mismatch for {path.name}: manifest {sha256} != {got} "
+                f"(the source may have changed; update the manifest deliberately)")

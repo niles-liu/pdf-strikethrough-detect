@@ -32,13 +32,14 @@ ships inside the wheel. Extras:
 pip install "pdf-strikethrough-detect[markdown]"    # clean_markdown() via pymupdf4llm
 pip install "pdf-strikethrough-detect[rapidocr]"    # free scanned-word OCR backend (no binary)
 pip install "pdf-strikethrough-detect[tesseract]"   # word-level OCR (also needs the tesseract binary)
-pip install "pdf-strikethrough-detect[torch]"       # optional .pt CNN fallback for dev/retraining
+pip install "pdf-strikethrough-detect[torch]"       # optional .pt CNN fallback (training: + onnx)
 ```
 
 The CNN ships as ONNX and needs nothing extra. `[torch]` is only for development — the loader
 prefers `strike_verdict_cnn.onnx`, falling back to a `strike_verdict_cnn.pt` checkpoint if you
-point `PDF_STRIKETHROUGH_MODEL_DIR` at one. Regenerate the shipped ONNX from a trained checkpoint
-with [`tools/export_model.py`](tools/export_model.py).
+point `PDF_STRIKETHROUGH_MODEL_DIR` at one. Train a replacement with
+[`training/train_strikenet.py`](training/), or export an existing checkpoint to ONNX with
+[`tools/export_model.py`](tools/export_model.py); both also need `onnx` (`pip install onnx`).
 
 ## Native / born-digital PDFs — exact
 
@@ -322,7 +323,10 @@ pre-normalize such a page before running it.
 scored plus its verdict as a labeling set; label it, retrain with
 [`training/train_strikenet.py`](training/), and load your weights via
 `PDF_STRIKETHROUGH_MODEL_DIR`, `cnn.set_model_dir`, or `cnn.ensure_model(url, sha256, …)`
-(digest-verified download). A ["contribute a failing page"](.github/ISSUE_TEMPLATE/failing-page.md)
+(digest-verified download). The shipped weights cannot be reproduced: their training data is not
+recorded ([model card](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/training/MODEL_CARD.md#provenance-and-training)).
+A model the script trains records a digest of its labeled set and its settings in its meta. A
+["contribute a failing page"](.github/ISSUE_TEMPLATE/failing-page.md)
 report feeds the same loop, and [`demo/`](demo/) is a drag-and-drop Gradio app for trying it — live
 at [**huggingface.co/spaces/niles-liu/strikethrough-demo**](https://huggingface.co/spaces/niles-liu/strikethrough-demo).
 
@@ -356,8 +360,8 @@ RapidOCR (the recommended scanned backend) is strongest on Chinese, so horizonta
 end to end today; full vertical-text support is future work.
 
 **Handwritten strikes** are the main known gap: the geometry gate looks for a near-straight,
-near-horizontal stroke, and the CNN was trained on rendered digital strikes, so a wavy pen
-scribble or a heavy cross-out may be missed. If you hit one, a
+near-horizontal stroke, and nothing records that the CNN saw handwritten strikes in training, so a
+wavy pen scribble or a heavy cross-out may be missed. If you hit one, a
 [failing-page report](.github/ISSUE_TEMPLATE/failing-page.md) with `--dump-crops` output is the
 fastest way to turn it into a fix — it becomes both a regression test and training data.
 
@@ -385,7 +389,7 @@ Everything is docstringed; `help(st.detect_pdf)` is the reference.
 
 ## Contributing, security, citation
 
-- Development setup, running the tests, and regenerating the model: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Development setup, running the tests, and training or exporting a model: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - This package parses untrusted PDFs — reporting policy in [`SECURITY.md`](SECURITY.md).
 - Citing it in research: [`CITATION.cff`](CITATION.cff).
 

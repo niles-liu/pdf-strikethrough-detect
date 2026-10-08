@@ -19,7 +19,7 @@ pytest tests/ -q
 ```
 
 The suite is self-contained — it synthesizes its own PDFs and images, so no fixtures to download.
-It runs in a couple of seconds on CPU.
+It runs in well under a minute on CPU.
 
 ## Linting
 
@@ -33,12 +33,15 @@ documents which default rules it opts out of and why.
 ## The CNN model
 
 The strike-verdict CNN (StrikeNet, ~79k params) ships as ONNX inside the package
-(`src/pdf_strikethrough/strike_verdict_cnn.onnx` + `.meta.json`). To regenerate the ONNX from a
-trained PyTorch checkpoint:
+(`src/pdf_strikethrough/strike_verdict_cnn.onnx` + `.meta.json`). The shipped weights cannot be
+reproduced: their training data is not recorded
+([model card](training/MODEL_CARD.md#provenance-and-training)). To train a replacement on a labeled
+crop set and export it, see [`training/README.md`](training/README.md); to export an existing
+PyTorch checkpoint to ONNX:
 
 ```bash
-pip install -e ".[torch]"
-python tools/export_model.py --checkpoint path/to/strike_verdict_cnn.pt
+pip install -e ".[torch]" onnx       # torch's ONNX exporter imports onnx
+python tools/export_model.py --ckpt path/to/strike_verdict_cnn.pt
 ```
 
 The exported `meta.json` records the crop/pad geometry the model was trained with; the loader

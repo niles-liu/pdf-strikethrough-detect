@@ -1,14 +1,19 @@
 """Export the trained strike-verdict checkpoint to ONNX for torch-free serving.
 
-Reads a StrikeNet checkpoint (as produced by the training notebook) and writes the two files
-the package ships and serves via onnxruntime (no PyTorch at runtime):
+Reads a StrikeNet checkpoint, a ``torch.save``'d dict with ``state_dict``, ``p_hi`` and ``p_lo``
+and optionally ``version``, ``crop_h``, ``crop_w``, ``pad_x`` and ``pad_y`` (the format of the
+training notebook that produced the shipped weights, which is not in this repository;
+``training/train_strikenet.py`` trains and exports ONNX in one step), and writes the two files the
+package ships and serves via onnxruntime (no PyTorch at runtime):
   src/pdf_strikethrough/strike_verdict_cnn.onnx        the network (dynamic batch, logits output)
   src/pdf_strikethrough/strike_verdict_cnn.meta.json   {version, p_hi, p_lo, crop_h, crop_w, pad_x, pad_y}
 
-Run (requires torch + onnxruntime — the package's [dev]/[torch] extras):
+Run (requires torch, the package's [torch] extra, and onnx, which torch's ONNX exporter imports;
+onnxruntime is a base dependency):
     python tools/export_model.py --ckpt /path/to/strike_verdict_cnn.pt
 
-Re-run whenever the model is retrained, then rebuild the wheel so the new ONNX ships.
+Re-run whenever you have a new checkpoint in this format, then rebuild the wheel so the new ONNX
+ships.
 """
 import argparse
 import json

@@ -9,10 +9,13 @@ ground-truth strikes it recovers (struck-region coverage, IoU >= 0.3) plus the t
     python benchmarks/scanned_recovery.py
 
 Inputs (per manifest entry, written by `prep_scanned_di.py`): `scanned_pages` (original page
-indices) and, optionally, `scanned_di_result` (a cached Azure DI analyze-result JSON in corpus/).
-Azure DI is read from that cached JSON (no cloud call); RapidOCR runs live if installed. Entries
-without `scanned_pages` are skipped. This supersedes the DI-vs-original-pipeline `di_parity.py` with
-a self-contained reference (the exact native truth) that needs no vanished pipeline.
+indices) and, optionally, `scanned_di_result` (a cached Azure DI analyze-result JSON in corpus/,
+downloaded with the PDFs by `fetch_corpus.py` and checked against `scanned_di_sha256`). Azure DI is
+read from that cached JSON (no cloud call) and scored twice, with the default DI calibration and
+with `ScanConfig.confidence_free()`; RapidOCR runs live if installed. Entries without
+`scanned_pages` are skipped, and an entry without a DI result is n/a in the DI columns. This
+supersedes the DI-vs-original-pipeline `di_parity.py` with a self-contained reference (the exact
+native truth) that needs no vanished pipeline.
 """
 from __future__ import annotations
 
@@ -21,8 +24,12 @@ import json
 import pdf_strikethrough as st
 from pdf_strikethrough.scanned import ScanConfig
 
-from _corpus import corpus_dir, iter_corpus
+from _corpus import check_file, corpus_dir, iter_corpus
 from _scanned import build_scanned_pdf
+
+# The cached DI words under each calibration the README quotes. None is detect_pdf's default with
+# di_result, the Azure DI calibration.
+DI_CONFIGS = {"Azure DI": None, "Azure DI conf-free": ScanConfig.confidence_free()}
 
 
 def _iou(a, b):
@@ -46,8 +53,8 @@ def _struck_boxes(result):
 
 
 def _backends():
-    """Available scanned-word sources as ``name -> callable(orig, pages, gt_boxes) -> (cov, n)``.
-    Azure DI is added per-entry (cached JSON); RapidOCR is added here if installed."""
+    """OCR backends that run live, as ``name -> callable(pdf_bytes) -> detect_pdf result``. Azure
+    DI is not one of them: it is read per entry from the cached JSON."""
     out = {}
     try:
         import rapidocr  # noqa: F401
@@ -65,13 +72,15 @@ def _backends():
 def main() -> None:
     cdir = corpus_dir()
     live = _backends()
-    names = (["Azure DI"] if True else []) + list(live)
+    names = list(DI_CONFIGS) + list(live)
     print(f"\n{'document':<34} {'pages':>5} {'GT':>6} " +
           " ".join(f"{n:>20}" for n in names))
     print("(each backend cell: struck-region coverage vs native ground truth | predicted count)")
     print("-" * (34 + 13 + 21 * len(names)))
 
     tot_gt = 0
+    tot_runs = {n: 0 for n in names}       # entries each backend ran on
+    tot_scored = {n: 0 for n in names}     # ground truth on those entries
     tot_cov = {n: 0.0 for n in names}
     tot_pred = {n: 0 for n in names}
     ran = 0
@@ -83,25 +92,29 @@ def main() -> None:
         by_page = {}
         for r in st.strikethroughs_in_pdf(str(orig), method="both"):
             by_page.setdefault(r["page"], []).append(r["bbox_frac"])
-        gt = {i: by_page.get(pno, []) for i, pno in enumerate(page_indices)}
-        gt_boxes = [b for boxes in gt.values() for b in boxes]
+        gt_boxes = [b for pno in page_indices for b in by_page.get(pno, [])]
         pdf_bytes = build_scanned_pdf(orig, page_indices)
 
-        cells = []
+        results = {}
         di_file = entry.get("scanned_di_result")
-        if "Azure DI" in names:
-            if di_file:
-                di = json.loads((cdir / di_file).read_text(encoding="utf-8"))
-                pred = _struck_boxes(st.detect_pdf(pdf_bytes, di_result=di))
-                cov = _coverage(gt_boxes, pred)
-            else:
-                pred, cov = [], float("nan")
-            tot_cov["Azure DI"] += cov * len(gt_boxes)
-            tot_pred["Azure DI"] += len(pred)
-            cells.append(f"{cov:>13.1%} | {len(pred):>4}")
-        for n in live:
-            pred = _struck_boxes(live[n](pdf_bytes))
+        if di_file:
+            di_path = cdir / di_file
+            check_file(di_path, entry.get("scanned_di_sha256"), entry.get("scanned_di_url"))
+            di = json.loads(di_path.read_text(encoding="utf-8"))
+            for n, cfg in DI_CONFIGS.items():
+                results[n] = st.detect_pdf(pdf_bytes, di_result=di, scan_config=cfg)
+        for n, run in live.items():
+            results[n] = run(pdf_bytes)
+
+        cells = []
+        for n in names:
+            if n not in results:
+                cells.append(f"{'n/a':>20}")
+                continue
+            pred = _struck_boxes(results[n])
             cov = _coverage(gt_boxes, pred)
+            tot_runs[n] += 1
+            tot_scored[n] += len(gt_boxes)
             tot_cov[n] += cov * len(gt_boxes)
             tot_pred[n] += len(pred)
             cells.append(f"{cov:>13.1%} | {len(pred):>4}")
@@ -116,9 +129,13 @@ def main() -> None:
               "prep_scanned_di.py` first (needs an Azure DI key) to build the scanned set.")
         return
     print("-" * (34 + 13 + 21 * len(names)))
-    agg = " ".join(f"{(tot_cov[n] / tot_gt if tot_gt else 1.0):>13.1%} | {tot_pred[n]:>4}"
-                   for n in names)
+    agg = " ".join(f"{'n/a':>20}" if not tot_runs[n] else
+                   f"{(tot_cov[n] / tot_scored[n] if tot_scored[n] else 1.0):>13.1%} | "
+                   f"{tot_pred[n]:>4}" for n in names)
     print(f"{'TOTAL (coverage-weighted)':<34} {'':>5} {tot_gt:>6} {agg}")
+    for n in names:
+        if tot_runs[n] and tot_scored[n] != tot_gt:
+            print(f"  ({n}: over the {tot_scored[n]} known strikes of the entries it ran on)")
     print(f"\n{tot_gt} known strikes across {ran} rasterized documents. Coverage = fraction of the "
           f"native ground-truth strikes the scanned path recovers.")
 

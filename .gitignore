@@ -8,6 +8,8 @@ dist/
 .ruff_cache/
 .venv/
 venv/
+# credentials (benchmarks/prep_scanned_di.py reads the Azure DI key from here)
+.env
 *.pt
 .DS_Store
 

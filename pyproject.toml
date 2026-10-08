@@ -64,6 +64,11 @@ Changelog = "https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/CHA
 [tool.setuptools.dynamic]
 version = { attr = "pdf_strikethrough.__version__" }
 
+[tool.uv]
+# uv rebuilds a local project only when its cache keys change, and the default keys miss the
+# dynamic version above: after a version bump an editable install kept reporting the old one.
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/pdf_strikethrough/__init__.py" }]
+
 [tool.ruff]
 line-length = 100        # the codebase targets ~99 cols
 
