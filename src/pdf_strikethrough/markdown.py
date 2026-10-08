@@ -56,7 +56,7 @@ def _column_partition(items):
     if not cuts:
         return [items]
     cols = []
-    # open-ended outer bounds: a glyph straddling the page edge (center past 1.0) still has a column
+    # open-ended outer bounds, so a word straddling the page edge keeps its column
     for a, b in zip([-np.inf, *cuts], [*cuts, np.inf]):
         col = [it for it in items if a <= (it[1][0] + it[1][2]) / 2 < b]
         if col:
@@ -161,19 +161,10 @@ def mark_provenance(md, template="[deleted: {}]"):
     return "".join(out)
 
 
-def _struck_range(text, rec):
-    """``(c0, c1)`` of the struck characters of a final record; ``(0, len)`` for a full strike."""
-    c0, c1 = rec.get("char_span", (0, len(text)))
-    if not rec.get("partial"):
-        return 0, len(text)
-    return c0, c1
-
-
 def group_passages(items):
     """Maximal runs of consecutive final-struck words in reading order -> deletion passages.
-    Returns [{text, n_words, bbox_frac}], one per contiguous struck section. A partial strike
-    bounds its passage on the side where live characters remain: '~~semi-~~monthly ~~rate~~'
-    is two passages, since 'monthly' survives between them."""
+    Returns [{text, n_words, bbox_frac}], one per contiguous struck section. A partial strike ends
+    its passage where live characters remain ('~~semi-~~monthly ~~rate~~' is two passages)."""
     passages, run = [], []
 
     def flush():
@@ -192,7 +183,7 @@ def group_passages(items):
         for row in cluster_rows(col):
             for t, b, r in row:
                 if r is not None and r.get("final"):
-                    c0, c1 = _struck_range(t, r)
+                    c0, c1 = r.get("char_span", (0, len(t))) if r.get("partial") else (0, len(t))
                     if c0 > 0:
                         flush()                    # live text precedes the strike in this word
                     run.append((t, b, r))          # runs merge across rows (hyphenated line breaks)

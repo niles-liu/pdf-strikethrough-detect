@@ -22,7 +22,7 @@ import pdf_strikethrough as st
 from pdf_strikethrough.scanned import ScanConfig
 
 from _corpus import corpus_dir, iter_corpus
-from _scanned import build_scanned_pdf, page_ground_truth
+from _scanned import build_scanned_pdf
 
 
 def _iou(a, b):
@@ -80,7 +80,10 @@ def main() -> None:
         if not pages:
             continue
         page_indices = sorted(pages)           # the pages the cached DI result was captured on
-        gt = page_ground_truth(orig, page_indices)
+        by_page = {}
+        for r in st.strikethroughs_in_pdf(str(orig), method="both"):
+            by_page.setdefault(r["page"], []).append(r["bbox_frac"])
+        gt = {i: by_page.get(pno, []) for i, pno in enumerate(page_indices)}
         gt_boxes = [b for boxes in gt.values() for b in boxes]
         pdf_bytes = build_scanned_pdf(orig, page_indices)
 

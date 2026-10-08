@@ -213,9 +213,13 @@ class _FakePool:
 def test_a_crashing_file_costs_one_error_line_with_jobs(tmp_path, monkeypatch):
     import concurrent.futures
     names = ["a.pdf", "crash.pdf", "b.pdf", "c.pdf"]
+    for n in names:
+        (tmp_path / n).write_bytes(b"%PDF-1.4")         # never opened: the fake pool answers
     monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _FakePool)
-    paths = [str(tmp_path / n) for n in names]
-    payloads = list(cli._iter_payloads(paths, {}, jobs=2))
+    out = tmp_path / "out.jsonl"
+    args = ["detect", *(str(tmp_path / n) for n in names), "--jsonl", str(out), "--jobs", "2"]
+    assert cli.main(args) == 1                           # one file errored
+    payloads = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
     assert [os.path.basename(p["source"]) for p in payloads] == names
     assert [os.path.basename(p["source"]) for p in payloads if "error" in p] == ["crash.pdf"]
 

@@ -14,11 +14,10 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional, Tuple, TypedDict
 
-# Version of the documented output shape: the keys below and what they mean, carried as
-# ``schema_version`` on every ``DetectResult`` and every CLI --json / --jsonl payload. Bumped when a
-# documented key is removed or renamed or its meaning changes; adding a key does not bump it, so
-# consumers should ignore keys they don't know. It versions the shape, not the detections: which
-# words get flagged can change between releases without a bump.
+# Version of the documented output shape (the keys below and their meaning), carried as
+# ``schema_version`` on every ``DetectResult`` and CLI --json / --jsonl payload. Bumped when a key
+# is removed, renamed or changes meaning; not for an added key (ignore unknown keys) or for
+# detections.
 SCHEMA_VERSION = 1
 
 # (x0, y0, x1, y1) as page fractions in [0, 1], origin top-left.

@@ -80,8 +80,7 @@ def _image_coverage(page, grid=64):
     """Fraction of the page covered by raster images, UNIONED on a coarse boolean grid. Summing
     per-image bbox areas over-counts overlaps and repeats — the same 30%-of-page image placed
     three times would read as 90% coverage and misroute a born-digital page to 'scanned'. Image
-    boxes arrive in unrotated space and are turned into the page's rotated frame first: on a
-    /Rotate 90 legal page a full-page scan otherwise measured 61% and routed native."""
+    boxes arrive in unrotated space and are turned into the page's rotated frame first."""
     import numpy as np
     R = page.rect
     pw, ph = R.width or 1.0, R.height or 1.0
@@ -126,9 +125,8 @@ def classify_page_source(page, words=None):
     background image behind real, visible text. It is routed 'scanned' only when that coverage
     coincides with an invisible OCR text overlay (render mode 3) or with no visible text over
     real vector drawings. Away from heavy image coverage, real text means 'native' — sparse
-    pages (signatures, cover sheets) stay native — unless every bit of it is an invisible OCR
-    overlay over a raster: a scan that fills only part of the page (a receipt, a clipping) is still
-    a scan, and the native detectors see no strikes on it.
+    pages (signatures, cover sheets) stay native — unless all of it is an invisible OCR layer over
+    a raster (a scan filling only part of the page is still a scan).
 
     ``words`` optionally supplies this page's ``get_text("words")`` output so a caller that also
     detects on the page extracts it once (default None = extract here, only on the light-image
@@ -284,11 +282,9 @@ MIN_META_DPI = 100   # image-metadata resolutions below this are placeholders, n
 
 
 def _frame_gray(frame):
-    """One decoded PIL frame as the uint8 grayscale the detectors read, through the same conversion
-    as an array input (:func:`~pdf_strikethrough.lines.to_gray_u8`): color by Rec.709 luminance as
-    on the PDF path, transparency composited over white, 16-bit and float frames rescaled. PIL's
-    own ``convert("L")`` put a green highlighter at 150 where the PDF path puts it at 219, and
-    dropped alpha, so a transparent PNG read as solid black."""
+    """One decoded PIL frame as uint8 grayscale, through the same conversion as an array input
+    (:func:`~pdf_strikethrough.lines.to_gray_u8`) rather than PIL's ``convert("L")``, which
+    differs from the PDF path on color and drops transparency."""
     import numpy as np
 
     from .lines import to_gray_u8
@@ -304,10 +300,9 @@ def _image_frames(source):
     (a path, bytes, an open binary file, or a PIL image); multi-page TIFFs give one per frame.
     ``upright`` is the frame turned to its EXIF orientation (how a viewer shows a phone photo), or
     None when there is nothing to turn: no rotation, a rotation the decoder already applied
-    (Pillow applies a TIFF's on load), or an EXIF block too malformed to read, which 0.11.0 never
-    looked at and must not start failing on. ``dpi`` is the x-resolution recorded in the image
-    metadata, or None when it carries none. An image this opens is closed before returning, also
-    on a decode error (an open handle locks the file on Windows)."""
+    (Pillow applies a TIFF's on load), or an unreadable EXIF block. ``dpi`` is the x-resolution
+    recorded in the image metadata, or None. An image this opens is closed before returning, also
+    on a decode error."""
     import io
 
     from PIL import Image, ImageOps, ImageSequence
@@ -343,8 +338,7 @@ def _image_frames(source):
 
 
 def _check_dpi(dpi, name="dpi"):
-    """Reject a non-positive or non-numeric resolution up front: 0 divided by zero deep in the
-    image path, and a negative value silently rendered at 1 dpi."""
+    """Reject a non-positive or non-numeric resolution up front."""
     if isinstance(dpi, bool) or not isinstance(dpi, numbers.Real) or not dpi > 0:
         raise ValueError(f"{name} must be a positive number, got {dpi!r}")
 
@@ -358,13 +352,12 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     so it needs OCR words: pass an `ocr` backend (run per frame), a `words` list (a single-frame
     image), or `words_by_page` (``{0-based frame: list[Word]}`` — e.g.
     ``words_from_textract(resp)``). DPI drives the geometry tunables: an explicit `dpi=` wins;
-    otherwise it's read from the image metadata, falling back to 200 — also when the metadata
-    says less than MIN_META_DPI, the 72/96 placeholder cameras and screenshot tools write, which
-    shrank every tunable and missed strikes (a warning names the ignored value).
+    otherwise it's read from the image metadata, falling back to 200, also when the metadata says
+    less than MIN_META_DPI (the 72/96 placeholder cameras and screenshot tools write; a warning
+    names it).
 
-    A frame stored rotated (an EXIF Orientation tag, as phone photos carry) is turned upright
-    before ``ocr`` runs on it. Supplied ``words``/``words_by_page`` are read against the frame as
-    stored, since that is what an engine reading the raw pixels reports; a warning says so.
+    A frame stored rotated (an EXIF Orientation tag) is turned upright before ``ocr`` runs on it;
+    supplied ``words``/``words_by_page`` are read against the frame as stored, with a warning.
 
     Returns the same dict shape as :func:`detect_pdf` (``page_sources`` all ``"scanned"``); there
     is no `pages` subset and no native path. A frame with no word source raises
@@ -507,9 +500,8 @@ def _match_native_seq(page, recs, words=None):
 def _di_pages(di_result):
     """Normalize a user-supplied Azure DI result to ``{0-based PDF page: DI page}``. Accepts the
     REST JSON dict, a {'analyzeResult': {...}} envelope, or an SDK object exposing .as_dict().
-    Pages are keyed by their own ``pageNumber`` (1-based), falling back to list position: a run
-    over a page range (``pages="2-3"``) returns only those pages, and keying by position put page
-    2's words on page 0."""
+    Pages are keyed by their 1-based ``pageNumber``, else by list position, so a result for a
+    page range lines up with the PDF."""
     if di_result is None:
         return None
     d = di_result
@@ -555,8 +547,7 @@ def _normalize_pages(pages, page_count):
     """Coerce a user ``pages=`` value to a sorted list of unique, in-range 0-based indices.
     Accepts an int or any iterable of ints (negatives index from the end, like list slicing).
     Out-of-range indices raise IndexError so a typo fails loudly instead of silently detecting
-    nothing; a string, a bool or a float raises TypeError (``pages="12"`` used to mean pages 1
-    and 2, and 1.9 meant page 1)."""
+    nothing; a string, a bool or a float raises TypeError."""
     if pages is None:
         return list(range(page_count))
     if isinstance(pages, (str, bytes, bytearray, bool)):
@@ -599,9 +590,8 @@ def _normalize_words_by_page(words_by_page):
 
 
 def _check_words_by_page(wbp, count, unit="page"):
-    """Reject a ``words_by_page`` whose keys fall outside the document — 1-based keys used to put
-    page 1's words on page 0 and drop the last page silently — or whose values are not word
-    lists."""
+    """Reject a ``words_by_page`` whose keys fall outside the document (1-based keys, say) or
+    whose values are not word lists."""
     bad = sorted(k for k in wbp if not 0 <= k < count)
     if bad:
         raise ValueError(f"words_by_page has {unit} key(s) {bad} outside the {count}-{unit} "
@@ -624,9 +614,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             Required only if the document has scanned pages and `di_result` is not given.
         scan_config: ``ScanConfig`` for the scanned classifier. Default: Azure-DI calibration
             with `di_result`, else ``ScanConfig.confidence_free()`` — the confidences an `ocr`
-            backend or `words_by_page` carries are not calibrated to the classifier. This matches
-            ``detect_image_file`` and the CLI; ``ocr=`` used to default to the DI calibration,
-            whose confidence veto dropped real strikes on RapidOCR's near-1.0 confidences.
+            backend or `words_by_page` carries are not calibrated to the classifier (as in
+            ``detect_image_file`` and the CLI).
         dpi: raster resolution for scanned pages (detector tunables rescale automatically;
             calibrated/validated at 200). Must be positive.
         di_result: a pre-fetched Azure Document Intelligence analyze result as a DICT — the REST
@@ -666,8 +655,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
     records (not by stripping the markdown), so the two always agree. A PDF that MuPDF had to
-    repair to open carries a warning: its text or drawings may be incomplete, so finding nothing
-    on it is weaker evidence than on an intact file.
+    repair to open carries a warning: its text or drawings may be incomplete.
     """
     method = _resolve_native_method(method, native_method)
     if method not in native.METHODS:
