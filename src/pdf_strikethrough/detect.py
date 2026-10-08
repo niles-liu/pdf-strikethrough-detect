@@ -74,7 +74,9 @@ def _open_doc(source):
 def _image_coverage(page, grid=64):
     """Fraction of the page covered by raster images, UNIONED on a coarse boolean grid. Summing
     per-image bbox areas over-counts overlaps and repeats — the same 30%-of-page image placed
-    three times would read as 90% coverage and misroute a born-digital page to 'scanned'."""
+    three times would read as 90% coverage and misroute a born-digital page to 'scanned'. Image
+    boxes arrive in unrotated space and are turned into the page's rotated frame first: on a
+    /Rotate 90 legal page a full-page scan otherwise measured 61% and routed native."""
     import numpy as np
     R = page.rect
     pw, ph = R.width or 1.0, R.height or 1.0
@@ -82,7 +84,9 @@ def _image_coverage(page, grid=64):
         return 0.0
     cells = np.zeros((grid, grid), dtype=bool)
     for info in page.get_image_info():
-        r = pymupdf.Rect(info["bbox"]) & R
+        r = pymupdf.Rect(info["bbox"]) * page.rotation_matrix
+        r.normalize()
+        r &= R
         if r.is_empty:
             continue
         cx0 = max(0, min(grid, int((r.x0 - R.x0) / pw * grid)))
@@ -116,8 +120,10 @@ def classify_page_source(page, words=None):
     Heavy raster-image coverage alone is not a scan: a born-digital page can carry a full-bleed
     background image behind real, visible text. It is routed 'scanned' only when that coverage
     coincides with an invisible OCR text overlay (render mode 3) or with no visible text over
-    real vector drawings. Away from heavy image coverage, ANY real text means 'native' — sparse
-    pages (signatures, cover sheets) stay native.
+    real vector drawings. Away from heavy image coverage, real text means 'native' — sparse
+    pages (signatures, cover sheets) stay native — unless every bit of it is an invisible OCR
+    overlay over a raster: a scan that fills only part of the page (a receipt, a clipping) is still
+    a scan, and the native detectors see no strikes on it.
 
     ``words`` optionally supplies this page's ``get_text("words")`` output so a caller that also
     detects on the page extracts it once (default None = extract here, only on the light-image
@@ -133,6 +139,8 @@ def classify_page_source(page, words=None):
     if words is None:
         words = page.get_text("words")
     if any(w[4].strip() for w in words):
+        if img_cov >= 0.05 and _text_visibility(page) == (False, True):
+            return "scanned"
         return "native"
     return "blank" if img_cov < 0.05 else "scanned"
 

@@ -2,7 +2,7 @@
 and annotated against. These are the *documented* keys — the dicts are plain ``dict`` at runtime
 (no validation, no cost), and ``total=False`` throughout because the key set is tier-dependent:
 
-  native  (tier 'vector' / 'flag')  ->  carries ``coverage``; no CNN fields
+  native  (tier 'vector' / 'flag' / 'annot')  ->  carries ``coverage``; no CNN fields
   scanned (tier 'auto' / 'review')  ->  carries ``score`` + ``cnn_prob`` (+ ``cnn_agrees`` on
                                         auto records); ``conf`` is the OCR confidence
 
@@ -41,9 +41,10 @@ class StruckWord(TypedDict, total=False):
     verdict: Verdict
     final: bool                  # the ship decision: is this word reported as struck?
     # native only
-    coverage: float              # fraction of the word's width the stroke spans
+    coverage: float              # vector: fraction of the word's width the stroke spans;
+                                 # flag/annot: fraction of its characters that are struck
     # native 'vector' only — forensics from the dominant contributing stroke
-    stroke_color: Optional[Tuple[float, float, float]]   # RGB in [0, 1] (None = unset/default black)
+    stroke_color: Tuple[float, float, float]   # RGB in [0, 1]; unset paint reads as black
     stroke_width: float          # stroke line width (pt), or bar height for a filled-rect strike
     # native 'annot' only — /StrikeOut annotation forensics (present when the annotation supplies)
     annot_author: Optional[str]     # /T   "who struck this"
@@ -74,6 +75,7 @@ class Passage(TypedDict, total=False):
     page: int
     text: str
     n_words: int
+    bbox_frac: List[float]       # union box of the passage's words, page fractions (x0, y0, x1, y1)
 
 
 class DetectResult(TypedDict, total=False):
