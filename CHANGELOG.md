@@ -42,6 +42,11 @@ All notable changes to this project are documented here. The format follows
   strings; `Word` rejects a non-finite box. `provenance_text` raises on a result without
   `markdown` instead of returning `''`, and the calibration helpers raise on a label that is not
   struck/clean, True/False or 1/0 instead of counting it.
+- **CLI.** Batch mode follows the form of the arguments (several files, a directory, a glob, or
+  `--jsonl`), not the number of files matched. Status lines (`wrote ...`) go to stderr. Usage errors
+  exit 1, as documented — argparse's 2 collided with "encrypted / OCR required". `--dpi`, `--jobs`
+  and `--overlay-dpi` must be positive. An interrupted run exits 130. Plain output numbers pages
+  from 1, like `--pages`.
 
 ### Added
 - **`schema_version` on every `detect_pdf` / `detect_image_file` result**, the same number the CLI
@@ -147,6 +152,26 @@ All notable changes to this project are documented here. The format follows
   the body paragraph the box is anchored in, so body numbering is unchanged) and every strike in a
   Strict OOXML file. Malformed XML or a damaged archive now raises the documented `ValueError`,
   naming a `Path` source.
+
+#### CLI
+- **Output written to `-` was not UTF-8 on Windows.** A redirected stdout is cp1252, so struck
+  non-Latin text became `?` and `--json -` wrote invalid JSON. Output to `-` is UTF-8.
+- **`--jsonl` was ignored when a directory or glob matched one file**, leaving the previous output
+  in place; **status lines on stdout broke piped JSON and markdown**; **a filename containing `[`**
+  was treated as a pattern; **`--pages` past the end** and an unreadable image, malformed `.docx`
+  or unwritable output ended in a traceback.
+- **A batch held every result until the end**, so Ctrl-C, a crashed worker or a bad output path
+  lost the whole run. The output is opened first, after the run's own checks (a missing OCR extra
+  no longer empties the previous output), and each line is written as its file finishes. Under
+  `--jobs` a file that crashes its worker is re-run alone and becomes the one error line while the
+  rest carry on, Ctrl-C stops the workers at once, and a closed output pipe (`| head`) ends the run
+  with an error instead of a traceback.
+- **The README called a directory "a whole tree"; only its top level is read.** The README now says
+  so, and a glob with `**` recurses. A glob now keeps only documents (it handed a `.txt` or a
+  subdirectory to PyMuPDF), `-` cannot be mixed with other inputs, and flags that do not apply to a
+  `.docx` say so.
+- **CI linted with ruff 0.15.20** while the `dev` extra pinned 0.16.x; both now pin 0.16.9.
+- `examples/scanned_quickstart.py` crashed printing an OCR'd non-Latin character to a pipe.
 
 ### Security
 - **`ensure_model` could load content it had not verified.** An empty digest skipped the check,
