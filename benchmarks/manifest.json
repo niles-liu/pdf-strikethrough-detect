@@ -1,5 +1,5 @@
 {
-  "description": "Public redline PDF corpus for pdf-strikethrough-detect benchmarks. Files are not committed; run `python benchmarks/fetch_corpus.py` to download them into benchmarks/corpus/ (git-ignored). See benchmarks/README.md for the entry schema. All entries are public government/regulatory redline documents whose deletions use genuine strikethrough text markup.",
+  "description": "Public redline PDF corpus for pdf-strikethrough-detect benchmarks. Files are not committed; run `python benchmarks/fetch_corpus.py` to download them, and the cached Azure DI results the scanned-recovery benchmark reads, into benchmarks/corpus/ (git-ignored). See benchmarks/README.md for the entry schema. All entries are public government/regulatory redline documents whose deletions use genuine strikethrough text markup.",
   "corpus_dir": "corpus",
   "pdfs": [
     {
@@ -14,7 +14,9 @@
         3
       ],
       "scanned_pdf": "copyright-201-10-redline.scanned.pdf",
-      "scanned_di_result": "copyright-201-10-redline.scanned.di.json"
+      "scanned_di_result": "copyright-201-10-redline.scanned.di.json",
+      "scanned_di_url": "https://huggingface.co/datasets/niles-liu/strikethrough-benchmark/resolve/main/scanned-recovery/copyright-201-10-redline.scanned.di.json",
+      "scanned_di_sha256": "931ab51abe7403452b7c2f08ebe1c0dba3536cde29576391db1ac440bde1bdd6"
     },
     {
       "name": "FDIC Fair Lending laws & regulations (redlined changes)",
@@ -36,7 +38,9 @@
         53
       ],
       "scanned_pdf": "fdic-fair-lending-redline.scanned.pdf",
-      "scanned_di_result": "fdic-fair-lending-redline.scanned.di.json"
+      "scanned_di_result": "fdic-fair-lending-redline.scanned.di.json",
+      "scanned_di_url": "https://huggingface.co/datasets/niles-liu/strikethrough-benchmark/resolve/main/scanned-recovery/fdic-fair-lending-redline.scanned.di.json",
+      "scanned_di_sha256": "4dac9542d557cb8fa438712f7e77c182dbfeb4bee98952d80eeb61a9eb375b7e"
     },
     {
       "name": "Gretna, LA Unified Development Code substantive edits (redline)",
@@ -54,7 +58,9 @@
         21
       ],
       "scanned_pdf": "gretna-udo-edits.scanned.pdf",
-      "scanned_di_result": "gretna-udo-edits.scanned.di.json"
+      "scanned_di_result": "gretna-udo-edits.scanned.di.json",
+      "scanned_di_url": "https://huggingface.co/datasets/niles-liu/strikethrough-benchmark/resolve/main/scanned-recovery/gretna-udo-edits.scanned.di.json",
+      "scanned_di_sha256": "8a628e501dab10049485479d149086844229a64ccbda3f3dfd2249ed8d4dc10d"
     },
     {
       "name": "California CCPA regulations - text of modified regs (redline, 2020)",
@@ -65,13 +71,13 @@
     {
       "name": "CEQ NEPA implementing regulations - redline for final rule",
       "file": "ceq-nepa-regs-redline.pdf",
-      "url": "https://ceq.doe.gov/docs/laws-regulations/CEQ%20Regulations-Redline-for-Final-Rule.pdf",
+      "url": "https://web.archive.org/web/20250120215024id_/https://ceq.doe.gov/docs/laws-regulations/CEQ%20Regulations-Redline-for-Final-Rule.pdf",
       "sha256": "b96bd715f1b8b24c3b761756d173fa84b8e6d6a90bf6df4645b563c8d1adf407"
     },
     {
       "name": "CEQ NEPA implementing regulations - redline for proposed rule",
       "file": "ceq-nepa-regs-redline-proposed.pdf",
-      "url": "https://ceq.doe.gov/docs/laws-regulations/CEQ-Regulations-Redline-for-Proposed-Rule.pdf",
+      "url": "https://web.archive.org/web/20250311000540id_/https://ceq.doe.gov/docs/laws-regulations/CEQ-Regulations-Redline-for-Proposed-Rule.pdf",
       "sha256": "e008d15ce4c50b07c3977009a5aaca15db2714b739f7430168e2ecc2c8b3cd5d"
     },
     {

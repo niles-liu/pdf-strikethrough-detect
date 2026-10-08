@@ -1,4 +1,7 @@
-"""OCR-backend comparison table — reproduces the README's "Choosing an OCR backend" numbers.
+"""OCR-backend comparison table (legacy) — scored against a genuinely scanned corpus.
+
+The README's "Choosing an OCR backend" figures now come from ``scanned_recovery.py``, which needs
+no scanned corpus. This script remains for anyone with one and a DI reference per document.
 
 For each scanned document in the corpus that has an Azure DI reference, run detection with each
 available OCR backend and compare the struck regions each finds against the DI-reference result

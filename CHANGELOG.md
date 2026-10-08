@@ -19,6 +19,10 @@ All notable changes to this project are documented here. The format follows
   the seed that draws the split, and the package and torch versions. The digest identifies the data
   but cannot restore it, so keep the labeled directory. `--batch`, `--lr` and `--seed` are now
   flags, with the old values as defaults.
+- **The scanned-recovery benchmark needs no Azure account.** The cached Azure DI results it reads
+  are hosted in the [`niles-liu/strikethrough-benchmark`](https://huggingface.co/datasets/niles-liu/strikethrough-benchmark)
+  dataset. `manifest.json` lists each one's URL and sha256, `fetch_corpus.py` downloads and
+  verifies them with the PDFs, and `scanned_recovery.py` checks the digest before reading one.
 
 ### Fixed
 - **The shipped StrikeNet weights were described as reproducible, and they are not.** The model
@@ -44,6 +48,20 @@ All notable changes to this project are documented here. The format follows
   fell back to the shipped 0.85 / 0.15 without saying so. The script now stops and says how many
   crops it needs.
 - `CONTRIBUTING.md` gave `tools/export_model.py` a `--checkpoint` flag; the flag is `--ckpt`.
+- **A fresh clone could not fetch four of the ten corpus PDFs.** copyright.gov and gretnala.com
+  answer urllib's default User-Agent with a 403, and both CEQ documents' URLs now redirect to
+  nepa.gov's home page. `fetch_corpus.py` sends its own User-Agent, and the CEQ entries point at
+  Internet Archive copies whose sha256 matches the pinned digest.
+- **`scanned_recovery.py` did not produce the README's Azure DI figure for `confidence_free()`**: it
+  scored the cached DI words under the default calibration only. It now reports both. An entry with
+  no DI result reads n/a in the DI columns instead of turning their totals into NaN, and a total
+  taken over fewer strikes than the GT column says so.
+- **A missing corpus file was reported under `<function corpus_dir at 0x…>/`** instead of its
+  directory.
+
+### Security
+- **`.env`, where `benchmarks/prep_scanned_di.py` reads the Azure DI key, was not git-ignored.** It
+  is now.
 
 ### Notes
 - **Corrects 0.9.0's "Closes the model reproducibility hole."** The training script trains a

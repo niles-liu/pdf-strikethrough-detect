@@ -11,7 +11,7 @@ image-only PDF stays aligned with a later rebuild of the same PDF.
 """
 from __future__ import annotations
 
-import fitz
+import pymupdf
 
 import pdf_strikethrough as st
 
@@ -36,8 +36,8 @@ def build_scanned_pdf(orig_path, page_indices, dpi=SCAN_DPI):
     """Deterministically render ``page_indices`` of ``orig_path`` into an image-only PDF (no text
     layer, so every page classifies as ``scanned``). Page geometry is preserved, so page-fraction
     boxes from the born-digital original map 1:1 onto the rasterized pages."""
-    src = fitz.open(str(orig_path))
-    out = fitz.open()
+    src = pymupdf.open(str(orig_path))
+    out = pymupdf.open()
     try:
         for pno in page_indices:
             page = src[pno]

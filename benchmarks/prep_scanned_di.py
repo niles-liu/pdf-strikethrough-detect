@@ -3,9 +3,11 @@
 For each configured document it rasterizes the most-struck born-digital pages into an image-only
 PDF (a genuine "scan"), sends that PDF to Azure Document Intelligence (prebuilt-layout) once, and
 caches both the image PDF and the DI analyze-result JSON under benchmarks/corpus/ (git-ignored).
-It then records ``scanned_pages`` / ``scanned_pdf`` / ``scanned_di_result`` on the manifest entry so
-``scanned_recovery.py`` can reproduce the numbers offline (RapidOCR runs live; DI is read from the
-cached JSON).
+It then records ``scanned_pages`` / ``scanned_pdf`` / ``scanned_di_result`` / ``scanned_di_sha256``
+on the manifest entry so ``scanned_recovery.py`` can reproduce the numbers offline (RapidOCR runs
+live; DI is read from the cached JSON). A fresh capture no longer matches the hosted copy that
+``fetch_corpus.py`` downloads, so the entry's ``scanned_di_url`` is dropped until the new file is
+uploaded and the URL set again.
 
     # credentials in the repo .env: AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT / _KEY / _API_VERSION
     python benchmarks/prep_scanned_di.py
@@ -19,7 +21,7 @@ import pathlib
 import time
 import urllib.request
 
-from _corpus import MANIFEST, corpus_dir, load_manifest
+from _corpus import MANIFEST, _sha256, corpus_dir, load_manifest
 from _scanned import build_scanned_pdf, struck_pages
 
 # (manifest `file`, number of most-struck pages to rasterize) — kept small; DI bills per page.
@@ -98,8 +100,11 @@ def main() -> None:
         entry["scanned_pages"] = page_indices
         entry["scanned_pdf"] = scanned_pdf
         entry["scanned_di_result"] = di_json
+        entry["scanned_di_sha256"] = _sha256(cdir / di_json)
         total_pages += len(page_indices)
         print(f"  ok: {len(page_indices)} page(s), {n_words} DI words -> {di_json}")
+        if entry.pop("scanned_di_url", None):
+            print("  note: scanned_di_url dropped; upload the new file and set it again")
 
     MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"\n{total_pages} page(s) analyzed; manifest updated with scanned_* fields.")

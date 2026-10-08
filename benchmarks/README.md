@@ -5,15 +5,19 @@ number from a corpus of public redline PDFs, rather than asking you to trust a f
 docstring.
 
 The PDFs are **not committed** (they're public but large and re-downloadable). `manifest.json`
-lists each document with its source URL and a sha256; you download the files into
-`corpus/` (git-ignored) and the loader verifies the hashes so a run is reproducible.
+lists each document with its source URL and a sha256; [`fetch_corpus.py`](fetch_corpus.py)
+downloads the files into `corpus/` (git-ignored) and the loader verifies the hashes so a run is
+reproducible. The cached Azure DI results that `scanned_recovery.py` reads are hosted in the
+[`niles-liu/strikethrough-benchmark`](https://huggingface.co/datasets/niles-liu/strikethrough-benchmark)
+dataset and fetched and verified the same way, so that benchmark needs no Azure account.
 
 ## Scripts
 
 | Script | Reproduces | Needs |
 |---|---|---|
+| [`fetch_corpus.py`](fetch_corpus.py) | *(setup)* downloads every file the manifest lists into `corpus/` and verifies its sha256 | network access |
 | [`confirmation_rate.py`](confirmation_rate.py) | "99.8% of vector detections confirmed by the flag signal (99.6–100% per doc)" (README + `native.py`) | just the PDFs |
-| [`scanned_recovery.py`](scanned_recovery.py) | the "Choosing an OCR backend" recovery table — "96% of the native strike set recovered by the scanned path" | PDFs + `scanned_pages`/`scanned_di_result` (from `prep_scanned_di.py`) + `[rapidocr]` |
+| [`scanned_recovery.py`](scanned_recovery.py) | the "Choosing an OCR backend" recovery table: RapidOCR, and Azure DI under its default calibration and `confidence_free()` | the PDFs + the cached DI results + `[rapidocr]` |
 | [`prep_scanned_di.py`](prep_scanned_di.py) | *(one-time asset generator for the above)* rasterizes struck pages, runs Azure DI once, caches the result | an Azure DI key in the repo `.env` |
 | [`ocr_backend_table.py`](ocr_backend_table.py) | *(legacy)* the OCR-backend table against a **scanned** corpus with DI references | a scanned corpus + per-doc DI result + `[rapidocr,tesseract]` |
 | [`di_parity.py`](di_parity.py) | *(legacy)* "1477 vs 1484 (99.5% parity)" against the **original** Azure-DI pipeline | a scanned corpus + per-doc DI result + the original pipeline's reference count |
@@ -42,33 +46,44 @@ false-positive count** — it includes the real strikes.
   "corpus_dir": "corpus",
   "pdfs": [
     {
-      "name": "US CFR Title 12 redline (2023)",
-      "file": "cfr-title12-redline.pdf",
-      "url": "https://example.gov/.../cfr-title12-redline.pdf",
+      "name": "FDIC Fair Lending laws & regulations (redlined changes)",
+      "file": "fdic-fair-lending-redline.pdf",
+      "url": "https://www.fdic.gov/redlined-document-identifying-changes.pdf",
       "sha256": "<64-hex sha256 of the downloaded file>",
 
-      "di_result": "cfr-title12.di.json",   /* optional: Azure DI analyze-result JSON in corpus/  */
-      "di_reference_struck": 1484            /* optional: struck count from the original DI pipeline */
+      "scanned_pages": [0, 1, 2, 23],                       /* optional: the scanned-recovery set */
+      "scanned_pdf": "fdic-fair-lending-redline.scanned.pdf",
+      "scanned_di_result": "fdic-fair-lending-redline.scanned.di.json",
+      "scanned_di_url": "https://huggingface.co/datasets/.../fdic-fair-lending-redline.scanned.di.json",
+      "scanned_di_sha256": "<64-hex sha256 of the DI result>"
     }
   ]
 }
 ```
 
 - `name`, `file`, `url`, `sha256` — required for every entry. `file` is resolved under `corpus_dir`.
-- `di_result` — optional path (under `corpus_dir`) to that document's Azure DI analyze-result JSON;
-  required only for `ocr_backend_table.py` and `di_parity.py`.
-- `di_reference_struck` — optional; the struck-word count the original Azure-DI pipeline produced,
-  used only by `di_parity.py`.
+- `scanned_pages` — optional; the original page indices `scanned_recovery.py` rasterizes and
+  scores, which are the pages the cached DI result was captured on. Entries without it are not part
+  of that benchmark.
+- `scanned_pdf` — the rasterized pages `prep_scanned_di.py` sent to Azure DI, kept under
+  `corpus_dir` for reference. The benchmark rebuilds the same raster in memory and does not read it.
+- `scanned_di_result`, `scanned_di_url`, `scanned_di_sha256` — the cached Azure DI analyze-result
+  JSON for those pages, where to download it, and its digest. `fetch_corpus.py` downloads and
+  verifies it like a PDF, and `scanned_recovery.py` checks the digest before reading it.
+  `prep_scanned_di.py` writes all three except the URL, which is set once the file is uploaded.
+- `di_result`, `di_reference_struck` — the per-document DI result and original-pipeline struck
+  count the legacy `ocr_backend_table.py` and `di_parity.py` read. No current entry carries them.
 
 Compute a file's hash with `python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" corpus/xyz.pdf`.
 
 ## Running
 
 ```bash
-pip install -e ".[dev,rapidocr,tesseract]"   # from the repo root
-# populate manifest.json and drop the PDFs into benchmarks/corpus/
+pip install -e ".[dev,rapidocr]"             # from the repo root
+python benchmarks/fetch_corpus.py            # the PDFs + cached DI results, sha256-verified
 cd benchmarks
 python confirmation_rate.py
+python scanned_recovery.py
 ```
 
 Each script errors clearly if the manifest is empty, a file is missing (printing its download URL),
