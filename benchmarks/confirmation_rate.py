@@ -8,7 +8,7 @@ is a strong falsifiable check on the vector path.
     python benchmarks/confirmation_rate.py
 
 Backs the "99.8% of vector detections are independently confirmed by the flag signal, on 10
-public redline PDFs (54.7k struck words; 92.5-100% per document)" claim in the README and
+public redline PDFs (55.2k struck words; 99.6-100% per document)" claim in the README and
 native.py. Needs only the PDFs — no OCR, no cloud.
 """
 from __future__ import annotations

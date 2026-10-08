@@ -45,13 +45,13 @@ Full architecture: the project [README](https://github.com/niles-liu/pdf-striket
 ## Evaluation
 
 Measured on the project's reproducible **10-document public regulatory-redline corpus** (US
-Copyright Office, FDIC, CEQ ×2, EPA ×3, California CCPA/CPPA, Gretna LA development code; 54.7k
+Copyright Office, FDIC, CEQ ×2, EPA ×3, California CCPA/CPPA, Gretna LA development code; 55.2k
 struck words, each `sha256`-pinned). Reproduce with `benchmarks/scanned_recovery.py`.
 
 | Metric | Value | Source |
 |---|---|---|
-| Scanned-path strike recovery (RapidOCR) | **97%** | `scanned_recovery.py`, 3 docs / 24 pages / 2,170 known strikes |
-| Scanned-path strike recovery (Azure DI) | **95%** | same harness, Azure Document Intelligence words |
+| Scanned-path strike recovery (RapidOCR) | **96%** | `scanned_recovery.py`, 3 docs / 24 pages / 2,170 known strikes |
+| Scanned-path strike recovery (Azure DI) | **96%** with `confidence_free()`; 91% with the default DI calibration | same harness, Azure Document Intelligence words |
 | Native vector detections independently confirmed by the flag signal | 99.8% | `confirmation_rate.py` (context; native path, not this model) |
 
 A per-document precision/recall figure from a labeled-corpus retrain (R-cal) is planned; the hosted
