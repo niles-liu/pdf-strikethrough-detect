@@ -58,6 +58,9 @@ All notable changes to this project are documented here. The format follows
   taken over fewer strikes than the GT column says so.
 - **A missing corpus file was reported under `<function corpus_dir at 0x…>/`** instead of its
   directory.
+- **Under uv, an editable install kept the version it was installed at.** uv rebuilds a project only
+  when its cache keys change, and the defaults miss the version read from `__init__.py`, so after a
+  bump `importlib.metadata` still reported the old one. `[tool.uv] cache-keys` now include it.
 
 ### Security
 - **`.env`, where `benchmarks/prep_scanned_di.py` reads the Azure DI key, was not git-ignored.** It
