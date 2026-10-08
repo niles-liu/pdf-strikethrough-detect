@@ -1,7 +1,7 @@
 name: Publish to PyPI
 
 # On a GitHub Release: build, test the built wheel, and publish to PyPI.
-# On a manual run (workflow_dispatch): build and test the wheel only, a dry run that uploads nothing.
+# On a manual run (workflow_dispatch): the build job alone, a dry run that publishes nothing.
 # Uses PyPI Trusted Publishing (OIDC) — no API token is stored.
 on:
   release:
