@@ -4,7 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.0] — 2026-10-08
+
+A correctness release. An audit of the whole package (native path, scanned path, public API, CLI
+and packaging) reproduced every defect it reported before any was fixed; all but the few under
+**Documented (not yet fixed)** are fixed here, with regression tests that fail on 0.11.0.
+Several fixes change output, so read **Changed** before upgrading.
 
 ### Changed
 - **Native strike spans are character-exact.** The vector, flag and annotation detectors map a
