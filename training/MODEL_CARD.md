@@ -69,6 +69,7 @@ st.ensure_model(
     "https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.onnx",
     "fac2c51baaa75ee782196bdfe7452638cb48c7deddb21163b1ac6a0a72ae4457",
     meta_url="https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.meta.json",
+    meta_sha256="4388b14715bfb1f51b56bb6c463d8f5c0847533316297890e70ac0b2234405d4",
 )
 assert "p_hi" in st.get_model_meta()          # thresholds + crop geometry now loaded
 result = st.detect_pdf("scanned-redline.pdf", ocr=st.rapidocr_backend())

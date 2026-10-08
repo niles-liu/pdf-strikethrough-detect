@@ -89,9 +89,28 @@ All notable changes to this project are documented here. The format follows
   opened open, so a file that failed to decode could not be deleted on Windows.
 - **`cnn_prob` was missing**, not `None` as documented, on a scanned record whose crop was too small
   to score.
+- **A concurrent `set_model_dir` / `ensure_model` could crash scoring** with `TypeError`: the loader
+  re-read the model global after releasing its lock.
 - **`score_struck` raised `KeyError: 'len_in'`** on caller-built line dicts, which
   `classify_lines` accepts; **`dump_crops` crashed** on numpy float confidences from a custom OCR
   backend (`Word` now stores a plain float).
+
+#### Calibration
+- **Manifest labels were read as all struck.** `dump_crops` asks for `"struck"` / `"clean"`, and a
+  bare `astype(bool)` turned both into True (and an unfilled `None` into False), so every threshold
+  came from a silently relabelled set.
+- **`threshold_for_precision` checked precision in the middle of tied probabilities**, which
+  rounded manifests and StrikeNet's saturation at 1.0 produce often, and returned a threshold that
+  missed its target. **`threshold_for_recall`** lost a positive to floating-point rounding
+  (1 - 0.9 = 0.0999...) and returned a lower threshold than the highest that qualifies.
+
+### Security
+- **`ensure_model` could load content it had not verified.** An empty digest skipped the check,
+  and `meta_url` without `meta_sha256` — the README's own example — loaded unverified thresholds: a
+  tampered `p_hi` of 0 would report every scored word struck. `meta_sha256` is now required with
+  `meta_url`, a digest must be 64 hex characters (any case: PowerShell's uppercase digests failed as
+  a "mismatch"), and a model whose thresholds are not `0 <= p_lo <= p_hi <= 1` is refused at load.
+  The README, the model card and the demo pass the meta digest.
 
 ### Documented (not yet fixed)
 - `markdown` marks a partial strike in place (`~~semi-~~monthly`); a strict CommonMark renderer
