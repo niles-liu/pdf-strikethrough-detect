@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`schema_version` on every `detect_pdf` / `detect_image_file` result**, the same number the CLI
+  `--json` / `--jsonl` payloads already carried. The constant now lives in
+  `pdf_strikethrough.types.SCHEMA_VERSION` (still `1`) and the CLI reads it from there, so the
+  Python result and the CLI share one number. It versions the documented keys, not the detections.
+  The CLI's `--jsonl` error records (a file that failed to process) now carry it too; they were the
+  one payload without it.
+
 ## [0.11.0] — 2026-09-04
 
 Minor, not patch: adds public API (`ScanConfig.rescue_clean_chains`). The headline is the shaded-

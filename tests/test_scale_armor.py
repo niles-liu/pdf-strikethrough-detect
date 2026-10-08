@@ -147,6 +147,7 @@ def test_batch_jsonl_resilient_to_bad_file(tmp_path):
     assert len(lines) == 3
     assert sum(1 for L in lines if L.get("n_struck_final")) == 2
     assert sum(1 for L in lines if "error" in L) == 1
+    assert all(L["schema_version"] == cli.SCHEMA_VERSION for L in lines)   # error lines too
     assert code == 1                                     # >=1 file errored
 
 

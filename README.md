@@ -359,6 +359,11 @@ The top-level package (`import pdf_strikethrough as st`) exports ~37 names; the 
 | Errors | `OcrRequiredError`, `EncryptedPdfError` |
 | Types | `StruckWord`, `DetectResult`, `Passage` (in `pdf_strikethrough.types`) |
 
+Every `detect_pdf` / `detect_image_file` result and every CLI `--json` / `--jsonl` payload carries
+`schema_version` (`pdf_strikethrough.types.SCHEMA_VERSION`, currently `1`). It is bumped when a
+documented key is removed or renamed or changes meaning, never for an added key, so ignore keys you
+don't recognize.
+
 Everything is docstringed; `help(st.detect_pdf)` is the reference.
 
 ## Contributing, security, citation

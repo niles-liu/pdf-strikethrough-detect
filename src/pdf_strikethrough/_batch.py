@@ -6,13 +6,13 @@ re-registered so a worker defined there can't be resolved in the spawned child. 
 pickles the same way whether the CLI was launched via the console script or ``-m``.
 
 The single-file CLI (``__main__``) imports ``SCHEMA_VERSION`` / ``_JSON_EVIDENCE`` / the OCR builders
-from here too, so the shared payload shape has one home.
+from here too, so the shared payload shape has one home (the version is in ``types``).
 """
 from __future__ import annotations
 
 import os
 
-SCHEMA_VERSION = 1                 # bump when the --json / --jsonl payload shape changes
+from .types import SCHEMA_VERSION  # one version for the Python result and the CLI payloads
 
 # evidence fields surfaced in --json/--jsonl — present-when-set, so a consumer sees *why* a word was
 # flagged (native coverage/forensics, scanned score/cnn, docx change/author), not just that it was.
@@ -75,7 +75,7 @@ def _batch_scan_config(opts):
 
 
 def _detect_payload(path, opts):
-    """Detect on one file and return a JSON-serializable payload (or ``{'source', 'error'}``). Never
+    """Detect on one file and return a JSON-serializable payload (or an ``error`` one). Never
     raises — a batch of many files must not abort on one unreadable member (cloud-result flags,
     which are single-result, don't apply in batch, so this path only uses the --ocr backend)."""
     import pdf_strikethrough as st
@@ -103,7 +103,8 @@ def _detect_payload(path, opts):
                 "n_struck_final": len(final), "warnings": res.get("warnings", []),
                 "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
     except Exception as e:               # noqa: BLE001 — batch resilience: report, don't abort the run
-        return {"source": path, "error": f"{type(e).__name__}: {e}"}
+        return {"schema_version": SCHEMA_VERSION, "source": path,
+                "error": f"{type(e).__name__}: {e}"}
 
 
 def _batch_worker(item):
