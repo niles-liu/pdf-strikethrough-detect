@@ -65,6 +65,7 @@ try:
         f"{_MODEL_BASE}/strike_verdict_cnn.onnx",
         "fac2c51baaa75ee782196bdfe7452638cb48c7deddb21163b1ac6a0a72ae4457",
         meta_url=f"{_MODEL_BASE}/strike_verdict_cnn.meta.json",
+        meta_sha256="4388b14715bfb1f51b56bb6c463d8f5c0847533316297890e70ac0b2234405d4",
     )
 except Exception:                                    # noqa: BLE001 - packaged model is the fallback
     pass

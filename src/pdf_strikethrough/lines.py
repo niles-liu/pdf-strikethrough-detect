@@ -51,35 +51,58 @@ def otsu_threshold(gray):
     return int(np.argmax(between))
 
 
+def _scale_to_255(a):
+    """Multiplier that puts array `a` on the 0..255 scale, decided over the whole array: floats in
+    [0, 1] scale up; integers wider than 8 bits scale by their DATA range — 8-bit values held in a
+    wider type pass through, 16-bit data divides by 257, anything wider by the dtype maximum.
+    (Dividing every wide integer by its dtype maximum read an int32/int64 page as solid black.)"""
+    if np.issubdtype(a.dtype, np.floating):
+        return 255.0 if a.size and float(a.max()) <= 1.0 else 1.0
+    if np.issubdtype(a.dtype, np.integer) and np.iinfo(a.dtype).max > 255:
+        top = float(a.max()) if a.size else 0.0
+        if top > 65535:
+            return 255.0 / np.iinfo(a.dtype).max
+        if top > 255:
+            return 1.0 / 257.0
+    return 1.0
+
+
 def to_gray_u8(image):
     """Coerce input to the uint8 grayscale (H, W) array the detectors expect. Accepts (H, W)
-    grayscale or (H, W, 3|4) RGB(A) arrays; float images in [0, 1] are rescaled to 0..255; wide
-    integer scans (16-bit and up) are rescaled from their dtype range instead of saturating to
-    all-white; out-of-range values are clipped (no mod-256 wraparound)."""
+    grayscale, (H, W, 2) grayscale+alpha, or (H, W, 3|4) RGB(A) arrays. Transparency is composited
+    over white paper (PyMuPDF's transparent page ground is (0, 0, 0, 0), which read as solid ink);
+    float images in [0, 1] are rescaled to 0..255; wide integer scans are rescaled by their data
+    range (see :func:`_scale_to_255`); out-of-range values are clipped (no mod-256 wraparound)."""
     a = np.asarray(image)
-    if a.ndim == 3 and a.shape[2] in (3, 4):
-        # sRGB -> linear -> Rec.709 luminance -> sRGB, which is what PyMuPDF's csGRAY does on the
-        # PDF path. A channel MEAN puts a yellow highlighter at 170 where csGRAY puts it at 248, so
-        # the same highlighted page used to be readable through detect_pdf and solid ink through an
-        # RGB array.
-        c = a[..., :3].astype(np.float64)
-        if np.issubdtype(a.dtype, np.floating) and c.size and c.max() <= 1.0:
-            c = c * 255.0
-        elif np.issubdtype(a.dtype, np.integer) and np.iinfo(a.dtype).max > 255:
-            c = c * (255.0 / np.iinfo(a.dtype).max)
-        c = np.clip(c, 0, 255) / 255.0
-        lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
-        y = lin @ np.array([0.2126, 0.7152, 0.0722])
-        a = np.where(y <= 0.0031308, y * 12.92, 1.055 * y ** (1 / 2.4) - 0.055) * 255.0
+    if a.ndim == 3 and a.shape[2] in (2, 3, 4):
+        has_alpha = a.shape[2] in (2, 4)
+        color = a[..., :-1] if has_alpha else a
+        k = _scale_to_255(color)
+        ka = _scale_to_255(a[..., -1]) / 255.0 if has_alpha else None
+        out = np.empty(a.shape[:2], dtype=np.uint8)
+        for r0 in range(0, a.shape[0], 256):         # row blocks bound the float64 working set
+            c = np.clip(color[r0:r0 + 256].astype(np.float64) * k, 0, 255)
+            if has_alpha:
+                al = np.clip(a[r0:r0 + 256, :, -1:].astype(np.float64) * ka, 0.0, 1.0)
+                c = c * al + 255.0 * (1.0 - al)
+            if c.shape[2] == 3:
+                # sRGB -> linear -> Rec.709 luminance -> sRGB, which is what PyMuPDF's csGRAY does
+                # on the PDF path. A channel MEAN puts a yellow highlighter at 170 where csGRAY puts
+                # it at 248, so the same highlighted page used to be readable through detect_pdf
+                # and solid ink through an RGB array.
+                c = c / 255.0
+                lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+                y = lin @ np.array([0.2126, 0.7152, 0.0722])
+                c = np.where(y <= 0.0031308, y * 12.92, 1.055 * y ** (1 / 2.4) - 0.055) * 255.0
+            else:
+                c = c[..., 0]
+            out[r0:r0 + 256] = np.clip(c, 0, 255).astype(np.uint8)
+        return out
     if a.ndim != 2:
-        raise ValueError(f"expected a (H, W) grayscale or (H, W, 3) RGB image, got shape {a.shape}")
+        raise ValueError("expected a (H, W) grayscale, (H, W, 2) grayscale+alpha or (H, W, 3|4) "
+                         f"RGB(A) image, got shape {a.shape}")
     if a.dtype != np.uint8:
-        if np.issubdtype(a.dtype, np.floating):
-            if a.size and float(a.max()) <= 1.0:
-                a = a * 255.0
-        elif np.issubdtype(a.dtype, np.integer) and np.iinfo(a.dtype).max > 255:
-            a = a.astype(np.float64) * (255.0 / np.iinfo(a.dtype).max)   # 16-bit -> 8-bit
-        a = np.clip(a, 0, 255).astype(np.uint8)
+        a = np.clip(a.astype(np.float64) * _scale_to_255(a), 0, 255).astype(np.uint8)
     return a
 
 

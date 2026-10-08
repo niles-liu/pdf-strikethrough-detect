@@ -20,6 +20,15 @@ All notable changes to this project are documented here. The format follows
   of change was checked against the rendered pages. `confirmation_rate.py` still reports 99.8% of
   vector detections confirmed by the flag signal, and the per-document floor rose from 92.5% to
   99.6%.
+- **The Azure DI calibration keeps crisp strikes.** 0.9.1's confidence veto (issue #4) drops a word
+  DI reads above `max_clean_conf` unless the line through it is strike geometry, and that required
+  the line to break up on the glyphs. A clean scan of a printed strike stays solid and DI reads the
+  word cleanly, so the default `di_result=` path kept 28% of the known strikes on the
+  scanned-recovery benchmark. Glyph ink on both sides of an in-band line is now enough, and the
+  default keeps 91% (`confidence_free()`: 96%). On the private ruled-forms corpus this adds 4 false
+  positives at default (109 → 113) and with the chain switch alone (92 → 96), none under
+  `ruled_forms()` (38) or with both switches (25); recall is unchanged at 2/3. A one-sided rule
+  still earns no reprieve.
 
 ### Added
 - **`schema_version` on every `detect_pdf` / `detect_image_file` result**, the same number the CLI
@@ -72,6 +81,46 @@ All notable changes to this project are documented here. The format follows
 - **Annotation forensics:** a gray or CMYK `/C` colour came through as a 1- or 4-tuple where an RGB
   triple is documented, and a `/NoView` annotation, which paints nothing, was reported.
 
+#### Scanned path and image files
+- **A camera's or screenshot tool's 72/96 dpi metadata made strikes vanish.** `detect_image_file`
+  scaled every geometry tunable by it, so a 200-dpi photo labelled 72 dpi found nothing. Metadata
+  below 100 dpi is now read as absent (200 dpi, with a warning); pass `dpi=` to override.
+- **Image files missed strikes the same page found as a PDF or an array.** Frames went through
+  PIL's own gray conversion, not the luminance conversion fixed for issue #15 (a green highlighter
+  read 150 instead of 219); transparency was dropped, so ink on a transparent PNG read as a black
+  page; a phone photo stored rotated was processed sideways. Frames now go through `to_gray_u8`,
+  alpha is composited over white, and the EXIF rotation is applied when the package runs `ocr=`
+  itself (supplied words are read against the image as stored, with a warning).
+- **Wide integer arrays read as black.** `to_gray_u8` divided int32/int64 input by the dtype
+  maximum; it now scales by the data range (8-bit values pass through, 16-bit divide by 257).
+  `score_word` on a 16-bit page scored the crop as blank and now converts it first.
+- **`detect_image_file` treated an open file as a PIL image** (`AttributeError`) and left files it
+  opened open, so a file that failed to decode could not be deleted on Windows.
+- **`cnn_prob` was missing**, not `None` as documented, on a scanned record whose crop was too small
+  to score.
+- **A concurrent `set_model_dir` / `ensure_model` could crash scoring** with `TypeError`: the loader
+  re-read the model global after releasing its lock.
+- **`score_struck` raised `KeyError: 'len_in'`** on caller-built line dicts, which
+  `classify_lines` accepts; **`dump_crops` crashed** on numpy float confidences from a custom OCR
+  backend (`Word` now stores a plain float).
+
+#### Calibration
+- **Manifest labels were read as all struck.** `dump_crops` asks for `"struck"` / `"clean"`, and a
+  bare `astype(bool)` turned both into True (and an unfilled `None` into False), so every threshold
+  came from a silently relabelled set.
+- **`threshold_for_precision` checked precision in the middle of tied probabilities**, which
+  rounded manifests and StrikeNet's saturation at 1.0 produce often, and returned a threshold that
+  missed its target. **`threshold_for_recall`** lost a positive to floating-point rounding
+  (1 - 0.9 = 0.0999...) and returned a lower threshold than the highest that qualifies.
+
+### Security
+- **`ensure_model` could load content it had not verified.** An empty digest skipped the check,
+  and `meta_url` without `meta_sha256` — the README's own example — loaded unverified thresholds: a
+  tampered `p_hi` of 0 would report every scored word struck. `meta_sha256` is now required with
+  `meta_url`, a digest must be 64 hex characters (any case: PowerShell's uppercase digests failed as
+  a "mismatch"), and a model whose thresholds are not `0 <= p_lo <= p_hi <= 1` is refused at load.
+  The README, the model card and the demo pass the meta digest.
+
 ### Documented (not yet fixed)
 - `markdown` marks a partial strike in place (`~~semi-~~monthly`); a strict CommonMark renderer
   does not treat a `~~` that touches punctuation this way as a delimiter, and a struck word that
@@ -85,6 +134,7 @@ All notable changes to this project are documented here. The format follows
   22 records on the benchmark corpus, all chart gridlines crossing glyphs, and no real strike.
 - The underline exclusion band comes from the font's box, so for some fonts (Courier, Symbol) a line
   at the baseline still counts as a strike.
+- On a scan, a strike over the first letters of a long word can read as a full-word strike.
 
 ## [0.11.0] — 2026-09-04
 

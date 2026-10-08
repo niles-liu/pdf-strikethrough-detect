@@ -146,7 +146,8 @@ The same detection reaches inputs that never were a born-digital PDF:
 
 ```python
 # Raster image files (.png/.jpg/.tiff, incl. multi-page TIFF) — photos, faxes, scans.
-# Every frame is a scanned page, so it needs OCR; DPI comes from image metadata (else 200).
+# Every frame is a scanned page, so it needs OCR; DPI comes from image metadata (else 200 — a
+# placeholder 72/96 counts as none), and a phone photo's EXIF rotation is applied before OCR.
 res = st.detect_image_file("scan.tiff", ocr=rapidocr_backend())
 
 # Word .docx — strike formatting (w:strike/w:dstrike) + tracked deletions (w:del, with author/date).
@@ -315,8 +316,8 @@ report feeds the same loop, and [`demo/`](demo/) is a drag-and-drop Gradio app f
 at [**huggingface.co/spaces/niles-liu/strikethrough-demo**](https://huggingface.co/spaces/niles-liu/strikethrough-demo).
 
 **Hosted weights.** The shipped StrikeNet is also published on the Hugging Face Hub
-([`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet)); the digest is verified before
-the graph is ever loaded, so a tampered host can't swap the model:
+([`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet)); the digests are verified
+before the graph is ever loaded, so a tampered host can't swap the model or its thresholds:
 
 ```python
 import pdf_strikethrough as st
@@ -324,6 +325,7 @@ st.ensure_model(
     "https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.onnx",
     "fac2c51baaa75ee782196bdfe7452638cb48c7deddb21163b1ac6a0a72ae4457",
     meta_url="https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.meta.json",
+    meta_sha256="4388b14715bfb1f51b56bb6c463d8f5c0847533316297890e70ac0b2234405d4",
 )
 ```
 

@@ -21,6 +21,8 @@ import threading
 import numpy as np
 from PIL import Image
 
+from .lines import to_gray_u8
+
 CROP_H, CROP_W = 32, 160          # net input: ink-positive [0,1], height-normalized isotropically
 PAD_X, PAD_Y = 5, 7               # crop margin around the word box, in PIXELS
 
@@ -70,11 +72,13 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
                  cache_dir=None, timeout=30):
     """Download a StrikeNet model to a local cache, VERIFY its sha256, and point the loader at it.
 
-    `url` is the ONNX model and `sha256` its expected hex digest. The bytes are hashed after
-    download and a mismatch raises ``ValueError`` (nothing is written) — so a tampered host or a
-    man-in-the-middle cannot swap the graph you run; nothing unverified is ever loaded. The ONNX
-    loader also needs a meta JSON (thresholds + crop geometry): supply it as `meta_url`
-    (+ `meta_sha256` to verify) or as a `meta` dict written verbatim.
+    `url` is the ONNX model and `sha256` its expected hex digest (any case). The bytes are hashed
+    after download and a mismatch raises ``ValueError`` (nothing is written) — so a tampered host or
+    a man-in-the-middle cannot swap the graph you run; nothing unverified is ever loaded. The ONNX
+    loader also needs a meta JSON (thresholds + crop geometry): supply it as `meta_url` with its
+    `meta_sha256` (required: the thresholds decide what counts as struck, so they are verified like
+    the graph), or as a `meta` dict written verbatim. A digest that is not 64 hex characters
+    raises ``ValueError``.
 
     Downloads land in `cache_dir` (default:
     ``~/.cache/pdf_strikethrough/models/<sha256[:12]>``); an already-present, hash-matching file is
@@ -82,23 +86,36 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
     :func:`set_model_dir`)."""
     import hashlib
     import pathlib
+    import re
     import urllib.parse
     import urllib.request
+
+    def _digest(value, name):
+        d = value.strip().lower() if isinstance(value, str) else ""
+        if not re.fullmatch(r"[0-9a-f]{64}", d):
+            raise ValueError(f"{name} must be a 64-character hex sha256 digest, got {value!r}")
+        return d
 
     def _fetch_verify(u, digest, dest):
         scheme = urllib.parse.urlparse(u).scheme
         if scheme not in ("http", "https", "file"):
             raise ValueError(f"unsupported URL scheme {scheme!r} (use http, https, or file)")
-        if dest.exists() and digest and hashlib.sha256(dest.read_bytes()).hexdigest() == digest:
+        if dest.exists() and hashlib.sha256(dest.read_bytes()).hexdigest() == digest:
             return
         with urllib.request.urlopen(u, timeout=timeout) as r:
             data = r.read()
         got = hashlib.sha256(data).hexdigest()
-        if digest and got != digest:
+        if got != digest:
             raise ValueError(f"sha256 mismatch for {u}: expected {digest}, got {got} "
                              "(download rejected; nothing was written)")
         dest.write_bytes(data)
 
+    sha256 = _digest(sha256, "sha256")
+    if meta_url is not None:
+        if meta_sha256 is None:
+            raise ValueError("meta_url needs meta_sha256: the meta JSON holds the struck/clean "
+                             "thresholds, so it is verified like the model (or pass meta={...})")
+        meta_sha256 = _digest(meta_sha256, "meta_sha256")
     if cache_dir is None:
         cache_dir = pathlib.Path.home() / ".cache" / "pdf_strikethrough" / "models" / sha256[:12]
     cache_dir = pathlib.Path(cache_dir)
@@ -203,6 +220,16 @@ def _check_geometry(meta):
                 "align the constants in cnn.py before using it.")
 
 
+def _check_thresholds(meta):
+    """``0 <= p_lo <= p_hi <= 1``, or the model is refused: a p_hi of 0 would report every scored
+    word struck, and a missing or NaN threshold would fail far from its cause."""
+    p_lo, p_hi = meta.get("p_lo"), meta.get("p_hi")
+    ok = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (p_lo, p_hi))
+    if not ok or not 0.0 <= p_lo <= p_hi <= 1.0:
+        raise ValueError(f"model meta thresholds must satisfy 0 <= p_lo <= p_hi <= 1, got "
+                         f"p_lo={p_lo!r}, p_hi={p_hi!r}")
+
+
 def _load_model():
     """Try ONNX Runtime first, then a torch checkpoint. Returns (score_fn, meta)."""
     model_dir = _current_model_dir()
@@ -212,9 +239,10 @@ def _load_model():
 
     if os.path.exists(onnx_path) and os.path.exists(meta_path):
         import onnxruntime as ort
-        with open(meta_path) as f:
+        with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
         _check_geometry(meta)
+        _check_thresholds(meta)
         sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         iname = sess.get_inputs()[0].name
 
@@ -233,9 +261,10 @@ def _load_model():
         net = _build_torch_net()
         net.load_state_dict(ckpt["state_dict"])
         net.eval()
-        meta = {"p_hi": ckpt["p_hi"], "p_lo": ckpt["p_lo"],
+        meta = {"p_hi": float(ckpt["p_hi"]), "p_lo": float(ckpt["p_lo"]),
                 "version": ckpt.get("version", "unknown"), "runtime": "torch"}
         _check_geometry({k: ckpt[k] for k in ("crop_h", "crop_w", "pad_x", "pad_y") if k in ckpt})
+        _check_thresholds(meta)
 
         def score(batch):
             with torch.no_grad():
@@ -250,32 +279,41 @@ def _load_model():
 
 def get_model_meta():
     """Model metadata: {version, p_hi, p_lo, runtime}. Loads the model on first call."""
-    _ensure_loaded()
-    return dict(_model[1])
+    return dict(_ensure_loaded()[1])
 
 
 def _ensure_loaded():
+    """The loaded ``(score_fn, meta)``, loading it on first use. Callers use the returned tuple,
+    never the global: a concurrent ``set_model_dir`` / ``ensure_model`` resets the global to None,
+    and a second read of it after the lock is released raised TypeError mid-run."""
     global _model
-    if _model is None:
+    model = _model
+    if model is None:
         with _lock:
             if _model is None:
                 _model = _load_model()
+            model = _model
+    return model
 
 
 def score_crops(std_crops, batch_size=512):
     """Standardized crops (list/array of (CROP_H, CROP_W) float32) -> strike probabilities."""
     if not len(std_crops):
         return np.zeros(0)
-    _ensure_loaded()
-    score, _ = _model
+    score, _ = _ensure_loaded()
     x = np.stack(std_crops).astype(np.float32)[:, None, :, :]
     return np.concatenate([score(x[i:i + batch_size]) for i in range(0, len(x), batch_size)])
 
 
 def score_word(gray, bbox_frac):
-    """Convenience: grayscale page (0=black..255=white) + word box in [0,1] PAGE FRACTIONS ->
-    strike probability (or None if the box is too small to crop). Raises ValueError if the box
-    looks like pixel coordinates."""
+    """Convenience: page image + word box in [0,1] PAGE FRACTIONS -> strike probability (or None
+    if the box is too small to crop). A color or wide-integer page goes through the detectors' own
+    conversion (:func:`~pdf_strikethrough.lines.to_gray_u8`) first: a 16-bit page used to reach
+    the crop as float values far above 255 and scored as if it were blank. Raises ValueError if
+    the box looks like pixel coordinates."""
+    gray = np.asarray(gray)
+    if gray.ndim != 2 or (np.issubdtype(gray.dtype, np.integer) and gray.dtype != np.uint8):
+        gray = to_gray_u8(gray)
     crop = word_crop_px(gray, bbox_frac)
     if crop is None:
         return None
@@ -285,6 +323,5 @@ def score_word(gray, bbox_frac):
 def verdict_of(p, meta=None):
     """CNN probability -> 'struck' / 'clean' / 'unsure' using the checkpoint thresholds."""
     if meta is None:
-        _ensure_loaded()
-        meta = _model[1]
+        meta = _ensure_loaded()[1]
     return "struck" if p >= meta["p_hi"] else ("clean" if p <= meta["p_lo"] else "unsure")

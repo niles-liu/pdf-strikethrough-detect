@@ -15,7 +15,7 @@ See CHANGELOG 0.9.1.
 import numpy as np
 from pdf_strikethrough import cnn, detect
 from pdf_strikethrough.ocr import Word
-from pdf_strikethrough.scanned import FILL_STRONG, ScanConfig, analyze_scanned_page
+from pdf_strikethrough.scanned import ScanConfig, analyze_scanned_page
 
 DPI = 200
 
@@ -63,13 +63,13 @@ def _saturated_cnn(monkeypatch):
 
 
 def test_fix_a_confidence_veto_drops_high_conf_uncorroborated(monkeypatch):
-    """DI path + saturated CNN: a high-OCR-confidence word crossed only by a SOLID (non-shattered)
-    bar has no corroborating strike geometry, so the confidence veto drops it; a genuinely damaged
-    (low-confidence) word on the same kind of bar is kept."""
+    """DI path + saturated CNN: a high-OCR-confidence word whose bar has no substantial glyph ink
+    on either side carries no strike geometry (it rode the CNN alone), so the confidence veto drops
+    it; a genuinely damaged (low-confidence) word under a through-strike is kept."""
     _saturated_cnn(monkeypatch)
     gray = _blank()
-    _glyphs(gray, 100, 700, 150, 250)          # row 1 glyphs (full height)
-    gray[198:201, 100:700] = 0                  # solid bar -> high fill -> NOT corroborating
+    _glyphs(gray, 100, 700, 150, 250, step=60)  # row 1: sparse ink, none substantial at the bar
+    gray[198:201, 100:700] = 0                  # solid bar
     _glyphs(gray, 100, 700, 350, 450)          # row 2 glyphs
     gray[398:401, 100:700] = 0                  # solid bar
     H, W = gray.shape
@@ -79,6 +79,22 @@ def test_fix_a_confidence_veto_drops_high_conf_uncorroborated(monkeypatch):
     by = {r["text"]: r for r in recs}
     assert "kept" in by and by["kept"]["final"] is False and by["kept"].get("conf_veto")
     assert "gone" in by and by["gone"]["final"] is True
+
+
+def test_fix_a_crisp_strike_on_clean_ocr_survives_veto(monkeypatch):
+    """A clean scan of a printed strike: a SOLID bar through full-height glyphs, on a word DI still
+    reads at 0.99. Ink on both sides is strike geometry whether or not the bar shatters; until
+    0.12.0 the veto also required a shattered bar and dropped this word, which cost the default DI
+    calibration most of the scanned-recovery benchmark."""
+    _saturated_cnn(monkeypatch)
+    gray = _blank()
+    _glyphs(gray, 100, 700, 150, 250)
+    gray[198:201, 100:700] = 0
+    H, W = gray.shape
+    word = Word("struck", (100 / W, 150 / H, 700 / W, 250 / H), confidence=0.99)
+    recs = detect.detect_scanned_image(gray, [word], config=ScanConfig.azure_di(), dpi=DPI)
+    by = {r["text"]: r for r in recs}
+    assert by.get("struck", {}).get("final") and not by["struck"].get("conf_veto"), recs
 
 
 def test_fix_a_veto_off_on_confidence_free_path(monkeypatch):
@@ -97,8 +113,8 @@ def test_fix_a_veto_off_on_confidence_free_path(monkeypatch):
 
 def test_fix_a_corroborated_high_conf_word_survives_veto(monkeypatch):
     """The veto is conf AND missing-geometry, never confidence alone: a high-confidence word that
-    DOES carry corroborating strike geometry (a shattered through-strike, fill < FILL_STRONG, ink
-    both sides) is spared, so a real strike on a clean OCR is never silently dropped."""
+    DOES carry corroborating strike geometry (here a shattered through-strike with ink on both
+    sides) is spared, so a real strike on a clean OCR is never silently dropped."""
     _saturated_cnn(monkeypatch)
     gray = _blank()
     _glyphs(gray, 100, 700, 160, 240)
@@ -114,7 +130,7 @@ def test_fix_a_corroborated_high_conf_word_survives_veto(monkeypatch):
     _tagged, struck = analyze_scanned_page(gray, words, config=ScanConfig.azure_di(), dpi=DPI)
     assert struck, "shattered strike not detected at all"
     assert any(s["text"] == "struck" and s.get("geom_corroborated") for s in struck), (
-        f"shattered strike should corroborate (fill must be < {FILL_STRONG}): "
+        f"shattered strike should corroborate: "
         f"{[(s['text'], s.get('geom_corroborated')) for s in struck]}")
     recs = detect.detect_scanned_image(gray, words, config=ScanConfig.azure_di(), dpi=DPI)
     by = {r["text"]: r for r in recs}

@@ -11,6 +11,8 @@ words (the geometry can't decide) the CNN is the decider.
 from __future__ import annotations
 
 import logging
+import numbers
+import os
 import time
 import warnings as _warnings
 
@@ -229,6 +231,8 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     for h, p in zip(owner, probs):
         h["cnn_prob"] = round(float(p), 3)
     for h in kept:
+        if h.get("tier") not in ("vector", "flag"):
+            h.setdefault("cnn_prob", None)            # documented: None = crop too small to score
         p = h.get("cnn_prob")
         if h.get("tier") in ("vector", "flag"):            # native paths are exact; no CNN needed
             h["verdict"], h["final"] = "struck", True
@@ -246,7 +250,7 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     # Fix A (0.9.1) — DI-confidence veto. On the calibrated-confidence (DI) path a word that OCRs
     # ABOVE max_clean_conf is clean printed text (a struck word's OCR is damaged to at-or-below it —
     # same boundary as the chain gate's strict >). If such a word ALSO lacks corroborating strike
-    # geometry (no in-band through-glyph shattered strike — i.e. it rode the CNN alone, or a solid
+    # geometry (no in-band line with ink on both sides — i.e. it rode the CNN alone, or a one-sided
     # rule / underline), the struck verdict is StrikeNet over-firing on a faint scan. Downgrade it.
     # Guardrails: never on confidence alone (a genuinely struck word keeps its geometry, so it is
     # spared) and never on the confidence-free path (RapidOCR etc.), so recall there cannot regress.
@@ -265,40 +269,81 @@ def detect_scanned_image(gray, words, config=ScanConfig(), meta=None, dpi=RENDER
                          crop_sink=None):
     """Struck-word records for a single scanned page image + its OCR words. `gray` is a HxW
     grayscale array (RGB / float inputs are coerced); `dpi` must be the resolution the image
-    was rendered/scanned at. Runs layer-1 classification then the CNN verdict."""
+    was rendered/scanned at (positive). Runs layer-1 classification then the CNN verdict."""
     from .lines import to_gray_u8
+    _check_dpi(dpi)
     gray = to_gray_u8(gray)
     _tagged, struck = analyze_scanned_page(gray, words, config=config, dpi=dpi)
     return apply_cnn_verdict(struck, gray, meta, config=config, crop_sink=crop_sink)
 
 
+MIN_META_DPI = 100   # image-metadata resolutions below this are placeholders, not measurements
+
+
+def _frame_gray(frame):
+    """One decoded PIL frame as the uint8 grayscale the detectors read, through the same conversion
+    as an array input (:func:`~pdf_strikethrough.lines.to_gray_u8`): color by Rec.709 luminance as
+    on the PDF path, transparency composited over white, 16-bit and float frames rescaled. PIL's
+    own ``convert("L")`` put a green highlighter at 150 where the PDF path puts it at 219, and
+    dropped alpha, so a transparent PNG read as solid black."""
+    import numpy as np
+
+    from .lines import to_gray_u8
+    if frame.mode in ("L", "I;16", "I;16L", "I;16B", "I", "F"):
+        return to_gray_u8(np.asarray(frame))
+    if frame.mode in ("LA", "La", "PA", "RGBA", "RGBa") or "transparency" in frame.info:
+        return to_gray_u8(np.asarray(frame.convert("RGBA")))
+    return to_gray_u8(np.asarray(frame.convert("RGB")))
+
+
 def _image_frames(source):
-    """Yield ``(gray_uint8, dpi_or_None)`` for each frame of a raster image (path/bytes/PIL image).
-    Multi-page TIFFs yield one item per frame; single-image formats yield one. ``dpi`` is the
-    x-resolution recorded in the image metadata, or None when it carries none."""
+    """``[(gray_uint8, upright_gray_or_None, dpi_or_None), ...]``, one per frame of a raster image
+    (a path, bytes, an open binary file, or a PIL image); multi-page TIFFs give one per frame.
+    ``upright`` is the frame turned to its EXIF orientation (how a viewer shows a phone photo), or
+    None when there is nothing to turn: no rotation, a rotation the decoder already applied
+    (Pillow applies a TIFF's on load), or an EXIF block too malformed to read, which 0.11.0 never
+    looked at and must not start failing on. ``dpi`` is the x-resolution recorded in the image
+    metadata, or None when it carries none. An image this opens is closed before returning, also
+    on a decode error (an open handle locks the file on Windows)."""
     import io
 
-    import numpy as np
-    from PIL import Image, ImageSequence
+    from PIL import Image, ImageOps, ImageSequence
 
-    if hasattr(source, "seek") and hasattr(source, "mode"):     # already a PIL image
-        img = source
-    elif isinstance(source, (bytes, bytearray)):
-        img = Image.open(io.BytesIO(bytes(source)))
+    if isinstance(source, Image.Image):
+        img, owned = source, False
     else:
-        img = Image.open(source)
-    frames = []
-    for frame in ImageSequence.Iterator(img):
-        gray = np.asarray(frame.convert("L"), dtype=np.uint8)
-        dpi = frame.info.get("dpi") or img.info.get("dpi")
-        xdpi = None
-        if dpi:
+        img = Image.open(io.BytesIO(bytes(source)) if isinstance(source, (bytes, bytearray))
+                         else source)
+        owned = True
+    try:
+        frames = []
+        for frame in ImageSequence.Iterator(img):
+            frame.load()                       # a TIFF's orientation is applied (and dropped) here
+            upright = None
             try:
-                xdpi = int(round(float(dpi[0]))) or None
-            except (TypeError, ValueError, IndexError):
-                xdpi = None
-        frames.append((gray, xdpi))
-    return frames
+                if frame.getexif().get(0x0112, 1) not in (0, 1):      # EXIF Orientation
+                    upright = _frame_gray(ImageOps.exif_transpose(frame))
+            except Exception:                  # malformed EXIF: read the frame as stored
+                upright = None
+            dpi = frame.info.get("dpi") or img.info.get("dpi")
+            xdpi = None
+            if dpi:
+                try:
+                    xdpi = int(round(float(dpi[0]))) or None
+                except (TypeError, ValueError, IndexError):
+                    xdpi = None
+            frames.append((_frame_gray(frame), upright, xdpi))
+        return frames
+    finally:
+        if owned:
+            img.close()
+
+
+def _check_dpi(dpi, name="dpi"):
+    """Reject a non-positive or non-numeric resolution up front: 0 divided by zero deep in the
+    image path, and a negative value silently rendered at 1 dpi."""
+    if isinstance(dpi, bool) or not isinstance(dpi, numbers.Real) or not dpi > 0:
+        raise ValueError(f"{name} must be a positive number, got {dpi!r}")
 
 
 def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_config=None,
@@ -306,10 +351,17 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     """Detect strikethroughs in a standalone raster image (``.png/.jpg/.tiff``, incl. multi-page
     TIFF) — a photo/scan/fax that never was a PDF.
 
-    Every frame is a scanned page, so it needs OCR words: pass an `ocr` backend (run per frame),
-    a `words` list (a single-frame image), or `words_by_page` (``{0-based frame: list[Word]}`` —
-    e.g. ``words_from_textract(resp)``). DPI drives the geometry tunables: an explicit `dpi=`
-    wins; otherwise it's read from the image metadata, falling back to 200.
+    `source` is a path, bytes, an open binary file, or a PIL image. Every frame is a scanned page,
+    so it needs OCR words: pass an `ocr` backend (run per frame), a `words` list (a single-frame
+    image), or `words_by_page` (``{0-based frame: list[Word]}`` — e.g.
+    ``words_from_textract(resp)``). DPI drives the geometry tunables: an explicit `dpi=` wins;
+    otherwise it's read from the image metadata, falling back to 200 — also when the metadata
+    says less than MIN_META_DPI, the 72/96 placeholder cameras and screenshot tools write, which
+    shrank every tunable and missed strikes (a warning names the ignored value).
+
+    A frame stored rotated (an EXIF Orientation tag, as phone photos carry) is turned upright
+    before ``ocr`` runs on it. Supplied ``words``/``words_by_page`` are read against the frame as
+    stored, since that is what an engine reading the raw pixels reports; a warning says so.
 
     Returns the same dict shape as :func:`detect_pdf` (``page_sources`` all ``"scanned"``); there
     is no `pages` subset and no native path. A frame with no word source raises
@@ -317,9 +369,10 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     """
     import numpy as np
 
-    from .lines import to_gray_u8
-    frames = _image_frames(source)
+    if dpi is not None:
+        _check_dpi(dpi)
     wbp = _normalize_words_by_page(words_by_page)
+    frames = _image_frames(source)
     if words is not None and len(frames) > 1 and wbp is None:
         raise ValueError("words= covers a single-frame image; for a multi-page TIFF pass an ocr "
                          "backend or words_by_page={frame: [...]}")
@@ -328,31 +381,56 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         # tesseract via ocr=, Textract/DocAI via words_by_page, a raw words= list) carries
         # confidences the classifier isn't calibrated to — so default to confidence-free.
         scan_config = ScanConfig.confidence_free()
-    src_name = None if isinstance(source, (bytes, bytearray)) else str(source)
+    if isinstance(source, (bytes, bytearray)):
+        src_name = None
+    elif isinstance(source, (str, os.PathLike)):
+        src_name = str(source)
+    else:                                                  # an open file or a PIL image
+        name = getattr(source, "name", None) or getattr(source, "filename", None)
+        src_name = str(name) if name else None
 
     all_words, warns, page_md, page_clean, passages = [], [], [], [], []
-    for pno, (gray, meta_dpi) in enumerate(frames):
-        use_dpi = dpi if dpi is not None else (meta_dpi or RENDER_DPI)
-        gray, use_dpi, note = _downsample_gray(gray, use_dpi)
-        if note:
+    for pno, (gray, upright, meta_dpi) in enumerate(frames):
+        if dpi is not None:
+            use_dpi = dpi
+        elif meta_dpi is not None and meta_dpi < MIN_META_DPI:
+            use_dpi = RENDER_DPI
+            note = (f"frame {pno}: the image metadata says {meta_dpi} dpi, a placeholder value "
+                    f"rather than a scan resolution; read as {RENDER_DPI} dpi (pass dpi= if the "
+                    f"image really is {meta_dpi} dpi)")
             _warnings.warn(note, stacklevel=2)
             warns.append(note)
+        else:
+            use_dpi = meta_dpi or RENDER_DPI
         if wbp is not None and pno in wbp:
             page_words = wbp[pno]
         elif words is not None and len(frames) == 1:
             page_words = words
         elif ocr is not None:
-            t0 = time.perf_counter()
-            page_words = ocr(np.stack([gray] * 3, axis=-1))
-            log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
-                      pno, len(page_words), (time.perf_counter() - t0) * 1e3)
+            page_words = None
+            if upright is not None:
+                gray = upright                             # OCR and detection on the shown image
         else:
             raise OcrRequiredError(
                 f"image frame {pno} has no OCR words; pass ocr=rapidocr_backend(), a words= list "
                 f"(single-frame), or words_by_page={{{pno}: [...]}}")
+        if page_words is not None and upright is not None:
+            note = (f"frame {pno} carries an EXIF rotation; the supplied word boxes are read "
+                    f"against the frame as stored, not as displayed")
+            _warnings.warn(note, stacklevel=2)
+            warns.append(note)
+        gray, use_dpi, note = _downsample_gray(gray, use_dpi)
+        if note:
+            _warnings.warn(note, stacklevel=2)
+            warns.append(note)
+        if page_words is None:
+            t0 = time.perf_counter()
+            page_words = ocr(np.stack([gray] * 3, axis=-1))
+            log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
+                      pno, len(page_words), (time.perf_counter() - t0) * 1e3)
         if meta is None:
             meta = cnn.get_model_meta()
-        recs = detect_scanned_image(to_gray_u8(gray), page_words, config=scan_config,
+        recs = detect_scanned_image(gray, page_words, config=scan_config,
                                     meta=meta, dpi=use_dpi, crop_sink=_crop_sink)
         for r in recs:
             r["page"] = pno
