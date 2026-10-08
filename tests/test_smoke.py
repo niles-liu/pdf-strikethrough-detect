@@ -716,6 +716,16 @@ def test_cli_json_has_schema_version_and_evidence(tmp_path):
     assert "coverage" in w and w["tier"] == "vector"        # native evidence field present
 
 
+def test_detect_result_shares_the_cli_schema_version():
+    """The Python result and the CLI payloads carry one SCHEMA_VERSION, so a tool built on either
+    pins the same number."""
+    from pdf_strikethrough import __main__ as cli
+    from pdf_strikethrough.types import SCHEMA_VERSION
+    doc = _three_page_native_pdf()
+    assert st.detect_pdf(doc)["schema_version"] == SCHEMA_VERSION == cli.SCHEMA_VERSION
+    doc.close()
+
+
 def test_cli_missing_file_exits_1(tmp_path):
     from pdf_strikethrough import __main__ as cli
     assert cli.main(["detect", str(tmp_path / "nope.pdf")]) == 1

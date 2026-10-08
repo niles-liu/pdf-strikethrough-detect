@@ -19,6 +19,7 @@ import pymupdf
 from . import cnn, markdown as _md, native
 from .ocr import words_from_azure_di
 from .scanned import ScanConfig, analyze_scanned_page
+from .types import SCHEMA_VERSION
 
 log = logging.getLogger(__name__)   # "pdf_strikethrough.detect"; DEBUG diagnostics, opt-in
 
@@ -359,6 +360,7 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
                 passages.append(ps)
 
     result = {
+        "schema_version": SCHEMA_VERSION,
         "source": src_name,
         "page_count": len(frames),
         "page_sources": ["scanned"] * len(frames),
@@ -526,7 +528,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             otherwise silent and read as hangs; use this to drive a progress bar / stderr line.
 
     Returns a dict:
-        {source, page_count, page_sources, words, n_struck_final, warnings,
+        {schema_version, source, page_count, page_sources, words, n_struck_final, warnings,
          markdown, clean_text, passages}   (last three only if include_markdown;
          plus ``pages`` when a subset was requested). See ``pdf_strikethrough.types.DetectResult``.
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
@@ -637,6 +639,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 progress(done, total, pno)
 
         result = {
+            "schema_version": SCHEMA_VERSION,
             "source": None if isinstance(source, (bytes, bytearray)) else (
                 str(source) if close else getattr(source, "name", None)),
             "page_count": doc.page_count,

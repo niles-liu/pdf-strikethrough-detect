@@ -122,6 +122,7 @@ def test_detect_image_file_flags_struck_word():
     png, words = _redline_image_png()
     res = st.detect_image_file(png, words=words, dpi=200)
     assert res["page_sources"] == ["scanned"] and res["page_count"] == 1
+    assert res["schema_version"] == st.types.SCHEMA_VERSION
     assert [w["chars"] for w in res["words"] if w["final"]] == ["struck"]
     assert res["clean_text"] == "keep"
 

@@ -14,6 +14,13 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional, Tuple, TypedDict
 
+# Version of the documented output shape: the keys below and what they mean, carried as
+# ``schema_version`` on every ``DetectResult`` and every CLI --json / --jsonl payload. Bumped when a
+# documented key is removed or renamed or its meaning changes; adding a key does not bump it, so
+# consumers should ignore keys they don't know. It versions the shape, not the detections: which
+# words get flagged can change between releases without a bump.
+SCHEMA_VERSION = 1
+
 # (x0, y0, x1, y1) as page fractions in [0, 1], origin top-left.
 BBoxFrac = Tuple[float, float, float, float]
 # (start, end) character offsets into ``text`` that the strike covers.
@@ -73,6 +80,7 @@ class DetectResult(TypedDict, total=False):
     """The dict returned by :func:`pdf_strikethrough.detect_pdf`. The last three keys are present
     only when ``include_markdown=True`` (the default); ``pages`` is present only when a ``pages=``
     subset was requested."""
+    schema_version: int          # == SCHEMA_VERSION of the release that produced it
     source: Optional[str]
     page_count: int
     page_sources: List[str]      # "native" | "scanned" | "blank", aligned to processed pages
@@ -87,6 +95,6 @@ class DetectResult(TypedDict, total=False):
 
 # Re-exported so ``from pdf_strikethrough.types import ...`` covers the whole surface.
 __all__ = [
-    "StruckWord", "Passage", "DetectResult",
+    "StruckWord", "Passage", "DetectResult", "SCHEMA_VERSION",
     "BBoxFrac", "CharSpan", "Tier", "Verdict",
 ]
