@@ -276,8 +276,8 @@ live text as if deleted (RAG / indexing). Calibrate the threshold from your own 
 `conformal_threshold` for a distribution-free recall floor) and pass it as
 `recall_first(cnn_p_hi=…)`.
 
-**Degraded ruled forms (provisional).** On faint, heavily-ruled scans — Statement-of-Facts forms,
-dense tables — a printed rule crossing text is hard to tell from a pen strike, and the classifier
+**Degraded ruled forms (provisional).** On faint, heavily-ruled scans — printed forms, dense
+tables — a printed rule crossing text is hard to tell from a pen strike, and the classifier
 over-fires on it. Two switches address it, both **off by default** and opted into separately:
 
 - `ScanConfig.ruled_forms()` — a geometry-only veto discarding solid or dead-straight lines as

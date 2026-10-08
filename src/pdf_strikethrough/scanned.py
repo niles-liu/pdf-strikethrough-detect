@@ -89,7 +89,7 @@ class ScanConfig:
     @classmethod
     def ruled_forms(cls, veto_printed_rules=True, **kw):
         """**PROVISIONAL** (0.10.0) — precision bias for DEGRADED, HEAVILY-RULED scans (e.g.
-        Statement-of-Facts forms) where a faint table/form rule crossing text mimics a pen strike and
+        printed forms or tables) where a faint table/form rule crossing text mimics a pen strike and
         the CNN over-fires on it. Turns on the printed-rule veto (:func:`_is_printed_rule`): any
         detected line that is solid and/or dead-straight is treated as printed furniture rather than
         a strike. In practice most of what it removes is short solid/straight *fragments* — glyph

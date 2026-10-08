@@ -39,7 +39,7 @@ def test_fix_b_rejects_in_band_one_sided_table_rule():
     _glyphs(gray, 100, 700, 150, 194)          # ink ABOVE the rule only
     gray[198:201, 100:700] = 0                  # solid full-width rule at the box centre (~y=200)
     H, W = gray.shape
-    word = Word("BERTH", (100 / W, 150 / H, 700 / W, 250 / H), confidence=0.99)
+    word = Word("TOTAL", (100 / W, 150 / H, 700 / W, 250 / H), confidence=0.99)
     _tagged, struck = analyze_scanned_page(gray, [word], config=ScanConfig.azure_di(), dpi=DPI)
     strong = [s for s in struck if not s.get("partial") and s.get("wcov", 0) >= 0.45]
     assert not strong, f"one-sided table rule was flagged as a strike: {struck}"
