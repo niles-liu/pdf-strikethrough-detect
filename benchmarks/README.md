@@ -27,7 +27,7 @@ a genuinely scanned corpus and (for parity) the original pipeline's recorded cou
 `scanned_recovery.py` no longer needs.
 
 `confidence_veto.py` is the odd one out: it scores **precision on degraded ruled forms**, and the
-corpus it needs is private (real Statement-of-Facts paperwork), so it is not reproducible from this
+corpus it needs is private (real ruled-form paperwork), so it is not reproducible from this
 repo alone — point it at your own labeled set with `PDF_STRIKETHROUGH_CORPUS_DIR`. It is still the
 script that produces every ruled-forms figure quoted in the README and CHANGELOG, and it scores
 against a label set rather than counting detections, because **a struck-final count is not a
