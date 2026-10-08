@@ -389,6 +389,37 @@ def test_rapidocr_version_guard():
     _require_rapidocr_3_2("3.9.1")                # ok
 
 
+def _fake_rapidocr(word_results):
+    """A stand-in RapidOCR engine returning a fixed ``word_results``, so the adapter is testable
+    without rapidocr installed."""
+    from types import SimpleNamespace
+    return lambda image, return_word_box: SimpleNamespace(word_results=word_results)
+
+
+def test_rapidocr_backend_reads_word_boxes():
+    from pdf_strikethrough.ocr import rapidocr_backend
+    box = [[10, 20], [50, 20], [50, 40], [10, 40]]
+    line = (("keep", 0.99, box), ("gone", 0.98, box))
+    words = rapidocr_backend(engine=_fake_rapidocr((line,)))(np.zeros((100, 200, 3), np.uint8))
+    assert [w.text for w in words] == ["keep", "gone"]
+    assert words[0].bbox == (0.05, 0.2, 0.25, 0.4) and words[0].confidence == 0.99
+
+
+def test_rapidocr_backend_survives_a_page_with_no_text():
+    """rapidocr 3.9 returns the bare placeholder (('', 1.0, None),) when it detects nothing; the
+    adapter unpacked it as a line of word triples and raised ValueError."""
+    from pdf_strikethrough.ocr import rapidocr_backend
+    blank = np.zeros((100, 200, 3), np.uint8)
+    assert rapidocr_backend(engine=_fake_rapidocr((("", 1.0, None),)))(blank) == []
+
+
+def test_rapidocr_backend_reads_a_bare_word_triple_as_a_one_word_line():
+    from pdf_strikethrough.ocr import rapidocr_backend
+    box = [[10, 20], [50, 20], [50, 40], [10, 40]]
+    backend = rapidocr_backend(engine=_fake_rapidocr((("solo", 0.9, box),)))
+    assert [w.text for w in backend(np.zeros((100, 200, 3), np.uint8))] == ["solo"]
+
+
 def test_invisible_stroke_is_not_a_strike():
     """A white / opacity-0 line leaves no ink; the vector detector must not confirm it as a
     strike (it accepted paths on geometry alone before)."""

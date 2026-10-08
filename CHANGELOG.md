@@ -14,6 +14,24 @@ All notable changes to this project are documented here. The format follows
   The CLI's `--jsonl` error records (a file that failed to process) now carry it too; they were the
   one payload without it.
 
+### Fixed
+- **`rapidocr_backend()` crashed on a page where OCR found no text.** RapidOCR (3.9 at least) then
+  returns the placeholder `(('', 1.0, None),)`: a bare `(text, score, box)` triple where a line of
+  them belongs. The adapter unpacked it as a line and raised `ValueError: not enough values to
+  unpack`, so `detect_pdf` / `detect_image_file` aborted on any text-free scanned page or image
+  instead of returning no words for it. A bare triple is now read as a one-word line, and the
+  placeholder's empty text is then skipped like any empty word.
+- **The Gradio demo could not read scans.** `demo/requirements.txt` installed the legacy
+  `rapidocr-onnxruntime` distribution, which does not provide the `rapidocr` module the OCR adapter
+  imports. Because `rapidocr_backend()` imports on first use, the demo's startup guard never fired
+  and a scanned upload ended in a bare `ModuleNotFoundError`. The requirements now pull the
+  package's own `rapidocr` extra, and the demo builds the OCR engine at startup: if that fails, it
+  says so at the top of the page and runs on born-digital PDFs only. A detection error now shows
+  its reason in the summary instead of Gradio's bare "Error". Until the demo can require a release
+  carrying the fix above, it guards the same empty-page placeholder itself, because a Space
+  installs the package from PyPI. It also caps image uploads at `MAX_PAGES` frames, as it already
+  did PDF pages.
+
 ## [0.11.0] — 2026-09-04
 
 Minor, not patch: adds public API (`ScanConfig.rescue_clean_chains`). The headline is the shaded-
