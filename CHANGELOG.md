@@ -4,7 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.1] — 2026-10-08
+
+Correctness patch for the shipped StrikeNet's documentation and the tooling around it. Nothing
+under `src/` changes except the version, so detection output is identical to 0.12.0's. The model
+card and training docs no longer say the shipped weights can be reproduced, the training script
+exports on current torch and records what a model was trained on, and the scanned-recovery figures
+reproduce from a fresh clone.
 
 ### Changed
 - **The Gradio demo requires 0.12.0** and drops its own guard for RapidOCR's empty-page placeholder,
@@ -33,6 +39,11 @@ All notable changes to this project are documented here. The format follows
   this repository or any release. Those documents now say so, the model card says its scanned-path
   figures measure the whole pipeline, not the model alone, and neither it nor the README says any
   more what the model was trained on.
+- **The training script's recall floor was stated without its condition.** The model card called
+  the `1 - alpha` recall floor that `p_hi` sets distribution-free; `training/README.md` and the
+  script's `--alpha` help called it guaranteed. It holds for crops exchangeable with the
+  validation crops; the split is random over crops, not documents, so on a document outside the
+  labeled set recall can fall below it. All three now say so.
 - **`training/train_strikenet.py` could not export on current torch.** From torch 2.9
   `torch.onnx.export` defaults to the dynamo exporter, which needs `onnxscript`, and either exporter
   imports the `onnx` package, which no setup step listed; so a finished training run ended in an
