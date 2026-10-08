@@ -34,7 +34,7 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
   into the meta — `cnn._check_geometry` refuses to load a model whose geometry disagrees with the
   code constants.
 - **Thresholds are calibrated, not guessed.** `p_hi` is a split-conformal threshold on held-out
-  struck-word probabilities (`--alpha` sets the guaranteed recall floor, `1 - alpha`); `p_lo`
+  struck-word probabilities (`--alpha` sets the recall floor, `1 - alpha`); `p_lo`
   mirrors it on the clean class. See `pdf_strikethrough.calibration`. The floor holds for new crops
   exchangeable with the validation crops. The split is random over crops, not documents, so the
   validation crops come from documents the model also trained on; on any document outside the

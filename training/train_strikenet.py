@@ -162,7 +162,8 @@ def main(argv=None):
     ap.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate")
     ap.add_argument("--seed", type=int, default=0, help="seeds the train/val split and torch")
     ap.add_argument("--alpha", type=float, default=0.05,
-                    help="conformal miss rate for p_hi: p_hi guarantees a >= 1-alpha recall floor")
+                    help="conformal miss rate for p_hi: a >= 1-alpha recall floor on crops like "
+                         "the validation set")
     ap.add_argument("--version", default="retrained", help="version string stamped into the meta")
     args = ap.parse_args(argv)
     missing = [m for m in ("torch", "onnx") if importlib.util.find_spec(m) is None]
@@ -175,9 +176,10 @@ def main(argv=None):
                "lr": args.lr, "seed": args.seed}
     net, val_probs, val_y = train(x, y, **hparams)
 
-    # p_hi: split-conformal threshold on validation struck-word probabilities (guaranteed recall
-    # floor of 1-alpha). p_lo: the precision-oriented clean boundary, mirrored below. Too few
-    # struck crops and conformal_threshold returns 0.0, a model that calls every candidate struck.
+    # p_hi: split-conformal threshold on validation struck-word probabilities (a 1-alpha recall
+    # floor on crops like them). p_lo: the precision-oriented clean boundary, mirrored below.
+    # Too few struck crops and conformal_threshold returns 0.0, a model that calls every
+    # candidate struck.
     struck_probs, clean_probs = val_probs[val_y > 0.5], val_probs[val_y <= 0.5]
     need = int(np.ceil(1 / args.alpha)) - 1
     if struck_probs.size < need or not clean_probs.size:
