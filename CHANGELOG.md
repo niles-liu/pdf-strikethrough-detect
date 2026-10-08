@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+- **The TestPyPI rehearsal.** A manual run of `publish.yml` published to TestPyPI, where no trusted
+  publisher was ever set up for this repository, so it failed at the login each time. A manual run
+  now builds the sdist and wheel, checks them and tests the wheel, and uploads nothing; a GitHub
+  Release publishes to PyPI as before.
+
 ## [0.12.1] — 2026-10-08
 
 Correctness patch for the shipped StrikeNet's documentation and the tooling around it. Nothing
