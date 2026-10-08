@@ -83,10 +83,11 @@ st.strikethroughs_in_pdf("contract.pdf", method="both")    # union of all three 
 
 **Validated across domains.** On 10 public redline PDFs (federal regulatory redlines from the
 Copyright Office, FDIC, CEQ and EPA; California privacy-regulation redlines; a municipal
-development code — 54.7k struck words), **99.8% of vector detections are independently confirmed
-by MuPDF's strikeout signal** (92.5–100% per document; 8 of 10 ≥99.9%), and the flag method adds
-~2.6% more words (font-attribute strikes and edge cases) — use `method="both"` to capture them. `pymupdf4llm` is not used for detection at all; it is only an
-optional `[markdown]` extra for richer layout in `clean_markdown()`.
+development code — 55.2k struck words), **99.8% of vector detections are independently confirmed
+by MuPDF's strikeout signal** (99.6–100% per document; 9 of 10 ≥99.9%), and the flag method adds
+~2.1% more words (font-attribute strikes and edge cases) — use `method="both"` to capture them.
+`pymupdf4llm` is not used for detection at all; it is only an optional `[markdown]` extra for
+richer layout in `clean_markdown()`.
 
 ## Any PDF — routed per page, scanned pages use OCR + CNN
 
@@ -131,15 +132,18 @@ originals as ground truth (3 documents, 24 pages, 2,170 known strikes; reproduce
 
 | Backend | Setup | Strike recovery | Word granularity |
 |---|---|---|---|
-| Azure Document Intelligence | cloud, paid | **95%** of known strikes | exact word boxes |
-| **RapidOCR** | `pip`, no binary | **97%** of known strikes | ~4× coarser (phrase-level) |
+| Azure Document Intelligence | cloud, paid | **96%** of known strikes with `confidence_free()`; 91% with the default DI calibration (see below) | exact word boxes |
+| **RapidOCR** | `pip`, no binary | **96%** of known strikes | ~4× coarser (phrase-level) |
 | Tesseract | needs system binary | not benchmarked here | genuine word-level |
 
 `detect_pdf` runs confidence-free (`ScanConfig.confidence_free()`) whenever the words come from an
 `ocr` backend or `words_by_page` — RapidOCR's confidences cluster near 1.0 and don't separate struck
 from clean text — and uses the Azure DI calibration (`ScanConfig()`), whose struck words drop to
-0.43–0.94, with `di_result`. Across backends the scanned path recovers **95–97% of the exact
-native strike set** — the geometry + CNN, not the OCR engine, carry the detection.
+0.43–0.94, with `di_result`. Across backends the scanned path recovers **96% of the exact native
+strike set** — the geometry + CNN, not the OCR engine, carry the detection. The DI calibration
+keeps 91%: its confidence gates, built for degraded ruled forms, drop some crisply struck words that
+DI still reads with high confidence. On a clean scan of a printed redline, pass
+`scan_config=ScanConfig.confidence_free()` with `di_result`.
 
 ## Beyond PDFs — images, Word docs, cloud OCR
 
@@ -299,7 +303,7 @@ over-fires on it. Two switches address it, both **off by default** and opted int
   Needs calibrated confidences, so it does nothing under `confidence_free()`.
 
 False positives on the private ruled-forms corpus, **recall unchanged in every configuration**:
-**113** default → **42** veto only → **95** chain switch only → **28** with both, i.e.
+**113** default → **38** veto only → **96** chain switch only → **25** with both, i.e.
 `ScanConfig.ruled_forms(rescue_clean_chains=False)`. Not bundled, because each trades away recall on
 its own terms — on a clean scan a real strike is also solid and straight, and a real strike can leave
 OCR undamaged. Treat both as **provisional and outside the v1.0 stability contract**, expected to be
@@ -342,7 +346,7 @@ column-aware (two-column pages read down each column; tables read across rows).
 
 | Case | Status |
 |---|---|
-| Latin / Western, horizontal | validated (10-PDF redline benchmark, 54.7k struck words) |
+| Latin / Western, horizontal | validated (10-PDF redline benchmark, 55.2k struck words) |
 | CJK, **horizontal** set (native + scanned) | detected — strikes are horizontal regardless of script (regression-tested) |
 | Two-column / newspaper layout, struck table rows, hyphenated-line-break strikes | handled |
 | **Vertical** writing modes (CJK/Mongolian), RTL strike axes | out of scope (roadmap) |

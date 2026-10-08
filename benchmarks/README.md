@@ -12,8 +12,8 @@ lists each document with its source URL and a sha256; you download the files int
 
 | Script | Reproduces | Needs |
 |---|---|---|
-| [`confirmation_rate.py`](confirmation_rate.py) | "99.8% of vector detections confirmed by the flag signal (92.5–100% per doc)" (README + `native.py`) | just the PDFs |
-| [`scanned_recovery.py`](scanned_recovery.py) | the "Choosing an OCR backend" recovery table — "95–97% of the native strike set recovered by the scanned path" | PDFs + `scanned_pages`/`scanned_di_result` (from `prep_scanned_di.py`) + `[rapidocr]` |
+| [`confirmation_rate.py`](confirmation_rate.py) | "99.8% of vector detections confirmed by the flag signal (99.6–100% per doc)" (README + `native.py`) | just the PDFs |
+| [`scanned_recovery.py`](scanned_recovery.py) | the "Choosing an OCR backend" recovery table — "96% of the native strike set recovered by the scanned path" | PDFs + `scanned_pages`/`scanned_di_result` (from `prep_scanned_di.py`) + `[rapidocr]` |
 | [`prep_scanned_di.py`](prep_scanned_di.py) | *(one-time asset generator for the above)* rasterizes struck pages, runs Azure DI once, caches the result | an Azure DI key in the repo `.env` |
 | [`ocr_backend_table.py`](ocr_backend_table.py) | *(legacy)* the OCR-backend table against a **scanned** corpus with DI references | a scanned corpus + per-doc DI result + `[rapidocr,tesseract]` |
 | [`di_parity.py`](di_parity.py) | *(legacy)* "1477 vs 1484 (99.5% parity)" against the **original** Azure-DI pipeline | a scanned corpus + per-doc DI result + the original pipeline's reference count |

@@ -22,7 +22,7 @@ import pdf_strikethrough as st
 from pdf_strikethrough.scanned import ScanConfig
 
 from _corpus import corpus_dir, iter_corpus
-from _scanned import build_scanned_pdf, struck_pages
+from _scanned import build_scanned_pdf, page_ground_truth
 
 
 def _iou(a, b):
@@ -79,7 +79,8 @@ def main() -> None:
         pages = entry.get("scanned_pages")
         if not pages:
             continue
-        page_indices, gt = struck_pages(orig, len(pages))
+        page_indices = sorted(pages)           # the pages the cached DI result was captured on
+        gt = page_ground_truth(orig, page_indices)
         gt_boxes = [b for boxes in gt.values() for b in boxes]
         pdf_bytes = build_scanned_pdf(orig, page_indices)
 

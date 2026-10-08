@@ -68,7 +68,7 @@ class ScanConfig:
 
     ``rescue_clean_chains`` controls the chain gate's escape hatch (see :func:`classify_lines`). Set
     it False on degraded ruled forms, where it is a dominant false-positive source: corpus FP 113
-    default, 95 with this alone, 42 with the printed-rule veto alone, 28 with both — recall unchanged
+    default, 96 with this alone, 38 with the printed-rule veto alone, 25 with both — recall unchanged
     throughout. Deliberately NOT bundled into ``ruled_forms()``; the two overlap on only 4 FPs and
     each costs recall on its own terms. ⚠ Unlike the veto it needs calibrated confidences, so it is
     **inert when ``confidence_gating`` is off**. Rationale and per-switch measurements: the

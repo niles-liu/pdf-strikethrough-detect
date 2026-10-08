@@ -173,6 +173,23 @@ All notable changes to this project are documented here. The format follows
 - **CI linted with ruff 0.15.20** while the `dev` extra pinned 0.16.x; both now pin 0.16.9.
 - `examples/scanned_quickstart.py` crashed printing an OCR'd non-Latin character to a pipe.
 
+#### Benchmarks and published figures
+- **`scanned_recovery.py` could score cached Azure DI words against the wrong page images.** It
+  re-picked the most-struck pages with the current native detector instead of reading the
+  manifest's `scanned_pages`, the pages the DI result was captured on, so any change in per-page
+  counts swapped pages (this release's native fix did exactly that, and the DI column fell to 8%).
+  It now scores the recorded pages.
+- **The README's scanned-recovery figures were stale.** Re-measured with the fixed harness:
+  RapidOCR recovers 96% of the 2,170 known strikes (97% was quoted), and Azure DI 96% with
+  `confidence_free()` and 91% with its default calibration (95% was quoted; 0.11.0 measures 28%,
+  see the veto entry under **Changed**). The other figures are identical on 0.11.0, so nothing
+  here moved them. The README, the model card and `benchmarks/README.md` now quote the measured
+  values, as do the confirmation-rate figures above.
+- **The ruled-forms switch figures were stale.** The README and the `ScanConfig` docstring still
+  quoted 0.10.0's false positives on the private corpus, 113 / 42 / 95 / 28 (default /
+  `ruled_forms()` / `rescue_clean_chains=False` / both). This release measures 113 / 38 / 96 / 25:
+  0.11.0's 109 / 38 / 92 / 25 plus the 4 the DI veto fix adds (see **Changed**).
+
 ### Security
 - **`ensure_model` could load content it had not verified.** An empty digest skipped the check,
   and `meta_url` without `meta_sha256` — the README's own example — loaded unverified thresholds: a
