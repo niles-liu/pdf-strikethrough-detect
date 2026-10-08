@@ -182,6 +182,7 @@ def test_malformed_pdf_raises_cleanly(data):
         st.detect_pdf(data)
 
 
+@pytest.mark.filterwarnings("ignore:the PDF is damaged:UserWarning")
 def test_truncated_pdf_handled_cleanly():
     # pymupdf recovers some truncations and rejects others; either is fine — the armor property is
     # a well-formed result OR a catchable error, never a hang / crash.
@@ -194,6 +195,7 @@ def test_truncated_pdf_handled_cleanly():
             pass
 
 
+@pytest.mark.filterwarnings("ignore:the PDF is damaged:UserWarning")
 def test_byteflip_fuzz_never_hangs_or_crashes():
     good = _one_page(lambda p: p.insert_text((40, 60), "keep deleted words here now")).tobytes()
     _solid = bytearray(good)

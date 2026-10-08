@@ -1,7 +1,8 @@
 """Strikethrough detection for Word ``.docx`` files — the redline sibling of the PDF path.
 
 A .docx has no geometry (pagination is a render-time concern), so its struck text is read from
-the markup, not from ink: a run carrying the ``w:strike`` / ``w:dstrike`` character format, and
+the markup, not from ink: a run carrying the ``w:strike`` / ``w:dstrike`` character format —
+directly, or through its character style, its paragraph style or the document defaults — and
 tracked deletions (``w:del``, which move the text into ``w:delText`` and record who deleted it and
 when — the same "who struck this, and when" forensics as a PDF ``/StrikeOut`` annotation).
 
@@ -16,44 +17,119 @@ Records share the package's struck-word schema but with ``tier="docx"`` and no `
 from __future__ import annotations
 
 import io
+import os
 import zipfile
+import zlib
 from xml.etree import ElementTree as ET
 
-_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _OFF = {"false", "0", "off"}       # w:val values that turn a boolean run property OFF
+_KINDS = ("strike", "dstrike")
 
 
 def _local(tag):
     return tag.rsplit("}", 1)[-1]
 
 
-def _on(el):
-    """A boolean run property (w:strike/w:dstrike) is on when present unless w:val disables it."""
-    return el is not None and (el.get(f"{_W}val") or "true").lower() not in _OFF
-
-
-def _run_text(run):
-    """All literal text under a run — ``w:t`` (live) and ``w:delText`` (tracked-deleted)."""
-    return "".join(n.text or "" for n in run.iter() if _local(n.tag) in ("t", "delText"))
-
-
-def _strike_format(run):
-    """'strike' / 'dstrike' if the run carries that character format, else None."""
-    rpr = run.find(f"{_W}rPr")
-    if rpr is None:
-        return None
-    for kind in ("strike", "dstrike"):
-        if _on(rpr.find(f"{_W}{kind}")):
-            return kind
+def _attr(el, name):
+    """An attribute by local name, whatever its namespace: transitional documents use the
+    2006 wordprocessingml namespace, Strict OOXML another (lookups by the transitional name missed
+    every strike in a Strict file)."""
+    for key, value in el.attrib.items():
+        if _local(key) == name:
+            return value
     return None
 
 
-def _run_record(run, para, del_info):
+def _child(el, name):
+    """The first child element with this local name, or None."""
+    if el is None:
+        return None
+    for c in el:
+        if _local(c.tag) == name:
+            return c
+    return None
+
+
+def _toggles(rpr):
+    """``{kind: True/False}`` for the strike toggles a run-properties element sets explicitly; a
+    property it leaves out is absent from the dict (inherit), unlike one set off."""
+    out = {}
+    for kind in _KINDS:
+        el = _child(rpr, kind)
+        if el is not None:
+            out[kind] = (_attr(el, "val") or "true").lower() not in _OFF
+    return out
+
+
+class _Styles:
+    """Strike toggles defined by ``word/styles.xml``: per style (following ``basedOn``) and the
+    document defaults. Word resolves a toggle property such as strike from direct formatting if the
+    run sets it, else from the paragraph and character styles — which TOGGLE one another — else
+    from the defaults (ECMA-376 §17.7.3)."""
+
+    def __init__(self, xml):
+        self.by_id, self.based_on, self.default_para = {}, {}, None
+        self.defaults = {}
+        if xml is None:
+            return
+        root = ET.fromstring(xml)
+        for el in root:
+            tag = _local(el.tag)
+            if tag == "docDefaults":
+                self.defaults = _toggles(_child(_child(el, "rPrDefault"), "rPr"))
+            elif tag == "style":
+                sid = _attr(el, "styleId")
+                if sid is None:
+                    continue
+                self.by_id[sid] = _toggles(_child(el, "rPr"))
+                base = _child(el, "basedOn")
+                if base is not None:
+                    self.based_on[sid] = _attr(base, "val")
+                if _attr(el, "type") == "paragraph" and (_attr(el, "default") or "").lower() in (
+                        "1", "true", "on"):
+                    self.default_para = sid
+
+    def resolve(self, style_id):
+        """``{kind: bool}`` a style sets, nearest definition along its ``basedOn`` chain first."""
+        out, seen = {}, set()
+        while style_id is not None and style_id not in seen:
+            seen.add(style_id)
+            for kind, on in self.by_id.get(style_id, {}).items():
+                out.setdefault(kind, on)
+            style_id = self.based_on.get(style_id)
+        return out
+
+    def strike(self, direct, para_style, char_style):
+        """The run's effective strike kind ('strike' / 'dstrike') or None."""
+        para = self.resolve(para_style if para_style is not None else self.default_para)
+        char = self.resolve(char_style)
+        for kind in _KINDS:
+            if kind in direct:
+                on = direct[kind]
+            elif kind in para or kind in char:
+                on = para.get(kind, False) != char.get(kind, False)        # styles toggle
+            else:
+                on = self.defaults.get(kind, False)
+            if on:
+                return kind
+        return None
+
+
+def _run_text(run):
+    """The run's own literal text — ``w:t`` (live) and ``w:delText`` (tracked-deleted) children.
+    A text box anchored in the run is NOT its text; its paragraphs are walked on their own."""
+    return "".join(n.text or "" for n in run if _local(n.tag) in ("t", "delText"))
+
+
+def _run_record(run, para, del_info, styles, para_style):
     """A struck-word record for one run, or None if it is neither deletion nor strike-formatted."""
     text = _run_text(run)
     if not text.strip():
         return None
-    fmt = _strike_format(run)
+    rpr = _child(run, "rPr")
+    rstyle = _child(rpr, "rStyle")
+    fmt = styles.strike(_toggles(rpr), para_style,
+                        _attr(rstyle, "val") if rstyle is not None else None)
     if del_info is None and fmt is None:
         return None
     rec = {"para": para, "text": text, "chars": text, "char_span": (0, len(text)),
@@ -72,37 +148,65 @@ def _run_record(run, para, del_info):
     return rec
 
 
-def _collect(elem, state, del_info, out):
-    """Depth-first walk in document order, tracking the paragraph index and whether we are inside
-    a tracked deletion (``w:del``, whose author/date apply to the runs it wraps)."""
+def _collect(elem, state, para, del_info, para_style, styles, out, in_box=False):
+    """Depth-first walk in document order, tracking the enclosing paragraph's index and style and
+    whether we are inside a tracked deletion (``w:del``, whose author/date apply to the runs it
+    wraps). A text box's paragraphs keep their own styles but not their own index: a struck run in
+    one reports the body paragraph the box is anchored in, so the body's numbering is the same
+    with or without text boxes. Of a markup-compatibility block (``mc:AlternateContent``) only the
+    first choice is walked, since Word writes the same text box twice — as DrawingML and as a VML
+    fallback."""
     tag = _local(elem.tag)
     if tag == "p":
-        state["para"] += 1
+        if not in_box:
+            state["para"] += 1
+            para = state["para"]
+        style = _child(_child(elem, "pPr"), "pStyle")
+        para_style = _attr(style, "val") if style is not None else None
+    elif tag == "txbxContent":
+        in_box = True
     elif tag == "del":
-        del_info = (elem.get(f"{_W}author"), elem.get(f"{_W}date"), elem.get(f"{_W}id"))
+        del_info = (_attr(elem, "author"), _attr(elem, "date"), _attr(elem, "id"))
     elif tag == "r":
-        rec = _run_record(elem, state["para"], del_info)
+        rec = _run_record(elem, para, del_info, styles, para_style)
         if rec is not None:
             out.append(rec)
-        return                     # runs don't nest meaningfully; stop descending
+    elif tag == "AlternateContent":
+        branches = [c for c in elem if _local(c.tag) in ("Choice", "Fallback")]
+        for child in branches[:1]:
+            _collect(child, state, para, del_info, para_style, styles, out, in_box)
+        return
     for child in elem:
-        _collect(child, state, del_info, out)
+        _collect(child, state, para, del_info, para_style, styles, out, in_box)
 
 
 def strikethroughs_in_docx(source) -> "list[dict]":
     """Struck-run records for a Word ``.docx`` (path or bytes), in document order.
 
-    Catches both strike character formatting (``w:strike``/``w:dstrike``) and tracked deletions
-    (``w:del`` — carrying ``docx_author``/``docx_date``). Each record has ``tier="docx"``, a
-    ``para`` index (no page/geometry), ``docx_change`` ('format' | 'deletion'), and ``chars`` ==
-    ``text`` (a run is struck as a whole). Reads only the main document body."""
+    Catches both strike character formatting (``w:strike``/``w:dstrike``, set on the run or
+    inherited from its character style, its paragraph style or the document defaults) and tracked
+    deletions (``w:del`` — carrying ``docx_author``/``docx_date``). Each record has
+    ``tier="docx"``, a ``para`` index (no page/geometry), ``docx_change`` ('format' |
+    'deletion'), and ``chars`` == ``text`` (a run is struck as a whole). Reads the main document
+    body, text boxes included; transitional and Strict OOXML. A file that is not a readable
+    .docx raises ValueError."""
     zf_source = io.BytesIO(bytes(source)) if isinstance(source, (bytes, bytearray)) else source
-    label = source if isinstance(source, str) else "<bytes>"
+    label = os.fspath(source) if isinstance(source, (str, os.PathLike)) else "<bytes>"
     try:
         with zipfile.ZipFile(zf_source) as zf:
             xml = zf.read("word/document.xml")
-    except (zipfile.BadZipFile, KeyError) as e:
+            names = set(zf.namelist())
+            styles_xml = zf.read("word/styles.xml") if "word/styles.xml" in names else None
+    except KeyError as e:
         raise ValueError(f"not a readable .docx (no word/document.xml): {label}") from e
+    except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as e:
+        # a damaged, truncated, encrypted or oddly compressed archive
+        raise ValueError(f"not a readable .docx ({type(e).__name__}: {e}): {label}") from e
+    try:
+        root = ET.fromstring(xml)
+        styles = _Styles(styles_xml)
+    except ET.ParseError as e:
+        raise ValueError(f"not a readable .docx (malformed XML: {e}): {label}") from e
     out: list[dict] = []
-    _collect(ET.fromstring(xml), {"para": -1}, None, out)
+    _collect(root, {"para": -1}, -1, None, None, styles, out)
     return out

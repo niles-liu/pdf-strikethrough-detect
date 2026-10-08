@@ -62,9 +62,31 @@ def _bbox_from_points(points, w, h):
 
 # --------------------------------------------------------------------------- Azure Document Intelligence
 
+def _polygon_points(poly):
+    """``[(x, y), ...]`` from a word polygon in any shape the Azure clients emit: flat numbers
+    ``[x0, y0, x1, y1, ...]`` (REST JSON), points ``[{"x": .., "y": ..}, ...]`` (the
+    azure-ai-formrecognizer SDK's ``to_dict()``), or ``[[x, y], ...]`` pairs. Empty when the shape
+    is none of these."""
+    if not poly:
+        return []
+    if all(isinstance(v, (int, float)) for v in poly):
+        return list(zip(poly[0::2], poly[1::2])) if len(poly) % 2 == 0 else []
+    pts = []
+    for p in poly:
+        if hasattr(p, "get") and p.get("x") is not None and p.get("y") is not None:
+            pts.append((p["x"], p["y"]))
+        elif isinstance(p, (list, tuple)) and len(p) == 2:
+            pts.append((p[0], p[1]))
+        else:
+            return []
+    return pts
+
+
 def words_from_azure_di(di_page) -> list[Word]:
     """Convert one Azure DI ``pages[i]`` dict (prebuilt-layout / read) into Words. DI word
-    polygons are 8 numbers in the page's own units; page width/height give the fractions."""
+    polygons are in the page's own units; page width/height give the fractions. Polygons are read
+    in any of the shapes the REST API and the Python SDKs emit (see :func:`_polygon_points`), and a
+    page whose words carry no usable polygon raises ValueError rather than detect nothing."""
     pw = di_page.get("width")
     ph = di_page.get("height")
     if not pw or not ph:
@@ -73,17 +95,21 @@ def words_from_azure_di(di_page) -> list[Word]:
         raise ValueError(
             "Azure DI page is missing a non-zero 'width'/'height'; cannot normalize word "
             f"polygons to page fractions (got width={pw!r}, height={ph!r})")
-    out = []
+    out, unreadable = [], 0
     for w in di_page.get("words", []):
         text = w.get("content", "")
         if not text.strip():
             continue
-        poly = w.get("polygon") or []
-        if len(poly) < 8:
+        pts = _polygon_points(w.get("polygon"))
+        if len(pts) < 4:
+            unreadable += 1
             continue
-        xs, ys = poly[0::2], poly[1::2]
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
         bbox = (min(xs) / pw, min(ys) / ph, max(xs) / pw, max(ys) / ph)
         out.append(Word(text, bbox, w.get("confidence")))
+    if unreadable and not out:
+        raise ValueError(f"none of the {unreadable} Azure DI word(s) on this page has a polygon "
+                         "this adapter can read (expected 8 numbers or 4 {x, y} points)")
     return out
 
 
@@ -160,7 +186,11 @@ def _docai_bbox(layout, pw, ph):
         ys = [float(v.get("y", 0.0)) for v in norm]
         return (min(xs), min(ys), max(xs), max(ys))
     verts = poly.get("vertices")
-    if verts and pw and ph:                      # pixel vertices — normalize by page dimension
+    if verts:                                    # pixel vertices — normalize by page dimension
+        if not pw or not ph:
+            raise ValueError(
+                "Document AI token has pixel vertices but its page has no 'dimension' "
+                f"width/height to normalize them by (got width={pw!r}, height={ph!r})")
         xs = [float(v.get("x", 0.0)) / pw for v in verts]
         ys = [float(v.get("y", 0.0)) / ph for v in verts]
         return (min(xs), min(ys), max(xs), max(ys))
@@ -171,7 +201,9 @@ def words_from_docai(document) -> "dict[int, list[Word]]":
     """Convert a Google Document AI ``Document`` (REST JSON or ``document.to_dict()``) into
     per-page Words: ``{0-based page: [Word, ...]}``. Each page's ``tokens`` carry a ``layout``
     with a ``textAnchor`` (offsets into the document ``text``) and a ``boundingPoly``; normalized
-    vertices are used directly, pixel vertices are divided by the page ``dimension``.
+    vertices are used directly, pixel vertices are divided by the page ``dimension`` (a page with
+    pixel vertices and no dimension raises ValueError). Pages are keyed by their own 1-based
+    ``pageNumber`` when present — a sharded batch result starts mid-document — else by position.
 
     Like Textract, DocAI does not flag strikethrough — feed the result to ``detect_pdf(pdf,
     words_by_page=...)`` and run confidence-free (its ``layout.confidence`` isn't calibrated to
@@ -179,7 +211,12 @@ def words_from_docai(document) -> "dict[int, list[Word]]":
     document = _as_dict(document)
     full_text = document.get("text", "") or ""
     by_page: dict[int, list[Word]] = {}
-    for i, page in enumerate(document.get("pages", [])):
+    for pos, page in enumerate(document.get("pages", [])):
+        num = _docai_key(page, "pageNumber", "page_number")
+        try:
+            i = int(num) - 1 if num is not None and int(num) >= 1 else pos
+        except (TypeError, ValueError):
+            i = pos
         dim = _docai_key(page, "dimension") or {}
         pw, ph = dim.get("width"), dim.get("height")
         words = []

@@ -10,6 +10,7 @@ DI-specific piece was the confidence calibration, now captured in :class:`ScanCo
 """
 from __future__ import annotations
 
+import numbers
 from dataclasses import dataclass
 
 import numpy as np
@@ -81,6 +82,21 @@ class ScanConfig:
     cnn_p_lo: float | None = None     # override the CNN clean threshold; None = model default
     veto_printed_rules: bool = False  # drop solid/dead-straight lines as drawn rules (issue #7)
     rescue_clean_chains: bool = True  # let an EDITED page's clean-OCR glyph chain reach the CNN
+
+    def __post_init__(self):
+        # Every number here is a confidence, a page fraction or a probability. Out of [0, 1] (85
+        # for 0.85), NaN, or a string, it used to drop every word silently or fail mid-page.
+        for name in ("max_clean_conf", "inkfail_max_conf", "page_edited_min", "cnn_p_hi",
+                     "cnn_p_lo"):
+            v = getattr(self, name)
+            if v is None and name.startswith("cnn_"):
+                continue
+            if isinstance(v, bool) or not isinstance(v, numbers.Real) or not 0.0 <= v <= 1.0:
+                raise ValueError(f"ScanConfig.{name} must be a number in [0, 1], got {v!r}")
+            object.__setattr__(self, name, float(v))         # e.g. a np.float32 percentile
+        p_lo, p_hi = self.cnn_p_lo, self.cnn_p_hi
+        if p_lo is not None and p_hi is not None and p_lo > p_hi:
+            raise ValueError(f"ScanConfig.cnn_p_lo ({p_lo}) is above cnn_p_hi ({p_hi})")
 
     @classmethod
     def azure_di(cls):

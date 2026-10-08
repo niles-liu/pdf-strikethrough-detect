@@ -33,7 +33,7 @@ def render_overlay(source, result=None, *, dpi=150, pages=None,
     """Render pages with the detected strike boxes drawn on them.
 
     Args:
-        source: path, bytes, or open fitz document (same inputs as ``detect_pdf``).
+        source: path, bytes, open binary file, or open fitz document (as for ``detect_pdf``).
         result: a ``detect_pdf(...)`` result dict whose ``words`` drive the boxes. When None,
             ``detect_pdf(source, include_markdown=False, pages=pages)`` is run (native pages need
             nothing extra; scanned pages come out empty without an OCR result — pass a `result`

@@ -86,7 +86,8 @@ __all__ = [
 
 
 def open_pdf(source):
-    """Open `source` (path, bytes, or an already-open fitz document) as a fitz document.
+    """Open `source` (path, bytes, an open binary file, or an already-open fitz document) as a
+    fitz document.
     Raises EncryptedPdfError for password-protected PDFs (routes through the same gate as
     ``detect_pdf``; an already-authenticated document passes)."""
     return detect._open_doc(source)[0]
@@ -101,10 +102,11 @@ def render_page_gray(page, dpi=lines.RENDER_DPI):
 
 
 def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
-    """Struck-word records for a born-digital PDF (path/bytes/fitz doc), all pages, reading order.
-    Exact — driven by the PDF's own strike drawings. `method`: 'vector' (stroke geometry, precise
-    partial-char spans; default), 'flag' (MuPDF's strikeout span flag), or 'both' (union, maximum
-    recall).
+    """Struck-word records for a born-digital PDF (path/bytes/binary file/fitz doc), all pages, page
+    by page and each page top to bottom. Exact — driven by the PDF's own strike drawings. `method`:
+    'vector' (stroke geometry, precise partial-char spans; default), 'flag' (MuPDF's strikeout span
+    flag), 'annot' (/StrikeOut annotations, with author/date forensics), or 'both' (union of all
+    three, maximum recall).
 
     Scanned PDFs have no vector strikes, so this returns [] for them — and emits a
     ``UserWarning`` naming the scanned pages, because a silent [] on a scan (the package's own
@@ -148,6 +150,10 @@ def provenance_text(result, template="[deleted: {}]") -> str:
     them). For RAG / indexing where a silent deletion is the hazard — the deleted text stays
     visible-as-deleted so a downstream index records that something *was* struck.
 
-    `result` must carry ``markdown`` (i.e. ``include_markdown=True``, the default); `template` is a
-    ``str.format`` pattern receiving the struck text."""
-    return markdown.mark_provenance(result.get("markdown", ""), template=template)
+    `result` must carry ``markdown`` (i.e. ``include_markdown=True``, the default) — one without it
+    raises ValueError, where it used to return '' and lose the deleted text this exists to keep;
+    `template` is a ``str.format`` pattern receiving the struck text."""
+    if "markdown" not in result:
+        raise ValueError("provenance_text needs a result with 'markdown'; run detection with "
+                         "include_markdown=True (the default)")
+    return markdown.mark_provenance(result["markdown"], template=template)
