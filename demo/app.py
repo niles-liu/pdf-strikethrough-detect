@@ -24,41 +24,33 @@ from PIL import Image
 import pdf_strikethrough as st
 
 
-def _load_ocr():
-    """RapidOCR with its engine already built, or None. `rapidocr_backend()` defers its import to
-    the first page, so a missing rapidocr would only show up as a crash on the first scanned
-    upload. Building the engine here moves that failure (and the model load) to startup, where the
-    demo can say OCR is unavailable."""
-    try:
-        from rapidocr import RapidOCR
+# Build the OCR engine at startup, where a failure can be reported on the page, not on the first
+# scanned upload (rapidocr_backend() imports lazily).
+try:
+    from rapidocr import RapidOCR
 
-        from pdf_strikethrough.ocr import rapidocr_backend
-        engine = RapidOCR()
-    except Exception as e:                           # noqa: BLE001 - OCR is optional in the demo
-        print(f"OCR unavailable, scanned pages will be skipped: {type(e).__name__}: {e}",
-              file=sys.stderr)
-        return None
-
-    def run(image, **kwargs):
-        # rapidocr reports "no text" as word_results == (('', 1.0, None),), which the 0.11.0
-        # adapter crashes on (fixed after 0.11.0). Drop this wrapper once requirements.txt
-        # floors on a release with the fix.
-        res = engine(image, **kwargs)
+    from pdf_strikethrough.ocr import rapidocr_backend
+    _engine = RapidOCR()
+except Exception as e:                               # noqa: BLE001 - OCR is optional in the demo
+    print(f"OCR unavailable, scanned pages will be skipped: {type(e).__name__}: {e}",
+          file=sys.stderr)
+    _OCR = None
+else:
+    def _run(image, **kwargs):
+        # the 0.11.0 adapter crashes on rapidocr's "no text" placeholder; drop this wrapper once
+        # requirements.txt floors on a release with the fix
+        res = _engine(image, **kwargs)
         if getattr(res, "word_results", None) == (("", 1.0, None),):
             res.word_results = ()
         return res
 
-    return rapidocr_backend(engine=run)
-
-
-_OCR = _load_ocr()
+    _OCR = rapidocr_backend(engine=_run)
 _NO_OCR = ("OCR is unavailable on this instance, so only born-digital PDFs work here: scanned "
            "pages and image files need RapidOCR "
            "(pip install 'pdf-strikethrough-detect[rapidocr]').")
 
-# Keep the Space and the published model in lockstep: pull the HF-hosted StrikeNet (model and
-# thresholds digest-verified before they are loaded) at startup, falling back to the packaged
-# weights if the Hub is unreachable.
+# Keep the Space and the published model in lockstep: pull the HF-hosted StrikeNet (digest-verified
+# before it is loaded) at startup, falling back to the packaged weights if the Hub is unreachable.
 _MODEL_BASE = "https://huggingface.co/niles-liu/strikenet/resolve/main"
 try:
     st.ensure_model(

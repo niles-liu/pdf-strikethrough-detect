@@ -22,28 +22,14 @@ def struck_pages(orig_path, top_k, method="both"):
     """The ``top_k`` original page indices carrying the most struck words, and the per-page ground
     truth. Returns ``(page_indices, gt_by_newindex)`` where ``gt_by_newindex[i]`` is the list of
     ground-truth struck ``bbox_frac`` on the i-th selected page (i = its index in the image PDF)."""
-    by_page = _strikes_by_page(orig_path, method)
+    strikes = st.strikethroughs_in_pdf(str(orig_path), method=method)
+    by_page: dict[int, list] = {}
+    for r in strikes:
+        by_page.setdefault(r["page"], []).append(r["bbox_frac"])
     ranked = sorted(by_page, key=lambda p: len(by_page[p]), reverse=True)[:top_k]
     page_indices = sorted(ranked)
     gt = {i: by_page[pno] for i, pno in enumerate(page_indices)}
     return page_indices, gt
-
-
-def page_ground_truth(orig_path, page_indices, method="both"):
-    """Ground truth for a FIXED page set (a manifest's ``scanned_pages``): ``gt_by_newindex[i]`` is
-    the struck ``bbox_frac`` list on the i-th page of the image PDF. Scoring must use the pages the
-    cached DI result was captured on; re-ranking with :func:`struck_pages` follows the current
-    detector, so a change in per-page counts swapped pages and put the cached words on the wrong
-    page images."""
-    by_page = _strikes_by_page(orig_path, method)
-    return {i: by_page.get(pno, []) for i, pno in enumerate(page_indices)}
-
-
-def _strikes_by_page(orig_path, method):
-    by_page: dict[int, list] = {}
-    for r in st.strikethroughs_in_pdf(str(orig_path), method=method):
-        by_page.setdefault(r["page"], []).append(r["bbox_frac"])
-    return by_page
 
 
 def build_scanned_pdf(orig_path, page_indices, dpi=SCAN_DPI):

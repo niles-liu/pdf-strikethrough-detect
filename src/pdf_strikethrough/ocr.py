@@ -46,11 +46,9 @@ class Word:
             raise ValueError(
                 f"Word.bbox must be normalized page fractions in [0,1], got {self.bbox!r} "
                 "(these look like pixel coordinates — divide by the image width/height)")
-        # a box given as (x1, y0, x0, y1) etc. was never matched to any stroke; order its corners
-        x0, y0, x1, y1 = self.bbox
+        x0, y0, x1, y1 = self.bbox             # corners in order: (x1, y0, x0, y1) matched nothing
         object.__setattr__(self, "bbox", (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
-        # a numpy float32 confidence broke json.dump in dump_crops; carry a plain float
-        if self.confidence is not None:
+        if self.confidence is not None:        # a plain float, so dump_crops can json.dump it
             object.__setattr__(self, "confidence", float(self.confidence))
 
 
@@ -62,31 +60,11 @@ def _bbox_from_points(points, w, h):
 
 # --------------------------------------------------------------------------- Azure Document Intelligence
 
-def _polygon_points(poly):
-    """``[(x, y), ...]`` from a word polygon in any shape the Azure clients emit: flat numbers
-    ``[x0, y0, x1, y1, ...]`` (REST JSON), points ``[{"x": .., "y": ..}, ...]`` (the
-    azure-ai-formrecognizer SDK's ``to_dict()``), or ``[[x, y], ...]`` pairs. Empty when the shape
-    is none of these."""
-    if not poly:
-        return []
-    if all(isinstance(v, (int, float)) for v in poly):
-        return list(zip(poly[0::2], poly[1::2])) if len(poly) % 2 == 0 else []
-    pts = []
-    for p in poly:
-        if hasattr(p, "get") and p.get("x") is not None and p.get("y") is not None:
-            pts.append((p["x"], p["y"]))
-        elif isinstance(p, (list, tuple)) and len(p) == 2:
-            pts.append((p[0], p[1]))
-        else:
-            return []
-    return pts
-
-
 def words_from_azure_di(di_page) -> list[Word]:
     """Convert one Azure DI ``pages[i]`` dict (prebuilt-layout / read) into Words. DI word
     polygons are in the page's own units; page width/height give the fractions. Polygons are read
-    in any of the shapes the REST API and the Python SDKs emit (see :func:`_polygon_points`), and a
-    page whose words carry no usable polygon raises ValueError rather than detect nothing."""
+    in the shapes the REST API and the Python SDKs emit; a page whose words carry no usable polygon
+    raises ValueError."""
     pw = di_page.get("width")
     ph = di_page.get("height")
     if not pw or not ph:
@@ -100,7 +78,17 @@ def words_from_azure_di(di_page) -> list[Word]:
         text = w.get("content", "")
         if not text.strip():
             continue
-        pts = _polygon_points(w.get("polygon"))
+        poly = w.get("polygon") or []
+        if all(isinstance(v, (int, float)) for v in poly):     # REST JSON: flat numbers
+            pts = list(zip(poly[0::2], poly[1::2])) if len(poly) % 2 == 0 else []
+        else:                                                  # SDKs: {x, y} or [x, y] points
+            pts = []
+            for p in poly:
+                xy = (p.get("x"), p.get("y")) if hasattr(p, "get") else p
+                if not isinstance(xy, (list, tuple)) or len(xy) != 2 or None in xy:
+                    pts = []
+                    break
+                pts.append(tuple(xy))
         if len(pts) < 4:
             unreadable += 1
             continue
@@ -201,9 +189,8 @@ def words_from_docai(document) -> "dict[int, list[Word]]":
     """Convert a Google Document AI ``Document`` (REST JSON or ``document.to_dict()``) into
     per-page Words: ``{0-based page: [Word, ...]}``. Each page's ``tokens`` carry a ``layout``
     with a ``textAnchor`` (offsets into the document ``text``) and a ``boundingPoly``; normalized
-    vertices are used directly, pixel vertices are divided by the page ``dimension`` (a page with
-    pixel vertices and no dimension raises ValueError). Pages are keyed by their own 1-based
-    ``pageNumber`` when present — a sharded batch result starts mid-document — else by position.
+    vertices are used directly, pixel vertices are divided by the page ``dimension`` (ValueError
+    without one). Pages are keyed by their 1-based ``pageNumber`` when present, else by position.
 
     Like Textract, DocAI does not flag strikethrough — feed the result to ``detect_pdf(pdf,
     words_by_page=...)`` and run confidence-free (its ``layout.confidence`` isn't calibrated to
@@ -284,9 +271,7 @@ def rapidocr_backend(engine=None, **engine_kwargs):
                 "rapidocr>=3.2 (pip install 'rapidocr>=3.2')")
         out = []
         for line in (res.word_results or []):
-            if line and isinstance(line[0], str):
-                # a bare (text, score, box) triple in place of a line of them: rapidocr (3.9 at
-                # least) returns (('', 1.0, None),) when it detects no text at all
+            if line and isinstance(line[0], str):     # a bare triple: rapidocr's "no text"
                 line = (line,)
             for (text, score, box) in line:
                 if text and str(text).strip():

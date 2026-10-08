@@ -21,27 +21,20 @@ from __future__ import annotations
 import numpy as np
 
 
-_LABELS = {"struck": True, "clean": False}
-
-
-def _label(v, i):
-    """One label as a bool: True/False, 1/0, or the "struck"/"clean" strings that ``dump_crops``
-    asks you to fill in. A bare ``astype(bool)`` read both strings as True and an unfilled None as
-    False, so every threshold came out of a set it had silently relabeled."""
-    if isinstance(v, str) and v.strip().lower() in _LABELS:
-        return _LABELS[v.strip().lower()]
-    if isinstance(v, (bool, np.bool_)):
-        return bool(v)
-    if isinstance(v, (int, float, np.integer, np.floating)) and v in (0, 1):
-        return bool(v)
-    raise ValueError(f"label {i} is {v!r}; use 'struck'/'clean', True/False or 1/0 (fill in or "
-                     f"drop unlabeled rows)")
-
-
 def _as_arrays(probs, labels):
     p = np.asarray(probs, dtype=float).reshape(-1)
-    y = np.array([_label(v, i) for i, v in enumerate(np.asarray(labels, dtype=object).reshape(-1))],
-                 dtype=bool)
+    y = []
+    for i, v in enumerate(np.asarray(labels, dtype=object).reshape(-1)):
+        # "struck"/"clean" are what dump_crops asks for; astype(bool) read both as True
+        s = v.strip().lower() if isinstance(v, str) else None
+        if s in ("struck", "clean"):
+            y.append(s == "struck")
+        elif isinstance(v, (bool, np.bool_, int, float, np.integer, np.floating)) and v in (0, 1):
+            y.append(bool(v))
+        else:
+            raise ValueError(f"label {i} is {v!r}; use 'struck'/'clean', True/False or 1/0 (fill "
+                             f"in or drop unlabeled rows)")
+    y = np.array(y, dtype=bool)
     if p.shape != y.shape:
         raise ValueError(f"probs and labels differ in length: {p.size} vs {y.size}")
     if p.size == 0:
@@ -61,10 +54,8 @@ def threshold_for_recall(probs, labels, target_recall):
         raise ValueError("target_recall must be in (0, 1]")
     pos = np.sort(p[y])                          # struck-word probabilities, ascending
     n = pos.size
-    # recall at threshold t = fraction of positives with prob >= t. At least ceil(n*target) must
-    # stay at or above t, so n - ceil(n*target) may fall below it; the highest such t is that
-    # positive's probability. (Computed as floor(n*(1-target)), 1 - 0.9 = 0.0999... put one
-    # positive too few below t and returned a lower threshold than the highest that qualifies.)
+    # recall at t = share of positives with prob >= t; ceil(n*target) must stay at or above t, so
+    # the k-th lowest positive is the highest t that qualifies (1e-9 absorbs float error)
     k = min(n - int(np.ceil(n * target_recall - 1e-9)), n - 1)
     return float(pos[k])
 
@@ -81,9 +72,8 @@ def threshold_for_precision(probs, labels, target_precision):
     tp = np.cumsum(ys)
     fp = np.cumsum(~ys)
     precision = tp / np.maximum(tp + fp, 1)
-    # A threshold admits every word at its probability, so precision is only real at the LAST
-    # word of a run of tied probabilities (rounded manifest probabilities tie, and StrikeNet
-    # saturates at 1.0); checked mid-run it promised a precision the threshold does not deliver.
+    # a threshold admits every word at its probability, so precision holds only at the last word
+    # of a run of tied probabilities
     run_end = np.r_[ps[1:] != ps[:-1], True]
     ok = (precision >= target_precision) & (tp > 0) & run_end
     if not ok.any():

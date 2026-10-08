@@ -54,8 +54,7 @@ def otsu_threshold(gray):
 def _scale_to_255(a):
     """Multiplier that puts array `a` on the 0..255 scale, decided over the whole array: floats in
     [0, 1] scale up; integers wider than 8 bits scale by their DATA range — 8-bit values held in a
-    wider type pass through, 16-bit data divides by 257, anything wider by the dtype maximum.
-    (Dividing every wide integer by its dtype maximum read an int32/int64 page as solid black.)"""
+    wider type pass through, 16-bit data divides by 257, anything wider by the dtype maximum."""
     if np.issubdtype(a.dtype, np.floating):
         return 255.0 if a.size and float(a.max()) <= 1.0 else 1.0
     if np.issubdtype(a.dtype, np.integer) and np.iinfo(a.dtype).max > 255:
@@ -70,9 +69,9 @@ def _scale_to_255(a):
 def to_gray_u8(image):
     """Coerce input to the uint8 grayscale (H, W) array the detectors expect. Accepts (H, W)
     grayscale, (H, W, 2) grayscale+alpha, or (H, W, 3|4) RGB(A) arrays. Transparency is composited
-    over white paper (PyMuPDF's transparent page ground is (0, 0, 0, 0), which read as solid ink);
-    float images in [0, 1] are rescaled to 0..255; wide integer scans are rescaled by their data
-    range (see :func:`_scale_to_255`); out-of-range values are clipped (no mod-256 wraparound)."""
+    over white paper; float images in [0, 1] are rescaled to 0..255; wide integer scans are
+    rescaled by their data range (see :func:`_scale_to_255`); out-of-range values are clipped (no
+    mod-256 wraparound)."""
     a = np.asarray(image)
     if a.ndim == 3 and a.shape[2] in (2, 3, 4):
         has_alpha = a.shape[2] in (2, 4)
@@ -86,10 +85,8 @@ def to_gray_u8(image):
                 al = np.clip(a[r0:r0 + 256, :, -1:].astype(np.float64) * ka, 0.0, 1.0)
                 c = c * al + 255.0 * (1.0 - al)
             if c.shape[2] == 3:
-                # sRGB -> linear -> Rec.709 luminance -> sRGB, which is what PyMuPDF's csGRAY does
-                # on the PDF path. A channel MEAN puts a yellow highlighter at 170 where csGRAY puts
-                # it at 248, so the same highlighted page used to be readable through detect_pdf
-                # and solid ink through an RGB array.
+                # sRGB -> linear -> Rec.709 luminance -> sRGB, as PyMuPDF's csGRAY does on the PDF
+                # path (a channel mean puts a yellow highlighter at 170, csGRAY at 248)
                 c = c / 255.0
                 lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
                 y = lin @ np.array([0.2126, 0.7152, 0.0722])

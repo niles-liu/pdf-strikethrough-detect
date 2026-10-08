@@ -65,16 +65,6 @@ def _load_json(path):
         return json.load(f)
 
 
-class _Parser(argparse.ArgumentParser):
-    """argparse exits 2 on a usage error, but this CLI documents 2 as "encrypted / OCR required"
-    — a CI gate keyed on it would read a mistyped flag as a scan that needs OCR. Usage errors exit
-    1, as documented. (Subparsers inherit the class.)"""
-
-    def error(self, message):
-        self.print_usage(sys.stderr)
-        self.exit(1, f"{self.prog}: error: {message}\n")
-
-
 def _positive_int(text):
     """argparse type for --dpi / --jobs style values: a positive integer."""
     try:
@@ -89,8 +79,7 @@ def _positive_int(text):
 def _open_out(path):
     """Return a text file handle for `path`, or stdout when path is '-'. The caller closes it
     (a no-op contextmanager wraps stdout so `with` never closes the real stdout). Output to '-' is
-    UTF-8 whatever the console code page: a redirected Windows stdout is cp1252, which turned
-    struck non-Latin text into '?' and wrote JSON that was not valid UTF-8."""
+    UTF-8 whatever the console code page."""
     if path == "-":
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # keep main()'s handler
@@ -152,10 +141,9 @@ def _expand_inputs(patterns):
 
 
 def _cmd_detect(args):
-    """Dispatch by the form of the arguments: one literal file -> full single-file mode (every
-    output flag); several files, a directory, a glob, or --jsonl -> batch mode (JSONL, optional
-    --jobs parallelism). Deciding by the number of files MATCHED silently dropped --jsonl when a
-    folder happened to hold one file, leaving yesterday's output in place."""
+    """Dispatch by the form of the arguments, not the number of files matched: one literal file
+    -> full single-file mode (every output flag); several files, a directory, a glob, or --jsonl
+    -> batch mode (JSONL, optional --jobs parallelism)."""
     inputs = _expand_inputs(args.files)
     if inputs is None:
         return 1
@@ -312,13 +300,54 @@ def _cmd_detect_single(args, path):
 def _emit_result(args, res, overlay_source):
     """Write the requested outputs for a detect result (PDF or image) and return the exit code.
     `overlay_source` is the input to re-render for --overlay, or None to skip it (image inputs).
-    Status lines ("wrote ...") go to stderr, so a result written to '-' is never mixed with them;
-    an output that cannot be written is a clean error (exit 1), not a traceback."""
+    Status lines ("wrote ...") go to stderr, so they never mix with a result written to '-'."""
+    import pdf_strikethrough as st
     for w in res.get("warnings", []):
         print(f"warning: {w}", file=sys.stderr)
     final = [w for w in res["words"] if w.get("final")]
     try:
-        _write_outputs(args, res, final, overlay_source)
+        if args.markdown:
+            with _open_out(args.markdown) as f:
+                f.write(res.get("markdown", ""))
+            if args.markdown != "-":
+                print(f"wrote struck-aware markdown to {args.markdown}", file=sys.stderr)
+        if args.clean_text:
+            with _open_out(args.clean_text) as f:
+                f.write(res.get("clean_text", ""))
+            if args.clean_text != "-":
+                print(f"wrote surviving clean text to {args.clean_text}", file=sys.stderr)
+        if args.provenance:
+            with _open_out(args.provenance) as f:
+                f.write(st.provenance_text(res))
+            if args.provenance != "-":
+                print(f"wrote audit-preserving (provenance) text to {args.provenance}",
+                      file=sys.stderr)
+        if args.json:
+            payload = {"schema_version": SCHEMA_VERSION, "source": res["source"],
+                       "page_count": res["page_count"], "page_sources": res["page_sources"],
+                       "n_struck_final": len(final), "warnings": res.get("warnings", []),
+                       "passages": res.get("passages", []),
+                       "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
+            if "pages" in res:
+                payload["pages"] = res["pages"]
+            with _open_out(args.json) as f:
+                json.dump(payload, f, indent=2, default=list, ensure_ascii=False)
+                if args.json == "-":
+                    f.write("\n")
+            if args.json != "-":
+                print(f"wrote {len(final)} struck words to {args.json}", file=sys.stderr)
+        if args.overlay:                     # last: a bad overlay path must not cost the text
+            if overlay_source is None:
+                print("warning: --overlay is only supported for PDF input; skipped",
+                      file=sys.stderr)
+            else:
+                from . import overlay as _ov
+                # reuse the results already computed; render reopens the source (doc is closed)
+                written = _ov.save_overlays(overlay_source, args.overlay, result=res,
+                                            dpi=args.overlay_dpi)
+                print(f"wrote {len(written)} overlay image(s)" +
+                      (f" to {args.overlay}" if written else " (no struck pages)"),
+                      file=sys.stderr)
     except OSError as e:
         if "-" in (args.json, args.markdown, args.clean_text, args.provenance):
             _abandon_stdout()                # a closed pipe: do not fail again at exit
@@ -338,51 +367,6 @@ def _emit_result(args, res, overlay_source):
     if args.fail_if_found and final:
         return 3
     return 0
-
-
-def _write_outputs(args, res, final, overlay_source):
-    """The file outputs of :func:`_emit_result`, in order; raises OSError on a write failure."""
-    import pdf_strikethrough as st
-    if args.markdown:
-        with _open_out(args.markdown) as f:
-            f.write(res.get("markdown", ""))
-        if args.markdown != "-":
-            print(f"wrote struck-aware markdown to {args.markdown}", file=sys.stderr)
-    if args.clean_text:
-        with _open_out(args.clean_text) as f:
-            f.write(res.get("clean_text", ""))
-        if args.clean_text != "-":
-            print(f"wrote surviving clean text to {args.clean_text}", file=sys.stderr)
-    if args.provenance:
-        with _open_out(args.provenance) as f:
-            f.write(st.provenance_text(res))
-        if args.provenance != "-":
-            print(f"wrote audit-preserving (provenance) text to {args.provenance}",
-                  file=sys.stderr)
-    if args.json:
-        payload = {"schema_version": SCHEMA_VERSION, "source": res["source"],
-                   "page_count": res["page_count"], "page_sources": res["page_sources"],
-                   "n_struck_final": len(final), "warnings": res.get("warnings", []),
-                   "passages": res.get("passages", []),
-                   "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
-        if "pages" in res:
-            payload["pages"] = res["pages"]
-        with _open_out(args.json) as f:
-            json.dump(payload, f, indent=2, default=list, ensure_ascii=False)
-            if args.json == "-":
-                f.write("\n")
-        if args.json != "-":
-            print(f"wrote {len(final)} struck words to {args.json}", file=sys.stderr)
-    if args.overlay:                         # last: a bad overlay path must not cost the text
-        if overlay_source is None:
-            print("warning: --overlay is only supported for PDF input; skipped", file=sys.stderr)
-        else:
-            from . import overlay as _ov
-            # reuse the results already computed; render reopens the source (doc handle is closed)
-            written = _ov.save_overlays(overlay_source, args.overlay, result=res,
-                                        dpi=args.overlay_dpi)
-            print(f"wrote {len(written)} overlay image(s)" +
-                  (f" to {args.overlay}" if written else " (no struck pages)"), file=sys.stderr)
 
 
 def _cmd_detect_docx(args, path):
@@ -438,15 +422,9 @@ def _cmd_detect_docx(args, path):
 _POLL_S = 0.2       # how often a batch wakes while waiting on a worker, so Ctrl-C is seen promptly
 
 
-def _crash_record(path):
-    return {"schema_version": SCHEMA_VERSION, "source": path,
-            "error": "BrokenProcessPool: processing this file crashed its worker process (a native "
-                     "crash in a PDF or image library)"}
-
-
 def _wait(fut):
-    """``fut.result()``, waking every _POLL_S: a blocking wait on Windows notices Ctrl-C only
-    when a result arrives, which on a slow file is minutes."""
+    """``fut.result()``, waking every _POLL_S: a blocking wait on Windows notices Ctrl-C only when
+    a result arrives."""
     from concurrent.futures import TimeoutError as FutureTimeout
     while True:
         try:
@@ -455,77 +433,9 @@ def _wait(fut):
             continue
 
 
-def _pool_pass(paths, opts, jobs):
-    """Yield the payloads for `paths`, in order, from a pool of `jobs` workers with at most
-    ``2 * jobs`` files submitted at a time (so an interrupt cancels the rest instead of waiting for
-    them). Returns how many were reported, and whether the pool broke before the end."""
-    from collections import deque
-    from concurrent.futures import ProcessPoolExecutor
-    from concurrent.futures.process import BrokenProcessPool
-    ex = ProcessPoolExecutor(max_workers=jobs)
-    inflight, nxt, done = deque(), 0, 0
-    try:
-        while done < len(paths):
-            while nxt < len(paths) and len(inflight) < 2 * jobs:
-                inflight.append(ex.submit(_batch_worker, (paths[nxt], opts)))
-                nxt += 1
-            payload = _wait(inflight.popleft())
-            done += 1
-            yield payload
-        return done, False
-    except BrokenProcessPool:
-        return done, True
-    except KeyboardInterrupt:
-        _stop_workers(ex)                    # a queued file would otherwise still run, and exit
-        raise                                # would wait for it
-    finally:
-        for fut in inflight:
-            fut.cancel()
-        ex.shutdown(wait=False, cancel_futures=True)
-
-
-def _stop_workers(ex):
-    """Terminate a pool's worker processes. Python 3.14 has ``terminate_workers()``; before it the
-    processes are reachable only through the executor's private ``_processes`` mapping."""
-    stop = getattr(ex, "terminate_workers", None)
-    if stop is not None:
-        stop()
-        return
-    for proc in list((getattr(ex, "_processes", None) or {}).values()):
-        proc.terminate()
-
-
-def _iter_payloads(inputs, opts, jobs):
-    """One payload per input, in input order, each yielded as soon as it is ready. With --jobs a
-    worker that dies (a native crash in a PDF library takes the process down with it) breaks the
-    whole pool, and which in-flight file killed it is unknown: the first file the pool did not
-    report is re-run alone in a fresh worker — its error record if it crashes again, its result if
-    not — and the rest continue in a new pool. So one bad file costs one error line, as without
-    --jobs."""
-    if jobs <= 1:
-        for path in inputs:
-            yield _detect_payload(path, opts)
-        return
-    from concurrent.futures import ProcessPoolExecutor
-    from concurrent.futures.process import BrokenProcessPool
-    pending = list(inputs)
-    while pending:
-        done, broke = yield from _pool_pass(pending, opts, jobs)
-        if not broke:
-            return
-        suspect = pending[done]
-        with ProcessPoolExecutor(max_workers=1) as ex:
-            try:
-                yield _wait(ex.submit(_batch_worker, (suspect, opts)))
-            except BrokenProcessPool:
-                yield _crash_record(suspect)
-        pending = pending[done + 1:]
-
-
 def _abandon_stdout():
     """After a write to a closed pipe (`... --jsonl - | head`), point stdout at the null device so
-    the interpreter's own flush at exit does not raise again (the recipe in the Python docs on
-    SIGPIPE)."""
+    the interpreter's own flush at exit does not raise again."""
     try:
         devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull, sys.stdout.fileno())
@@ -536,10 +446,9 @@ def _abandon_stdout():
 def _cmd_detect_batch(args, inputs):
     """Detect across many files. Writes JSONL (one payload per line, flushed as each file finishes)
     to --jsonl / --json, or prints a per-file summary; --jobs N spreads the files over N worker
-    processes. The run's preconditions are checked and the output opened before any work, so a
-    bad path fails at once and a failed check leaves the previous output intact; an interruption
-    keeps every line already written. Exit: 130 if interrupted, else 3 if --fail-if-found matched
-    any file, else 1 if any file errored or the output could not be written, else 0."""
+    processes. The output is opened after the run's own checks and before any work. Exit: 130 if
+    interrupted, else 3 if --fail-if-found matched any file, else 1 if any file errored or the
+    output could not be written, else 0."""
     for val, flag in ((args.markdown, "--markdown"), (args.clean_text, "--clean-text"),
                       (args.provenance, "--provenance"), (args.overlay, "--overlay"),
                       (args.di_result, "--di-result"), (args.textract_result, "--textract-result"),
@@ -562,23 +471,74 @@ def _cmd_detect_batch(args, inputs):
         return 1
 
     n = errors = hits = 0
+
+    def emit(pl):                            # f is the open output, bound by the with below
+        nonlocal n, errors, hits
+        n += 1
+        if f is not None:
+            json.dump(pl, f, default=list, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+        if "error" in pl:
+            errors += 1
+            print(f"error: {pl['source']}: {pl['error']}", file=sys.stderr)
+        elif pl.get("n_struck_final"):
+            hits += 1
+        if not out_path:
+            print(f"  {pl['source']}: ERROR" if "error" in pl else
+                  f"  {pl['source']}: {pl.get('n_struck_final', 0)} struck "
+                  f"({pl.get('page_count', '?')} pages)", flush=True)
+
     with out as f:
         try:
-            for pl in _iter_payloads(inputs, opts, jobs):
-                n += 1
-                if f is not None:
-                    json.dump(pl, f, default=list, ensure_ascii=False)
-                    f.write("\n")
-                    f.flush()
-                if "error" in pl:
-                    errors += 1
-                    print(f"error: {pl['source']}: {pl['error']}", file=sys.stderr)
-                elif pl.get("n_struck_final"):
-                    hits += 1
-                if not out_path:
-                    print(f"  {pl['source']}: ERROR" if "error" in pl else
-                          f"  {pl['source']}: {pl.get('n_struck_final', 0)} struck "
-                          f"({pl.get('page_count', '?')} pages)", flush=True)
+            if jobs <= 1:
+                for path in inputs:
+                    emit(_detect_payload(path, opts))
+            else:
+                from collections import deque
+                from concurrent.futures import ProcessPoolExecutor
+                from concurrent.futures.process import BrokenProcessPool
+                pending = list(inputs)
+                while pending:
+                    # at most 2 * jobs files in flight, so an interrupt need not wait for the rest
+                    ex = ProcessPoolExecutor(max_workers=jobs)
+                    inflight, nxt, done, broke = deque(), 0, 0, False
+                    try:
+                        while done < len(pending):
+                            while nxt < len(pending) and len(inflight) < 2 * jobs:
+                                inflight.append(ex.submit(_batch_worker, (pending[nxt], opts)))
+                                nxt += 1
+                            emit(_wait(inflight.popleft()))
+                            done += 1
+                    except BrokenProcessPool:
+                        broke = True
+                    except KeyboardInterrupt:
+                        # stop the workers now, or exit waits for every queued file (before
+                        # Python 3.14's terminate_workers() only _processes reaches them)
+                        if hasattr(ex, "terminate_workers"):
+                            ex.terminate_workers()
+                        else:
+                            for proc in list((getattr(ex, "_processes", None) or {}).values()):
+                                proc.terminate()
+                        raise
+                    finally:
+                        for fut in inflight:
+                            fut.cancel()
+                        ex.shutdown(wait=False, cancel_futures=True)
+                    if not broke:
+                        break
+                    # a worker crash breaks the whole pool without saying which file did it: re-run
+                    # the first unreported file alone, then carry on with the rest in a new pool
+                    suspect = pending[done]
+                    with ProcessPoolExecutor(max_workers=1) as solo:
+                        try:
+                            emit(_wait(solo.submit(_batch_worker, (suspect, opts))))
+                        except BrokenProcessPool:
+                            emit({"schema_version": SCHEMA_VERSION, "source": suspect,
+                                  "error": "BrokenProcessPool: processing this file crashed its "
+                                           "worker process (a native crash in a PDF or image "
+                                           "library)"})
+                    pending = pending[done + 1:]
         except KeyboardInterrupt:
             print(f"\ninterrupted after {n} of {len(inputs)} file(s)"
                   + (f"; {out_path} holds those {n} line(s)" if out_path not in (None, "-")
@@ -609,9 +569,9 @@ def main(argv=None):
             stream.reconfigure(errors="replace")
         except (AttributeError, ValueError):
             pass                             # non-reconfigurable stream (e.g. captured in tests)
-    p = _Parser(prog="pdf-strikethrough",
-                description="Detect struck-through text in PDFs.",
-                formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p = argparse.ArgumentParser(prog="pdf-strikethrough",
+                                description="Detect struck-through text in PDFs.",
+                                formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--version", action="version",
                    version=f"%(prog)s {__import__('pdf_strikethrough').__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -675,7 +635,12 @@ def main(argv=None):
     d.add_argument("--fail-if-found", dest="fail_if_found", action="store_true",
                    help="exit 3 if any struck word is found (for CI gating)")
     d.set_defaults(func=_cmd_detect)
-    args = p.parse_args(argv)
+    try:
+        args = p.parse_args(argv)
+    except SystemExit as e:
+        if e.code == 2:                      # argparse's usage error; 2 here means OCR required
+            raise SystemExit(1) from None
+        raise
     return args.func(args)
 
 

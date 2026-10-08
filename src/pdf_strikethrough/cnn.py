@@ -76,9 +76,8 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
     after download and a mismatch raises ``ValueError`` (nothing is written) — so a tampered host or
     a man-in-the-middle cannot swap the graph you run; nothing unverified is ever loaded. The ONNX
     loader also needs a meta JSON (thresholds + crop geometry): supply it as `meta_url` with its
-    `meta_sha256` (required: the thresholds decide what counts as struck, so they are verified like
-    the graph), or as a `meta` dict written verbatim. A digest that is not 64 hex characters
-    raises ``ValueError``.
+    required `meta_sha256` (the thresholds decide what counts as struck), or as a `meta` dict
+    written verbatim. A digest that is not 64 hex characters raises ``ValueError``.
 
     Downloads land in `cache_dir` (default:
     ``~/.cache/pdf_strikethrough/models/<sha256[:12]>``); an already-present, hash-matching file is
@@ -221,8 +220,7 @@ def _check_geometry(meta):
 
 
 def _check_thresholds(meta):
-    """``0 <= p_lo <= p_hi <= 1``, or the model is refused: a p_hi of 0 would report every scored
-    word struck, and a missing or NaN threshold would fail far from its cause."""
+    """Refuse a model whose thresholds are not ``0 <= p_lo <= p_hi <= 1``."""
     p_lo, p_hi = meta.get("p_lo"), meta.get("p_hi")
     ok = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (p_lo, p_hi))
     if not ok or not 0.0 <= p_lo <= p_hi <= 1.0:
@@ -284,8 +282,7 @@ def get_model_meta():
 
 def _ensure_loaded():
     """The loaded ``(score_fn, meta)``, loading it on first use. Callers use the returned tuple,
-    never the global: a concurrent ``set_model_dir`` / ``ensure_model`` resets the global to None,
-    and a second read of it after the lock is released raised TypeError mid-run."""
+    never the global, which a concurrent ``set_model_dir`` / ``ensure_model`` may reset."""
     global _model
     model = _model
     if model is None:
@@ -308,9 +305,8 @@ def score_crops(std_crops, batch_size=512):
 def score_word(gray, bbox_frac):
     """Convenience: page image + word box in [0,1] PAGE FRACTIONS -> strike probability (or None
     if the box is too small to crop). A color or wide-integer page goes through the detectors' own
-    conversion (:func:`~pdf_strikethrough.lines.to_gray_u8`) first: a 16-bit page used to reach
-    the crop as float values far above 255 and scored as if it were blank. Raises ValueError if
-    the box looks like pixel coordinates."""
+    conversion (:func:`~pdf_strikethrough.lines.to_gray_u8`) first. Raises ValueError if the box
+    looks like pixel coordinates."""
     gray = np.asarray(gray)
     if gray.ndim != 2 or (np.issubdtype(gray.dtype, np.integer) and gray.dtype != np.uint8):
         gray = to_gray_u8(gray)

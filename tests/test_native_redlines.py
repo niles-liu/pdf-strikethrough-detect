@@ -90,12 +90,19 @@ def test_overshoot_from_a_struck_neighbor_does_not_strike_a_character():
     assert [r["text"] for r in recs] == ["gone"]
 
 
-def test_struck_subscript_is_struck_with_its_word():
-    from pdf_strikethrough.native import _spread_to_scripts
-    tall, sub = (0, 0, 8, 14), (16, 6, 20, 14)         # 'C', 'O' full height; '2' a subscript
-    assert _spread_to_scripts([True, True, False], [tall, tall, sub]) == [True, True, True]
-    assert _spread_to_scripts([False, False, False], [tall, tall, sub]) == [False] * 3
-    assert _spread_to_scripts([True, False, False], [tall, tall, sub]) == [True, False, False]
+@pytest.mark.parametrize("struck_part, chars", [(1.0, "CO2"), (0.5, "C")])
+def test_struck_subscript_is_struck_with_its_word(struck_part, chars):
+    # the strike stops short of the subscript '2', as redline tools draw it; the '2' joins only a
+    # struck neighbor
+    doc = pymupdf.open()
+    page = doc.new_page()
+    x, y = 72, 200
+    w = pymupdf.get_text_length("CO", fontsize=FS)
+    page.insert_text((x, y), "CO", fontsize=FS)
+    page.insert_text((x + w, y + 2), "2", fontsize=7)
+    page.draw_line((x + 0.5, y - 4), (x + struck_part * w - 0.5, y - 4), width=0.8)
+    (rec,) = st.strikethroughs_in_pdf(_reopen(doc))
+    assert (rec["text"], rec["chars"]) == ("CO2", chars)
 
 
 def test_flag_and_annot_spans_snap_to_characters():
@@ -131,26 +138,19 @@ def _bravo_mid():
 
 def test_fill_only_shape_edges_are_not_strokes():
     r, y = _bravo_mid()
-
-    def white_polygon(page):                     # its top edge crosses every word's middle band
-        sh = page.new_shape()
-        sh.draw_polyline([(60, y), (300, y), (320, y + 60), (40, y + 60)])
-        sh.finish(color=None, fill=(1, 1, 1), closePath=True)
-        sh.commit()
-    res = st.detect_pdf(_line_with(white_polygon))
+    # a white polygon whose top edge crosses every word's middle band
+    res = st.detect_pdf(_line_with(lambda p: p.draw_polyline(
+        [(60, y), (300, y), (320, y + 60), (40, y + 60)], color=None, fill=(1, 1, 1),
+        closePath=True)))
     assert res["words"] == [] and res["clean_text"] == "alpha bravo charlie"
 
 
 def test_thin_fill_only_bar_is_a_strike_in_its_own_color():
     r, y = _bravo_mid()
-
-    def red_bar(page):                           # sheared, so it is drawn as lines, not a rect
-        sh = page.new_shape()
-        sh.draw_polyline([(r.x0, y - 0.6), (r.x1, y - 0.6), (r.x1 + 0.8, y + 0.6),
-                          (r.x0 + 0.8, y + 0.6)])
-        sh.finish(color=None, fill=(1, 0, 0), closePath=True)
-        sh.commit()
-    (rec,) = st.strikethroughs_in_pdf(_line_with(red_bar))
+    # a red bar, sheared so it is drawn as lines, not a rect
+    (rec,) = st.strikethroughs_in_pdf(_line_with(lambda p: p.draw_polyline(
+        [(r.x0, y - 0.6), (r.x1, y - 0.6), (r.x1 + 0.8, y + 0.6), (r.x0 + 0.8, y + 0.6)],
+        color=None, fill=(1, 0, 0), closePath=True)))
     assert rec["text"] == "bravo" and rec["stroke_color"] == (1.0, 0.0, 0.0)
 
 
@@ -321,6 +321,6 @@ def test_proportionate_strike_on_display_text_counts():
 
 
 def test_character_index_splits_words_where_pymupdf_does():
-    from pdf_strikethrough.native import _word_delimiter
-    assert _word_delimiter(" ") and _word_delimiter("\u00a0") and _word_delimiter("\u202e")
-    assert not _word_delimiter("\u202f") and not _word_delimiter("\u2009")   # no split there
+    from pdf_strikethrough.native import _WORD_DELIMITERS
+    assert {" ", "\u00a0", "\u202e"} <= _WORD_DELIMITERS
+    assert not {"\u202f", "\u2009"} & _WORD_DELIMITERS                     # no split there

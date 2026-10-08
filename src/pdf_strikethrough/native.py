@@ -7,9 +7,8 @@ run of short segments / a flat cubic bezier ("c" item), all painted over the tex
 when the merged stroke coverage through its MIDDLE BAND (0.22h..0.78h — excludes underlines and
 overlines) reaches half its width; smaller mid-band coverage that still spans >= 2 characters is
 a genuine partial strike ('semi-' of 'semi-monthly', '19' of '192012'). The struck characters are
-the ones the strike actually crosses, read from MuPDF's per-character boxes, and a word is a FULL
-strike only when every character is struck — a redline that prints the replacement straight after
-the deletion ('DecemberMay') keeps 'May'.
+the ones the strike crosses, read from MuPDF's per-character boxes; a word is a FULL strike only
+when every character is struck.
 
 All output bbox_frac values are fractions of the ROTATED (as-rendered) page, so they map
 directly onto ``page.get_pixmap()`` output; detection itself runs in MuPDF's unrotated text
@@ -17,8 +16,7 @@ space, where strikes over upright text stay horizontal regardless of /Rotate.
 
 Scope — HORIZONTAL (left-to-right) text only. The vector path (``horiz_strokes``) matches only
 near-horizontal strokes, so it skips words that run vertically in text space (vertical writing, or
-content drawn rotated and turned upright by /Rotate, e.g. a landscape table) rather than read a
-crossing rule as a strike; the flag and annotation paths read those. Vertical writing modes and
+content rotated by /Rotate); the flag and annotation paths read those. Vertical writing modes and
 non-Latin scripts whose strikes run along a different axis are otherwise out of scope. Full support
 is roadmap R-cjk (add a CJK redline test doc + document the validated scripts).
 """
@@ -35,8 +33,7 @@ MIN_STROKE_LEN = 6.0     # pt; a solid strike stroke is at least this long
 MAX_STROKE_DY = 1.5      # pt; a strike stroke is horizontal...
 MAX_STROKE_SLOPE = math.tan(math.radians(2.0))   # ...or leans at most this much (line-tool strikes)
 MAX_RECT_H = 3.5         # pt; a strike drawn as a filled rect is thin
-MAX_STROKE_FRAC = 0.30   # a line stroked wider than this share of a word's height (and MAX_RECT_H)
-                         # paints over the word (a highlighter) rather than striking it
+MAX_STROKE_FRAC = 0.30   # a line wider than this share of the word's height is a highlighter
 MID_BAND = 0.22          # strokes within [y0 + f*h, y1 - f*h] count as through-text
 # Dashes / flat-bezier pieces are chained before the length gate (see _chain_short).
 DASH_MIN_SEG = 1.0       # pt; below this a segment is graphics noise, never a dash
@@ -88,8 +85,7 @@ def _paint_invisible(color, opacity):
 
 def _rgb(color):
     """Normalize a PDF color to an RGB 3-tuple of rounded floats in [0, 1]. An unset (None) color
-    is PDF-default black; a 1-component gray or a 4-component CMYK color (what an annotation's /C
-    array may hold) is converted rather than passed through, so the documented RGB holds."""
+    is PDF-default black; gray and CMYK colors are converted."""
     if color is None:
         return (0.0, 0.0, 0.0)
     c = [float(v) for v in color]
@@ -136,15 +132,14 @@ def horiz_strokes(page):
     the fill color for a filled bar) as an RGB 3-tuple in [0, 1]; ``width`` is the stroke line
     width for a line, or the bar height for a filled rect — the visual thickness of the strike.
     Invisible strokes (transparent, or drawn in the page background color) leave no ink and are
-    skipped — geometry alone would otherwise confirm a white / opacity-0 line as a strike. So is the
-    outline of a fill-only path, which paints its interior rather than its edges: each of its
-    subpaths counts as a bar when it is as thin as a strike bar. (A line stroked too wide for the
-    word it crosses — a highlighter swipe — is rejected per word, in :func:`native_page_strikes`.)
+    skipped — geometry alone would otherwise confirm a white / opacity-0 line as a strike. A
+    fill-only path paints its interior, not its outline, so each of its subpaths counts as a bar
+    when it is thin enough.
 
     A strike may be dashed (many short line segments) or drawn as a flat cubic bezier; those
     sub-MIN_STROKE_LEN pieces are collected and chained (see :func:`_chain_short`) so they clear the
-    length gate a solid stroke clears directly. A line that leans up to MAX_STROKE_SLOPE is emitted
-    as abutting level pieces, so each word is tested at the height where the line crosses it."""
+    length gate a solid stroke clears directly. A line leaning up to MAX_STROKE_SLOPE is emitted as
+    level pieces, so each word is tested where the line crosses it."""
     out, shorts = [], []
     for d in page.get_drawings():
         stroke_col, stroke_op = d.get("color"), d.get("stroke_opacity", 1.0)
@@ -154,7 +149,20 @@ def horiz_strokes(page):
         draws_line = stroked and not _paint_invisible(stroke_col, stroke_op)
         fill_col = d.get("fill")
         if not stroked and not _paint_invisible(fill_col, d.get("fill_opacity", 1.0)):
-            for r in _fill_subpaths(d["items"]):
+            # one box per subpath (an item not starting where the last ended starts a new one), so
+            # a compound path holding two bars is not judged by a union box spanning the text
+            groups, last = [], None
+            for it in d["items"]:
+                if it[0] not in ("l", "c"):
+                    continue
+                pts = list(it[1:])
+                if not groups or abs(pts[0].x - last.x) > 0.01 or abs(pts[0].y - last.y) > 0.01:
+                    groups.append([])
+                groups[-1].extend(pts)
+                last = pts[-1]
+            for g in groups:
+                r = pymupdf.Rect(min(p.x for p in g), min(p.y for p in g),
+                                 max(p.x for p in g), max(p.y for p in g))
                 if r.height <= MAX_RECT_H and r.width >= MIN_STROKE_LEN:
                     out.append((r.x0, r.x1, (r.y0 + r.y1) / 2, _rgb(fill_col),
                                 round(float(r.height), 2)))
@@ -206,26 +214,6 @@ def horiz_strokes(page):
     return out
 
 
-def _fill_subpaths(items):
-    """Bounding boxes of a fill-only path's line/curve subpaths. A subpath ends where the next item
-    does not start at the previous one's end, so a compound path holding two bars is judged bar by
-    bar: its union box would span the live text between them, or be too tall to read as a bar."""
-    groups, cur, last = [], [], None
-    for it in items:
-        if it[0] not in ("l", "c"):
-            continue
-        pts = list(it[1:])
-        if cur and (abs(pts[0].x - last.x) > 0.01 or abs(pts[0].y - last.y) > 0.01):
-            groups.append(cur)
-            cur = []
-        cur.extend(pts)
-        last = pts[-1]
-    if cur:
-        groups.append(cur)
-    return [pymupdf.Rect(min(p.x for p in g), min(p.y for p in g),
-                         max(p.x for p in g), max(p.y for p in g)) for g in groups]
-
-
 def _merged_intervals(wx0, wx1, ivals):
     """Clip intervals to [wx0, wx1] and merge overlaps. Returns (merged, covered_length)."""
     ivals = sorted((max(a, wx0), min(b, wx1)) for a, b in ivals)
@@ -241,58 +229,48 @@ def _merged_intervals(wx0, wx1, ivals):
     return merged, tot
 
 
-def _word_delimiter(c):
-    """PyMuPDF's own word-split rule for ``get_text("words")`` (``JM_is_word_delimiter``): control
-    characters and the space, no-break space, and the bidi embedding marks. A thin or narrow
-    no-break space does NOT split a word there, so it must not split one here either."""
-    o = ord(c) if len(c) == 1 else 33
-    return o <= 32 or o == 0xA0 or 0x202A <= o <= 0x202E
+# PyMuPDF's word-split characters for get_text("words") (JM_is_word_delimiter): controls, space,
+# no-break space and the bidi embedding marks. A thin or narrow no-break space does not split.
+_WORD_DELIMITERS = frozenset(map(chr, [*range(33), 0xA0, *range(0x202A, 0x202F)]))
 
 
 class _PageChars:
     """Per-character boxes for a page's ``get_text("words")`` entries, so a strike maps onto the
-    characters it actually crosses. Glyph widths vary ('M' is three 'i's wide), and the even-width
-    estimate this replaces put the end of 'December' inside the 'May' a redline printed straight
-    after it. Extracted lazily — one rawdict pass with the words flags, only on a page where some
-    word is struck — and shared by the detectors through ``page_strikes(method='both')``."""
+    characters it crosses. Built lazily from one rawdict pass and shared by the detectors in
+    ``page_strikes(method='both')``."""
 
     def __init__(self, page):
         self.page = page
         self._by_text = None
 
-    def _build(self):
-        by_text = {}
-        raw = self.page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_WORDS)
-        for block in raw.get("blocks", []):
-            for line in block.get("lines", []):
-                dx, dy = line.get("dir", (1.0, 0.0))
-                vertical = abs(dy) > abs(dx)
-                cur = []
-                for span in line.get("spans", []):
-                    for ch in span.get("chars", []):
-                        if _word_delimiter(ch["c"]):
-                            self._add(by_text, cur, vertical)
-                            cur = []
-                        else:
-                            cur.append(ch)
-                self._add(by_text, cur, vertical)
-        return by_text
-
-    @staticmethod
-    def _add(by_text, chars, vertical):
+    def _add(self, chars, vertical):
         if not chars:
             return
         boxes = [tuple(c["bbox"]) for c in chars]
         cx = (min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2
         cy = (min(b[1] for b in boxes) + max(b[3] for b in boxes)) / 2
-        by_text.setdefault("".join(c["c"] for c in chars), []).append((cx, cy, vertical, boxes))
+        text = "".join(c["c"] for c in chars)
+        self._by_text.setdefault(text, []).append((cx, cy, vertical, boxes))
 
     def lookup(self, word):
-        """``(vertical, [char bbox, ...])`` for one ``get_text("words")`` entry, characters in text
-        order; None when no extracted line reproduces the word (1 word in ~59k across the benchmark
-        corpus), and the caller falls back to an even split of the word box."""
+        """``(vertical, [char bbox, ...])`` for one ``get_text("words")`` entry, or None when no
+        extracted line reproduces it (the caller then splits the word box evenly)."""
         if self._by_text is None:
-            self._by_text = self._build()
+            self._by_text = {}
+            raw = self.page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_WORDS)
+            for block in raw.get("blocks", []):
+                for line in block.get("lines", []):
+                    dx, dy = line.get("dir", (1.0, 0.0))
+                    vertical = abs(dy) > abs(dx)
+                    cur = []
+                    for span in line.get("spans", []):
+                        for ch in span.get("chars", []):
+                            if ch["c"] in _WORD_DELIMITERS:
+                                self._add(cur, vertical)
+                                cur = []
+                            else:
+                                cur.append(ch)
+                    self._add(cur, vertical)
         x0, y0, x1, y1, txt = word[:5]
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         best = None
@@ -311,18 +289,12 @@ def _even_char_boxes(word):
 
 
 def _struck_span(txt, struck, cov, exact, enters=(False, False)):
-    """``(c0, c1, full)`` for a word from its per-character struck mask, or None when the marks do
-    not amount to a deletion. FULL only when every character is struck. Otherwise the largest
-    contiguous struck run is the partial span: a word struck in two separate places reports the
-    larger one and keeps the rest as live text, the safe side for a deletion detector.
-
-    `cov` is the word's coverage; the grazing guards (below PARTIAL_COV, or <2 chars below
-    STRUCK_COV) drop a stroke end or overshoot that only clips a neighbor. They apply where the
-    character boxes are estimated, or where the run sits at an edge the mark `enters` from
-    outside the word ``(from_left, from_right)``, which is what an overshoot looks like. A mark
-    that starts and ends inside a word whose `exact` character boxes are known is a deliberate
-    strike however small: a relettered '(ed)' strikes just the 'd', a recased 'aAppendix' the
-    'A'."""
+    """``(c0, c1, full)`` from a word's per-character struck mask, or None when the marks are not a
+    deletion. Full only when every character is struck; otherwise the longest struck run is the
+    partial span. The grazing guards (`cov` below PARTIAL_COV, or under 2 characters below
+    STRUCK_COV) drop a stroke end clipping a neighbor; they apply when the boxes are not `exact`
+    or the run touches an edge the mark `enters` from outside ``(from_left, from_right)``. A mark
+    inside a word with exact boxes is a strike however small ('(ed)' striking just the 'd')."""
     runs, start = [], None
     for i, s in enumerate([*struck, False]):
         if s and start is None:
@@ -341,31 +313,6 @@ def _struck_span(txt, struck, cov, exact, enters=(False, False)):
     return c0, c1, False
 
 
-def _x_struck(merged, bx0, bx1):
-    """Is a character spanning [bx0, bx1] struck by the merged stroke intervals?"""
-    if bx1 - bx0 <= 1e-6:              # zero-width (a combining mark): its position decides
-        return any(a <= bx0 <= b for a, b in merged)
-    covered = sum(max(0.0, min(b, bx1) - max(a, bx0)) for a, b in merged)
-    return covered >= CHAR_STRUCK_COV * (bx1 - bx0)
-
-
-def _spread_to_scripts(struck, boxes):
-    """Extend a strike over the sub/superscripts it runs into. Redline tools strike a reduced-size
-    run at its own height with a stub too short to pass as a stroke, so the '2' of a struck 'CO2'
-    shows no coverage at the line's height; a reduced-size character next to a struck one is struck
-    with it. An underlined (inserted) 'CO2' has no struck neighbor and stays clean."""
-    tall = max(b[3] - b[1] for b in boxes)
-    small = [b[3] - b[1] <= 0.8 * tall for b in boxes]
-    out = list(struck)
-    for order in (range(len(out)), range(len(out) - 1, -1, -1)):
-        prev = None
-        for i in order:
-            if not out[i] and small[i] and prev is not None and out[prev]:
-                out[i] = True
-            prev = i
-    return out
-
-
 def native_page_strikes(page, page_index, words=None, _chars=None):
     """Struck-word records for one native page, top to bottom then left to right (``markdown`` and
     ``passages`` read multi-column pages column by column instead).
@@ -382,8 +329,7 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
     """
     if words is None:
         words = page.get_text("words")
-    # The 3 pt width floor costs a struck narrow glyph ('I' at 10 pt) but holds off chart gridlines
-    # through glyphs: lifting it added 22 records on the benchmark corpus, all gridline FPs.
+    # below the 3 pt width floor, gridlines crossing glyphs outnumber real strikes
     words = [w for w in words
              if w[4].strip() and (w[3] - w[1]) >= 4 and (w[2] - w[0]) >= 3]
     if not words:
@@ -409,9 +355,24 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
         if found is not None and found[0]:
             continue        # vertical text: a horizontal line crosses it, it does not strike it
         boxes = found[1] if found is not None else _even_char_boxes(word)
-        struck = [_x_struck(merged, b[0], b[2]) for b in boxes]
+        struck = []
+        for bx0, _, bx1, _ in boxes:
+            if bx1 - bx0 <= 1e-6:      # zero-width (a combining mark): its position decides
+                struck.append(any(a <= bx0 <= b for a, b in merged))
+            else:
+                covered = sum(max(0.0, min(b, bx1) - max(a, bx0)) for a, b in merged)
+                struck.append(covered >= CHAR_STRUCK_COV * (bx1 - bx0))
         if found is not None:
-            struck = _spread_to_scripts(struck, boxes)
+            # a sub/superscript next to a struck character is struck with it: redline tools strike
+            # it at its own height with a stub too short to pass as a stroke
+            tall = max(b[3] - b[1] for b in boxes)
+            for order in (range(len(boxes)), range(len(boxes) - 1, -1, -1)):
+                prev = None
+                for i in order:
+                    if (not struck[i] and boxes[i][3] - boxes[i][1] <= 0.8 * tall
+                            and prev is not None and struck[prev]):
+                        struck[i] = True
+                    prev = i
         enters = (any(a < wx0 - 1.0 for a, *_ in mid), any(b > wx1 + 1.0 for _a, b, *_ in mid))
         span = _struck_span(txt, struck, cov, exact=found is not None, enters=enters)
         if span is None:
@@ -431,14 +392,10 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
 
 
 def _snap_rects_to_words(page, page_index, page_words, rects, tier, extra=None, chars=None):
-    """Snap strike rects (each ``(sx0, sy0, sx1, sy1)`` in unrotated text space) onto the page's
-    ``get_text("words")`` boxes: a character is struck when its center lies inside a rect, so the
-    struck characters are the ones the span/quad covers, in any of the four text directions. A rect
-    covering only part of a word ('Policy' of 'PolicyTo') becomes a partial strike; the vector
-    path's grazing guards drop overshoot into a neighbor word. A word with no character boxes falls
-    back to an even split along x. ``extra`` (if given) is merged into every emitted record —
-    carries annotation forensics for the annotation detector. Shared by
-    :func:`native_flag_strikes` and :func:`native_annot_strikes`."""
+    """Snap strike rects (``(sx0, sy0, sx1, sy1)``, unrotated text space) onto the page words: a
+    character is struck when its center lies inside a rect, in any of the four text directions. A
+    word without character boxes falls back to an even split along x. ``extra`` is merged into every
+    record (annotation forensics)."""
     if chars is None:
         chars = _PageChars(page)
     masks = {}                                 # (word tuple) -> per-character struck flags
@@ -453,7 +410,7 @@ def _snap_rects_to_words(page, page_index, page_words, rects, tier, extra=None, 
                 masks[key] = (found[1] if found is not None else None, [False] * len(txt))
             boxes, mask = masks[key]
             if boxes is None:
-                # no character boxes: the old same-line test plus an even split along x
+                # no character boxes: a same-line test plus an even split along x
                 if not (sy0 - 1 <= (wy0 + wy1) / 2 <= sy1 + 1):
                     continue
                 if (min(sx1, wx1) - max(sx0, wx0)) / max(wx1 - wx0, 1e-9) < FLAG_MIN_WCOV:
@@ -470,9 +427,8 @@ def _snap_rects_to_words(page, page_index, page_words, rects, tier, extra=None, 
     for (wx0, wy0, wx1, wy1, txt), (boxes, mask) in masks.items():
         if not any(mask):
             continue
-        # A mark "enters" an edge when a rect on the same line runs up to it from outside: MuPDF
-        # flags the first letter after a struck word ('a' of '~~procedures~~ arrangements') as a
-        # span of its own, flush against the struck one.
+        # a mark enters an edge when a rect on the same line runs up to it from outside (MuPDF
+        # flags the letter after a struck word as a span of its own)
         gap = 0.35 * (wy1 - wy0)                        # about a word space
         enters = [False, False]
         for (sx0, sy0, sx1, sy1) in rects:
@@ -510,12 +466,11 @@ def native_flag_strikes(page, page_index, words=None, _chars=None):
 
     Struck spans are snapped onto the page's ``get_text("words")`` boxes, so records carry the
     SAME exact word boxes and text as the vector detector — a span covering only part of a word
-    ('Policy' of 'PolicyTo') becomes a partial strike over exactly the flagged characters. Lines
-    in all four axis directions are read, so content drawn rotated (and turned upright by
-    /Rotate) is covered. The character set is MuPDF's own decision, which can include the
-    character a strike line ends against ('DecemberM' of 'DecemberMay'); 'vector' and 'both'
-    measure each character's coverage and stop at 'December'. Records: {page, text, chars,
-    char_span, partial, bbox_frac, coverage, tier='flag', verdict='struck', final=True}.
+    ('Policy' of 'PolicyTo') becomes a partial strike over exactly the flagged characters. All
+    four axis directions are read. The character set is MuPDF's own and can include the character
+    a strike ends against ('DecemberM'); 'vector' and 'both' stop at 'December'. Records: {page,
+    text, chars, char_span, partial, bbox_frac, coverage, tier='flag', verdict='struck',
+    final=True}.
 
     ``words`` optionally supplies this page's ``get_text("words")`` output (see
     :func:`native_page_strikes`); the ``get_text("dict", ...)`` styled-span pass this detector

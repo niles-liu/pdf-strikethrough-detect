@@ -68,11 +68,11 @@ class ScanConfig:
 
     ``rescue_clean_chains`` controls the chain gate's escape hatch (see :func:`classify_lines`). Set
     it False on degraded ruled forms, where it is a dominant false-positive source: corpus FP 113
-    default, 96 with this alone, 38 with the printed-rule veto alone, 25 with both — recall unchanged
-    throughout. Deliberately NOT bundled into ``ruled_forms()``; the two overlap on only 4 FPs and
-    each costs recall on its own terms. ⚠ Unlike the veto it needs calibrated confidences, so it is
-    **inert when ``confidence_gating`` is off**. Rationale and per-switch measurements: the
-    ``rescue_clean_chains`` entry in ``CHANGELOG.md``, reproducible with
+    default, 96 with this alone, 38 with the printed-rule veto alone, 25 with both — recall
+    unchanged throughout. Deliberately NOT bundled into ``ruled_forms()``; the two overlap on only
+    4 FPs and each costs recall on its own terms. ⚠ Unlike the veto it needs calibrated
+    confidences, so it is **inert when ``confidence_gating`` is off**. Rationale and per-switch
+    measurements: the ``rescue_clean_chains`` entry in ``CHANGELOG.md``, reproducible with
     ``benchmarks/confidence_veto.py --switches``."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # fill<FILL_STRONG: some struck word must OCR at or below this
@@ -84,8 +84,7 @@ class ScanConfig:
     rescue_clean_chains: bool = True  # let an EDITED page's clean-OCR glyph chain reach the CNN
 
     def __post_init__(self):
-        # Every number here is a confidence, a page fraction or a probability. Out of [0, 1] (85
-        # for 0.85), NaN, or a string, it used to drop every word silently or fail mid-page.
+        # every number here is a confidence, a page fraction or a probability: a float in [0, 1]
         for name in ("max_clean_conf", "inkfail_max_conf", "page_edited_min", "cnn_p_hi",
                      "cnn_p_lo"):
             v = getattr(self, name)
@@ -93,7 +92,7 @@ class ScanConfig:
                 continue
             if isinstance(v, bool) or not isinstance(v, numbers.Real) or not 0.0 <= v <= 1.0:
                 raise ValueError(f"ScanConfig.{name} must be a number in [0, 1], got {v!r}")
-            object.__setattr__(self, name, float(v))         # e.g. a np.float32 percentile
+            object.__setattr__(self, name, float(v))
         p_lo, p_hi = self.cnn_p_lo, self.cnn_p_hi
         if p_lo is not None and p_hi is not None and p_lo > p_hi:
             raise ValueError(f"ScanConfig.cnn_p_lo ({p_lo}) is above cnn_p_hi ({p_hi})")
@@ -266,11 +265,8 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
                 continue
             ink_ok = not in_band
             # Strike-geometry corroboration (0.9.1): a genuine strike crosses the x-height (in-band)
-            # and keeps substantial ink on BOTH sides. The DI-confidence veto
-            # (detect.apply_cnn_verdict) uses this, so only two-sided geometry earns a
-            # high-OCR-confidence word a reprieve. Until 0.12.0 it also required the line to shatter
-            # on the glyphs (fill < FILL_STRONG), which vetoed every crisp printed strike on a clean
-            # scan: the bar stays solid and DI reads the word well. One-sided rules still fail here.
+            # and keeps substantial ink on BOTH sides, solid or broken up. The DI-confidence veto
+            # (detect.apply_cnn_verdict) spares a high-OCR-confidence word only with it.
             strike_geom = in_band and both_ink
             wbox = (wx0, wy0, wx1, wy1)
             if wcov >= MIN_WORD_XOVER:

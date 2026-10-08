@@ -31,9 +31,7 @@ def _local(tag):
 
 
 def _attr(el, name):
-    """An attribute by local name, whatever its namespace: transitional documents use the
-    2006 wordprocessingml namespace, Strict OOXML another (lookups by the transitional name missed
-    every strike in a Strict file)."""
+    """An attribute by local name, so Strict OOXML (another namespace) reads like transitional."""
     for key, value in el.attrib.items():
         if _local(key) == name:
             return value
@@ -61,58 +59,15 @@ def _toggles(rpr):
     return out
 
 
-class _Styles:
-    """Strike toggles defined by ``word/styles.xml``: per style (following ``basedOn``) and the
-    document defaults. Word resolves a toggle property such as strike from direct formatting if the
-    run sets it, else from the paragraph and character styles — which TOGGLE one another — else
-    from the defaults (ECMA-376 §17.7.3)."""
-
-    def __init__(self, xml):
-        self.by_id, self.based_on, self.default_para = {}, {}, None
-        self.defaults = {}
-        if xml is None:
-            return
-        root = ET.fromstring(xml)
-        for el in root:
-            tag = _local(el.tag)
-            if tag == "docDefaults":
-                self.defaults = _toggles(_child(_child(el, "rPrDefault"), "rPr"))
-            elif tag == "style":
-                sid = _attr(el, "styleId")
-                if sid is None:
-                    continue
-                self.by_id[sid] = _toggles(_child(el, "rPr"))
-                base = _child(el, "basedOn")
-                if base is not None:
-                    self.based_on[sid] = _attr(base, "val")
-                if _attr(el, "type") == "paragraph" and (_attr(el, "default") or "").lower() in (
-                        "1", "true", "on"):
-                    self.default_para = sid
-
-    def resolve(self, style_id):
-        """``{kind: bool}`` a style sets, nearest definition along its ``basedOn`` chain first."""
-        out, seen = {}, set()
-        while style_id is not None and style_id not in seen:
-            seen.add(style_id)
-            for kind, on in self.by_id.get(style_id, {}).items():
-                out.setdefault(kind, on)
-            style_id = self.based_on.get(style_id)
-        return out
-
-    def strike(self, direct, para_style, char_style):
-        """The run's effective strike kind ('strike' / 'dstrike') or None."""
-        para = self.resolve(para_style if para_style is not None else self.default_para)
-        char = self.resolve(char_style)
-        for kind in _KINDS:
-            if kind in direct:
-                on = direct[kind]
-            elif kind in para or kind in char:
-                on = para.get(kind, False) != char.get(kind, False)        # styles toggle
-            else:
-                on = self.defaults.get(kind, False)
-            if on:
-                return kind
-        return None
+def _resolve(styles, style_id):
+    """``{kind: bool}`` a style sets, nearest definition along its ``basedOn`` chain first."""
+    out, seen = {}, set()
+    while style_id is not None and style_id not in seen:
+        seen.add(style_id)
+        for kind, on in styles["by_id"].get(style_id, {}).items():
+            out.setdefault(kind, on)
+        style_id = styles["based_on"].get(style_id)
+    return out
 
 
 def _run_text(run):
@@ -128,8 +83,22 @@ def _run_record(run, para, del_info, styles, para_style):
         return None
     rpr = _child(run, "rPr")
     rstyle = _child(rpr, "rStyle")
-    fmt = styles.strike(_toggles(rpr), para_style,
-                        _attr(rstyle, "val") if rstyle is not None else None)
+    direct = _toggles(rpr)
+    # Word takes strike from the run itself, else from its paragraph and character styles (which
+    # toggle one another), else from the document defaults (ECMA-376 §17.7.3)
+    in_para = _resolve(styles, para_style if para_style is not None else styles["default_para"])
+    in_char = _resolve(styles, _attr(rstyle, "val") if rstyle is not None else None)
+    fmt = None
+    for kind in _KINDS:
+        if kind in direct:
+            on = direct[kind]
+        elif kind in in_para or kind in in_char:
+            on = in_para.get(kind, False) != in_char.get(kind, False)
+        else:
+            on = styles["defaults"].get(kind, False)
+        if on:
+            fmt = kind
+            break
     if del_info is None and fmt is None:
         return None
     rec = {"para": para, "text": text, "chars": text, "char_span": (0, len(text)),
@@ -151,11 +120,8 @@ def _run_record(run, para, del_info, styles, para_style):
 def _collect(elem, state, para, del_info, para_style, styles, out, in_box=False):
     """Depth-first walk in document order, tracking the enclosing paragraph's index and style and
     whether we are inside a tracked deletion (``w:del``, whose author/date apply to the runs it
-    wraps). A text box's paragraphs keep their own styles but not their own index: a struck run in
-    one reports the body paragraph the box is anchored in, so the body's numbering is the same
-    with or without text boxes. Of a markup-compatibility block (``mc:AlternateContent``) only the
-    first choice is walked, since Word writes the same text box twice — as DrawingML and as a VML
-    fallback."""
+    wraps). A run in a text box reports the body paragraph the box is anchored in. Of an
+    ``mc:AlternateContent`` only the first choice is walked: Word writes a text box twice."""
     tag = _local(elem.tag)
     if tag == "p":
         if not in_box:
@@ -202,9 +168,23 @@ def strikethroughs_in_docx(source) -> "list[dict]":
     except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as e:
         # a damaged, truncated, encrypted or oddly compressed archive
         raise ValueError(f"not a readable .docx ({type(e).__name__}: {e}): {label}") from e
+    # strike toggles per style (with its basedOn parent) and the document defaults
+    styles = {"by_id": {}, "based_on": {}, "default_para": None, "defaults": {}}
     try:
         root = ET.fromstring(xml)
-        styles = _Styles(styles_xml)
+        for el in ET.fromstring(styles_xml) if styles_xml is not None else ():
+            tag = _local(el.tag)
+            if tag == "docDefaults":
+                styles["defaults"] = _toggles(_child(_child(el, "rPrDefault"), "rPr"))
+            elif tag == "style" and _attr(el, "styleId") is not None:
+                sid = _attr(el, "styleId")
+                styles["by_id"][sid] = _toggles(_child(el, "rPr"))
+                base = _child(el, "basedOn")
+                if base is not None:
+                    styles["based_on"][sid] = _attr(base, "val")
+                if (_attr(el, "type") == "paragraph"
+                        and (_attr(el, "default") or "").lower() in ("1", "true", "on")):
+                    styles["default_para"] = sid
     except ET.ParseError as e:
         raise ValueError(f"not a readable .docx (malformed XML: {e}): {label}") from e
     out: list[dict] = []

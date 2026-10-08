@@ -150,9 +150,8 @@ def provenance_text(result, template="[deleted: {}]") -> str:
     them). For RAG / indexing where a silent deletion is the hazard — the deleted text stays
     visible-as-deleted so a downstream index records that something *was* struck.
 
-    `result` must carry ``markdown`` (i.e. ``include_markdown=True``, the default) — one without it
-    raises ValueError, where it used to return '' and lose the deleted text this exists to keep;
-    `template` is a ``str.format`` pattern receiving the struck text."""
+    `result` must carry ``markdown`` (i.e. ``include_markdown=True``, the default; ValueError
+    otherwise); `template` is a ``str.format`` pattern receiving the struck text."""
     if "markdown" not in result:
         raise ValueError("provenance_text needs a result with 'markdown'; run detection with "
                          "include_markdown=True (the default)")
