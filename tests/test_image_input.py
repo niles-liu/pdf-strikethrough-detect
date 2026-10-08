@@ -174,6 +174,20 @@ def test_caller_built_line_without_len_in_is_scored():
     classify_lines([line], words, gray, config=st.ScanConfig.confidence_free())   # no KeyError
 
 
+@pytest.mark.parametrize("kw", [{"cnn_p_hi": 85}, {"cnn_p_hi": float("nan")},
+                                {"cnn_p_hi": "0.9"}, {"max_clean_conf": 1.5},
+                                {"cnn_p_hi": 0.2, "cnn_p_lo": 0.6}])
+def test_scan_config_rejects_out_of_range_settings(kw):
+    with pytest.raises(ValueError):
+        st.ScanConfig(**kw)
+
+
+def test_scan_config_presets_still_build():
+    for cfg in (st.ScanConfig(), st.ScanConfig.confidence_free(), st.ScanConfig.recall_first(),
+                st.ScanConfig.precision_first(), st.ScanConfig.ruled_forms()):
+        assert isinstance(cfg, st.ScanConfig)
+
+
 @pytest.mark.parametrize("dpi", [0, -200])
 def test_non_positive_dpi_is_rejected(dpi):
     gray, _, words = _page()
@@ -210,3 +224,7 @@ def test_tiff_orientation_is_applied_on_load_without_a_warning():
     res = st.detect_image_file(buf.getvalue(), words=words)
     assert _struck(res) == ["struck"] and not any("EXIF" in w for w in res["warnings"])
 
+
+def test_scan_config_takes_numpy_numbers_and_stores_floats():
+    cfg = st.ScanConfig(cnn_p_hi=np.float32(0.9), max_clean_conf=np.float64(0.95))
+    assert type(cfg.cnn_p_hi) is float and type(cfg.max_clean_conf) is float

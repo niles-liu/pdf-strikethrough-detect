@@ -20,6 +20,11 @@ All notable changes to this project are documented here. The format follows
   of change was checked against the rendered pages. `confirmation_rate.py` still reports 99.8% of
   vector detections confirmed by the flag signal, and the per-document floor rose from 92.5% to
   99.6%.
+- **`detect_pdf(ocr=...)` defaults to `ScanConfig.confidence_free()`**, as `detect_image_file`,
+  `words_by_page=` and the CLI already did. The default was the Azure DI calibration, whose
+  confidence veto dropped real strikes on RapidOCR's near-1.0 confidences, so the same page gave
+  different answers through the API and the CLI. `di_result=` keeps the DI calibration; pass
+  `scan_config=ScanConfig()` for the old behaviour with `ocr=`.
 - **The Azure DI calibration keeps crisp strikes.** 0.9.1's confidence veto (issue #4) drops a word
   DI reads above `max_clean_conf` unless the line through it is strike geometry, and that required
   the line to break up on the glyphs. A clean scan of a printed strike stays solid and DI reads the
@@ -29,6 +34,14 @@ All notable changes to this project are documented here. The format follows
   positives at default (109 → 113) and with the chain switch alone (92 → 96), none under
   `ruled_forms()` (38) or with both switches (25); recall is unchanged at 2/3. A one-sided rule
   still earns no reprieve.
+- **Arguments that used to be misread now raise at the call.** `pages=` rejects a string (`"12"`
+  meant pages 1 and 2), a bool and a float; `words_by_page` rejects keys outside the document
+  (1-based keys put page 1's words on page 0), a flat list of words, and use together with
+  `di_result`; `method`, `on_missing_ocr` and a non-positive `dpi` are checked even when no page
+  would have used them; `ScanConfig` rejects values outside [0, 1] (`cnn_p_hi=85`), NaN and
+  strings; `Word` rejects a non-finite box. `provenance_text` raises on a result without
+  `markdown` instead of returning `''`, and the calibration helpers raise on a label that is not
+  struck/clean, True/False or 1/0 instead of counting it.
 
 ### Added
 - **`schema_version` on every `detect_pdf` / `detect_image_file` result**, the same number the CLI
@@ -37,6 +50,11 @@ All notable changes to this project are documented here. The format follows
   Python result and the CLI share one number. It versions the documented keys, not the detections.
   The CLI's `--jsonl` error records (a file that failed to process) now carry it too; they were the
   one payload without it.
+- **An open binary file is accepted wherever a path is** — `detect_pdf` / `open_pdf` /
+  `strikethroughs_in_pdf` (an `io.BytesIO` failed with PyMuPDF's "bad filename") and
+  `detect_image_file`.
+- **A warning on PDFs MuPDF had to repair to open.** A truncated file used to pass
+  `--fail-if-found` as "1 page, 0 struck words" with nothing in `warnings`.
 
 ### Fixed
 - **`rapidocr_backend()` crashed on a page where OCR found no text.** RapidOCR (3.9 at least) then
@@ -112,6 +130,15 @@ All notable changes to this project are documented here. The format follows
   rounded manifests and StrikeNet's saturation at 1.0 produce often, and returned a threshold that
   missed its target. **`threshold_for_recall`** lost a positive to floating-point rounding
   (1 - 0.9 = 0.0999...) and returned a lower threshold than the highest that qualifies.
+
+#### Cloud OCR adapters
+- **An Azure DI result for a page range put its words on the wrong pages**, keyed by list position
+  rather than `pageNumber`; Document AI shards (which start mid-document) did the same. Both are now
+  keyed by page number.
+- **Words were dropped silently**: Azure DI polygons given as `{x, y}` points (the Python SDK's
+  `to_dict()` shape) and Document AI pixel vertices on a page with no `dimension`. Points are read
+  now, and a page with words but no usable box raises `ValueError`, as a page with no width
+  already did.
 
 ### Security
 - **`ensure_model` could load content it had not verified.** An empty digest skipped the check,

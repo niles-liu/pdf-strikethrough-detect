@@ -135,9 +135,10 @@ originals as ground truth (3 documents, 24 pages, 2,170 known strikes; reproduce
 | **RapidOCR** | `pip`, no binary | **97%** of known strikes | ~4× coarser (phrase-level) |
 | Tesseract | needs system binary | not benchmarked here | genuine word-level |
 
-Use `ScanConfig.confidence_free()` with RapidOCR (its confidences cluster near 1.0 and don't
-separate struck from clean text); the default `ScanConfig()` is calibrated to Azure DI, whose
-struck words drop to 0.43–0.94. Across backends the scanned path recovers **95–97% of the exact
+`detect_pdf` runs confidence-free (`ScanConfig.confidence_free()`) whenever the words come from an
+`ocr` backend or `words_by_page` — RapidOCR's confidences cluster near 1.0 and don't separate struck
+from clean text — and uses the Azure DI calibration (`ScanConfig()`), whose struck words drop to
+0.43–0.94, with `di_result`. Across backends the scanned path recovers **95–97% of the exact
 native strike set** — the geometry + CNN, not the OCR engine, carry the detection.
 
 ## Beyond PDFs — images, Word docs, cloud OCR

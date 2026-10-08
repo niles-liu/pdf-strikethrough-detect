@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import numbers
+import operator
 import os
 import time
 import warnings as _warnings
@@ -54,14 +55,16 @@ def _raise_if_encrypted(doc):
 
 
 def _open_doc(source):
-    """Open `source` (path, bytes, or already-open fitz document) as a fitz document, applying the
-    encryption gate. Returns ``(doc, owned)`` — `owned` is True when we opened it and the caller
-    must close it. On EncryptedPdfError a doc WE opened is closed before raising, so no handle
-    leaks (which would lock the file on Windows)."""
+    """Open `source` (path, bytes, an open binary file, or an already-open fitz document) as a
+    fitz document, applying the encryption gate. Returns ``(doc, owned)`` — `owned` is True when
+    we opened it and the caller must close it. On EncryptedPdfError a doc WE opened is closed
+    before raising, so no handle leaks (which would lock the file on Windows)."""
     if hasattr(source, "page_count"):
         doc, owned = source, False
     elif isinstance(source, (bytes, bytearray)):
         doc, owned = pymupdf.open(stream=bytes(source), filetype="pdf"), True
+    elif hasattr(source, "read"):                         # io.BytesIO, open(path, "rb")
+        doc, owned = pymupdf.open(stream=source.read(), filetype="pdf"), True
     else:
         doc, owned = pymupdf.open(source), True
     try:
@@ -376,6 +379,8 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     if words is not None and len(frames) > 1 and wbp is None:
         raise ValueError("words= covers a single-frame image; for a multi-page TIFF pass an ocr "
                          "backend or words_by_page={frame: [...]}")
+    if wbp is not None:
+        _check_words_by_page(wbp, len(frames), "frame")
     if scan_config is None:
         # An image has no Azure-DI calibration source; every realistic word source here (rapidocr/
         # tesseract via ocr=, Textract/DocAI via words_by_page, a raw words= list) carries
@@ -500,8 +505,11 @@ def _match_native_seq(page, recs, words=None):
 
 
 def _di_pages(di_result):
-    """Normalize a user-supplied Azure DI result to its pages list. Accepts the REST JSON dict,
-    a {'analyzeResult': {...}} envelope, or an SDK object exposing .as_dict()."""
+    """Normalize a user-supplied Azure DI result to ``{0-based PDF page: DI page}``. Accepts the
+    REST JSON dict, a {'analyzeResult': {...}} envelope, or an SDK object exposing .as_dict().
+    Pages are keyed by their own ``pageNumber`` (1-based), falling back to list position: a run
+    over a page range (``pages="2-3"``) returns only those pages, and keying by position put page
+    2's words on page 0."""
     if di_result is None:
         return None
     d = di_result
@@ -512,7 +520,12 @@ def _di_pages(di_result):
             d = d["analyzeResult"]
         pages = d.get("pages")
         if isinstance(pages, list):
-            return pages
+            out = {}
+            for i, page in enumerate(pages):
+                num = page.get("pageNumber", page.get("page_number")) if hasattr(page, "get") \
+                    else None
+                out[num - 1 if isinstance(num, int) and num >= 1 else i] = page
+            return out
         raise ValueError("di_result has no 'pages' list — pass the analyze result JSON "
                          "(the dict with pages/paragraphs/...) or the SDK result's .as_dict()")
     raise TypeError(
@@ -540,15 +553,27 @@ def _resolve_native_method(method, native_method):
 
 def _normalize_pages(pages, page_count):
     """Coerce a user ``pages=`` value to a sorted list of unique, in-range 0-based indices.
-    Accepts any iterable of ints (negatives index from the end, like list slicing). Out-of-range
-    indices raise IndexError so a typo fails loudly instead of silently detecting nothing."""
+    Accepts an int or any iterable of ints (negatives index from the end, like list slicing).
+    Out-of-range indices raise IndexError so a typo fails loudly instead of silently detecting
+    nothing; a string, a bool or a float raises TypeError (``pages="12"`` used to mean pages 1
+    and 2, and 1.9 meant page 1)."""
     if pages is None:
         return list(range(page_count))
-    if isinstance(pages, int):
-        pages = [pages]
+    if isinstance(pages, (str, bytes, bytearray, bool)):
+        raise TypeError(f"pages= takes 0-based page indices (an int or an iterable of ints), "
+                        f"got {pages!r}")
+    try:
+        pages = [operator.index(pages)]
+    except TypeError:
+        pass                                       # not a single int: iterate it below
     out = set()
     for p in pages:
-        q = int(p)
+        if isinstance(p, bool):
+            raise TypeError(f"pages= entries must be integers, got {p!r}")
+        try:
+            q = operator.index(p)
+        except TypeError:
+            raise TypeError(f"pages= entries must be integers, got {p!r}") from None
         if q < 0:
             q += page_count
         if not (0 <= q < page_count):
@@ -561,12 +586,29 @@ def _normalize_pages(pages, page_count):
 def _normalize_words_by_page(words_by_page):
     """Coerce a ``words_by_page`` value to a ``{0-based page: list[Word]}`` dict. Accepts that
     dict directly (e.g. from ``words_from_textract``/``words_from_docai``) or any sequence indexed
-    by page. None passes through."""
+    by page. None passes through; a flat list of words (one page's worth) raises TypeError."""
     if words_by_page is None:
         return None
     if isinstance(words_by_page, dict):
         return {int(k): v for k, v in words_by_page.items()}
-    return {i: v for i, v in enumerate(words_by_page)}
+    seq = list(words_by_page)
+    if seq and hasattr(seq[0], "bbox"):
+        raise TypeError("words_by_page is a flat list of words; it maps pages to word lists — "
+                        "pass {0: words} (or words= for a single-frame image)")
+    return dict(enumerate(seq))
+
+
+def _check_words_by_page(wbp, count, unit="page"):
+    """Reject a ``words_by_page`` whose keys fall outside the document — 1-based keys used to put
+    page 1's words on page 0 and drop the last page silently — or whose values are not word
+    lists."""
+    bad = sorted(k for k in wbp if not 0 <= k < count)
+    if bad:
+        raise ValueError(f"words_by_page has {unit} key(s) {bad} outside the {count}-{unit} "
+                         f"input; keys are 0-based {unit} indices")
+    for k, v in wbp.items():
+        if isinstance(v, (str, bytes)) or not all(hasattr(w, "bbox") for w in v):
+            raise TypeError(f"words_by_page[{k}] must be a list of pdf_strikethrough.ocr.Word")
 
 
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
@@ -576,23 +618,27 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
-        source: path, bytes, or open fitz document. Encrypted PDFs raise EncryptedPdfError.
+        source: path, bytes, an open binary file (read once, from its current position), or an
+            open fitz document. Encrypted PDFs raise EncryptedPdfError.
         ocr: an OCR backend ``(image_ndarray) -> list[Word]`` (see ``pdf_strikethrough.ocr``).
             Required only if the document has scanned pages and `di_result` is not given.
-        scan_config: ``ScanConfig`` for the scanned classifier (default: Azure-DI calibration;
-            pass ``ScanConfig.confidence_free()`` for RapidOCR and other weak-confidence engines).
+        scan_config: ``ScanConfig`` for the scanned classifier. Default: Azure-DI calibration
+            with `di_result`, else ``ScanConfig.confidence_free()`` — the confidences an `ocr`
+            backend or `words_by_page` carries are not calibrated to the classifier. This matches
+            ``detect_image_file`` and the CLI; ``ocr=`` used to default to the DI calibration,
+            whose confidence veto dropped real strikes on RapidOCR's near-1.0 confidences.
         dpi: raster resolution for scanned pages (detector tunables rescale automatically;
-            calibrated/validated at 200).
+            calibrated/validated at 200). Must be positive.
         di_result: a pre-fetched Azure Document Intelligence analyze result as a DICT — the REST
             JSON, an {'analyzeResult': ...} envelope, or ``sdk_result.as_dict()``. When given,
             its per-page words are used instead of running `ocr` (and `scan_config` defaults to
-            Azure-DI calibration).
+            Azure-DI calibration). Pages are matched by their ``pageNumber``, so a result for a
+            page range lines up with the PDF.
         words_by_page: pre-fetched OCR words as ``{0-based page: list[Word]}`` (or a sequence
             indexed by page) — the provider-neutral counterpart to `di_result` for any cloud/OCR
             engine, e.g. ``words_from_textract(resp)`` / ``words_from_docai(doc)``. Used for the
-            scanned pages it covers, in preference to running `ocr`. Since these confidences
-            aren't calibrated to the classifier, `scan_config` defaults to
-            ``ScanConfig.confidence_free()`` when it's given (and `di_result` isn't).
+            scanned pages it covers, in preference to running `ocr`. Keys outside the document
+            raise ValueError; pass at most one of `di_result` / `words_by_page`.
         include_markdown: also assemble struck-aware ``markdown``, surviving ``clean_text``, and
             grouped deletion ``passages`` (cheap; reuses the words already extracted).
         method: native-page detector — 'vector' (default), 'flag', 'annot', or 'both' — see
@@ -619,26 +665,39 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
          plus ``pages`` when a subset was requested). See ``pdf_strikethrough.types.DetectResult``.
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
-    records (not by stripping the markdown), so the two always agree.
+    records (not by stripping the markdown), so the two always agree. A PDF that MuPDF had to
+    repair to open carries a warning: its text or drawings may be incomplete, so finding nothing
+    on it is weaker evidence than on an intact file.
     """
     method = _resolve_native_method(method, native_method)
+    if method not in native.METHODS:
+        raise ValueError(f"unknown method {method!r} (use one of {', '.join(native.METHODS)})")
+    if on_missing_ocr not in ("raise", "skip"):
+        raise ValueError(f"on_missing_ocr must be 'raise' or 'skip', got {on_missing_ocr!r}")
+    _check_dpi(dpi)
+    if di_result is not None and words_by_page is not None:
+        raise ValueError("pass only one of di_result= / words_by_page= (each supplies the words "
+                         "for scanned pages, with a different calibration)")
+    wbp = _normalize_words_by_page(words_by_page)
+    di_pages = _di_pages(di_result)
     doc, close = _open_doc(source)
     try:
         page_indices = _normalize_pages(pages, doc.page_count)
+        if wbp is not None:
+            _check_words_by_page(wbp, doc.page_count)
         sources = {p: classify_page_source(doc[p]) for p in page_indices}
         log.debug("detect_pdf: %d-page doc, processing %d page(s); native method=%r",
                   doc.page_count, len(page_indices), method)
-        di_pages = _di_pages(di_result)
-        wbp = _normalize_words_by_page(words_by_page)
         if scan_config is None:
-            if di_pages is not None:
-                scan_config = ScanConfig.azure_di()
-            elif wbp is not None:
-                scan_config = ScanConfig.confidence_free()
-            else:
-                scan_config = ScanConfig()
+            scan_config = (ScanConfig.azure_di() if di_pages is not None
+                           else ScanConfig.confidence_free())
         meta = None
         words, warns = [], []
+        if getattr(doc, "is_repaired", False):
+            msg = ("the PDF is damaged and MuPDF repaired it to open it; text or drawings may be "
+                   "missing, so a page with no strikes found is not proof that it has none")
+            _warnings.warn(msg, stacklevel=2)
+            warns.append(msg)
         page_md, page_clean, passages = [], [], []
         total = len(page_indices)
         for done, pno in enumerate(page_indices, start=1):
@@ -662,7 +721,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 if note:
                     _warnings.warn(note, stacklevel=2)
                     warns.append(note)
-                if di_pages is not None and pno < len(di_pages):
+                if di_pages is not None and pno in di_pages:
                     page_words = words_from_azure_di(di_pages[pno])
                 elif wbp is not None and pno in wbp:
                     page_words = wbp[pno]
@@ -701,8 +760,9 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                     if include_markdown:
                         seq = _match_native_seq(page, recs, words=nat_words)
                 elif di_pages is not None and on_missing_ocr != "skip":
+                    covered = ", ".join(str(p) for p in sorted(di_pages)) or "none"
                     raise ValueError(
-                        f"di_result has {len(di_pages)} pages but page {pno} of the "
+                        f"di_result covers pages [{covered}] (0-based) but page {pno} of the "
                         f"{doc.page_count}-page document is scanned; pass a full di_result "
                         f"or an ocr backend, or use on_missing_ocr='skip'")
                 elif on_missing_ocr == "skip":
@@ -724,10 +784,14 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             if progress is not None:
                 progress(done, total, pno)
 
+        if isinstance(source, (str, os.PathLike)):
+            src_name = str(source)
+        else:                                  # bytes -> None; an open file or doc -> its name
+            name = None if isinstance(source, (bytes, bytearray)) else getattr(source, "name", None)
+            src_name = str(name) if name else None
         result = {
             "schema_version": SCHEMA_VERSION,
-            "source": None if isinstance(source, (bytes, bytearray)) else (
-                str(source) if close else getattr(source, "name", None)),
+            "source": src_name,
             "page_count": doc.page_count,
             "page_sources": [sources[p] for p in page_indices],
             "words": words,
