@@ -22,6 +22,7 @@ rests on geometry + the CNN alone.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -37,12 +38,20 @@ class Word:
         object.__setattr__(self, "bbox", tuple(float(v) for v in self.bbox))
         if len(self.bbox) != 4:
             raise ValueError(f"Word.bbox must be (x0, y0, x1, y1); got {self.bbox!r}")
+        if not all(math.isfinite(v) for v in self.bbox):
+            raise ValueError(f"Word.bbox must be finite page fractions, got {self.bbox!r}")
         # a box in pixel coordinates would sail through the whole scanned pipeline and quietly
         # report every word clean — reject it at construction (mirrors cnn.word_crop_px's >1.5 gate)
         if max(abs(v) for v in self.bbox) > 1.5:
             raise ValueError(
                 f"Word.bbox must be normalized page fractions in [0,1], got {self.bbox!r} "
                 "(these look like pixel coordinates — divide by the image width/height)")
+        # a box given as (x1, y0, x0, y1) etc. was never matched to any stroke; order its corners
+        x0, y0, x1, y1 = self.bbox
+        object.__setattr__(self, "bbox", (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+        # a numpy float32 confidence broke json.dump in dump_crops; carry a plain float
+        if self.confidence is not None:
+            object.__setattr__(self, "confidence", float(self.confidence))
 
 
 def _bbox_from_points(points, w, h):

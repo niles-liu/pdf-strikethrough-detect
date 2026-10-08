@@ -158,11 +158,11 @@ def test_image_frames_reads_and_omits_dpi_metadata():
     from pdf_strikethrough import detect as D
     buf = io.BytesIO()
     Image.new("L", (100, 50), 255).save(buf, format="PNG", dpi=(150, 150))
-    frames = D._image_frames(buf.getvalue())
-    assert len(frames) == 1 and frames[0][1] == 150
+    frames = D._image_frames(buf.getvalue())                         # (gray, upright, dpi)
+    assert len(frames) == 1 and frames[0][2] == 150 and frames[0][1] is None
     buf2 = io.BytesIO()
     Image.new("L", (10, 10)).save(buf2, format="PPM")                # PPM carries no dpi
-    assert D._image_frames(buf2.getvalue())[0][1] is None
+    assert D._image_frames(buf2.getvalue())[0][2] is None
 
 
 # ------------------------------------------------------------------------- R-docx

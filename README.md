@@ -146,7 +146,8 @@ The same detection reaches inputs that never were a born-digital PDF:
 
 ```python
 # Raster image files (.png/.jpg/.tiff, incl. multi-page TIFF) — photos, faxes, scans.
-# Every frame is a scanned page, so it needs OCR; DPI comes from image metadata (else 200).
+# Every frame is a scanned page, so it needs OCR; DPI comes from image metadata (else 200 — a
+# placeholder 72/96 counts as none), and a phone photo's EXIF rotation is applied before OCR.
 res = st.detect_image_file("scan.tiff", ocr=rapidocr_backend())
 
 # Word .docx — strike formatting (w:strike/w:dstrike) + tracked deletions (w:del, with author/date).

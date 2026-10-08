@@ -72,6 +72,27 @@ All notable changes to this project are documented here. The format follows
 - **Annotation forensics:** a gray or CMYK `/C` colour came through as a 1- or 4-tuple where an RGB
   triple is documented, and a `/NoView` annotation, which paints nothing, was reported.
 
+#### Scanned path and image files
+- **A camera's or screenshot tool's 72/96 dpi metadata made strikes vanish.** `detect_image_file`
+  scaled every geometry tunable by it, so a 200-dpi photo labelled 72 dpi found nothing. Metadata
+  below 100 dpi is now read as absent (200 dpi, with a warning); pass `dpi=` to override.
+- **Image files missed strikes the same page found as a PDF or an array.** Frames went through
+  PIL's own gray conversion, not the luminance conversion fixed for issue #15 (a green highlighter
+  read 150 instead of 219); transparency was dropped, so ink on a transparent PNG read as a black
+  page; a phone photo stored rotated was processed sideways. Frames now go through `to_gray_u8`,
+  alpha is composited over white, and the EXIF rotation is applied when the package runs `ocr=`
+  itself (supplied words are read against the image as stored, with a warning).
+- **Wide integer arrays read as black.** `to_gray_u8` divided int32/int64 input by the dtype
+  maximum; it now scales by the data range (8-bit values pass through, 16-bit divide by 257).
+  `score_word` on a 16-bit page scored the crop as blank and now converts it first.
+- **`detect_image_file` treated an open file as a PIL image** (`AttributeError`) and left files it
+  opened open, so a file that failed to decode could not be deleted on Windows.
+- **`cnn_prob` was missing**, not `None` as documented, on a scanned record whose crop was too small
+  to score.
+- **`score_struck` raised `KeyError: 'len_in'`** on caller-built line dicts, which
+  `classify_lines` accepts; **`dump_crops` crashed** on numpy float confidences from a custom OCR
+  backend (`Word` now stores a plain float).
+
 ### Documented (not yet fixed)
 - `markdown` marks a partial strike in place (`~~semi-~~monthly`); a strict CommonMark renderer
   does not treat a `~~` that touches punctuation this way as a delimiter, and a struck word that
@@ -85,6 +106,7 @@ All notable changes to this project are documented here. The format follows
   22 records on the benchmark corpus, all chart gridlines crossing glyphs, and no real strike.
 - The underline exclusion band comes from the font's box, so for some fonts (Courier, Symbol) a line
   at the baseline still counts as a strike.
+- On a scan, a strike over the first letters of a long word can read as a full-word strike.
 
 ## [0.11.0] — 2026-09-04
 

@@ -354,7 +354,7 @@ def score_struck(rec, tagged, use_conf=True):
     With `use_conf=False` (confidence-free engines) the OCR-damage term is dropped and the
     geometry terms renormalize to keep the same [0,1] range and tier thresholds."""
     lines = [tagged[li] for li in rec["line_idx"]]
-    length = max(l["len_in"] for l in lines)
+    length = max(l.get("len_in", 0.0) for l in lines)   # optional on caller-built lines
     fill = max(l.get("fill", 0.8) for l in lines)
     row_support = max(sum(1 for h in l["struck"] if h["strong"]) for l in lines)
     s = 0.25 * min(1.0, length / 0.75)

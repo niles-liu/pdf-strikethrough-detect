@@ -21,6 +21,8 @@ import threading
 import numpy as np
 from PIL import Image
 
+from .lines import to_gray_u8
+
 CROP_H, CROP_W = 32, 160          # net input: ink-positive [0,1], height-normalized isotropically
 PAD_X, PAD_Y = 5, 7               # crop margin around the word box, in PIXELS
 
@@ -273,9 +275,14 @@ def score_crops(std_crops, batch_size=512):
 
 
 def score_word(gray, bbox_frac):
-    """Convenience: grayscale page (0=black..255=white) + word box in [0,1] PAGE FRACTIONS ->
-    strike probability (or None if the box is too small to crop). Raises ValueError if the box
-    looks like pixel coordinates."""
+    """Convenience: page image + word box in [0,1] PAGE FRACTIONS -> strike probability (or None
+    if the box is too small to crop). A color or wide-integer page goes through the detectors' own
+    conversion (:func:`~pdf_strikethrough.lines.to_gray_u8`) first: a 16-bit page used to reach
+    the crop as float values far above 255 and scored as if it were blank. Raises ValueError if
+    the box looks like pixel coordinates."""
+    gray = np.asarray(gray)
+    if gray.ndim != 2 or (np.issubdtype(gray.dtype, np.integer) and gray.dtype != np.uint8):
+        gray = to_gray_u8(gray)
     crop = word_crop_px(gray, bbox_frac)
     if crop is None:
         return None
