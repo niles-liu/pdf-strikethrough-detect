@@ -85,3 +85,4 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
           attestations: true
+          skip-existing: true  # an index takes a version once; a re-run still checks the publisher
