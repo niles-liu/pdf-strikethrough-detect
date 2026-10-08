@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The Gradio demo requires 0.12.0** and drops its own guard for RapidOCR's empty-page placeholder,
+  which 0.12.0's `rapidocr_backend()` handles. Its deploy steps now say that a new Gradio Space on
+  free CPU needs a Hugging Face PRO account and how to push to an existing one, and drop the libGL
+  step: RapidOCR's headless OpenCV needs no system packages.
+
 ## [0.12.0] — 2026-10-08
 
 A correctness release. An audit of the whole package (native path, scanned path, public API, CLI

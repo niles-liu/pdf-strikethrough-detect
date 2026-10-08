@@ -18,11 +18,14 @@ PDFs only, skipping scanned pages and declining image uploads with a note.
 
 ## Deploy as a Hugging Face Space
 
-1. Create a new **Gradio** Space.
+1. Create a new **Gradio** Space. As of October 2026, Hugging Face needs a PRO account to host a
+   new Gradio Space on free CPU hardware; an existing Space keeps building and running for free.
 2. Add `demo/app.py` as the Space's `app.py`, and `demo/requirements.txt` as its `requirements.txt`.
-3. Push — the Space builds and serves the same UI.
-4. Check the startup log for `OCR unavailable`. If it names `libGL.so.1`, add a `packages.txt`
-   holding `libgl1` to the Space (RapidOCR imports OpenCV, which needs it on Linux) and push again.
+3. Push — the Space builds and serves the same UI. On a free account, `hf upload` fails with
+   `402 Payment Required` even when the Space exists, because it tries to create the Space first;
+   push with `huggingface_hub.HfApi().upload_folder(..., repo_type="space")` instead.
+4. Check the startup log for `OCR unavailable`. RapidOCR pulls in headless OpenCV, so the Space
+   needs no system packages; that line means an OCR dependency failed to install or load.
 
 Launch it alongside the StrikeNet model card (see `training/`) so the demo and the model land
 together.

@@ -30,21 +30,11 @@ try:
     from rapidocr import RapidOCR
 
     from pdf_strikethrough.ocr import rapidocr_backend
-    _engine = RapidOCR()
+    _OCR = rapidocr_backend(engine=RapidOCR())
 except Exception as e:                               # noqa: BLE001 - OCR is optional in the demo
     print(f"OCR unavailable, scanned pages will be skipped: {type(e).__name__}: {e}",
           file=sys.stderr)
     _OCR = None
-else:
-    def _run(image, **kwargs):
-        # the 0.11.0 adapter crashes on rapidocr's "no text" placeholder; drop this wrapper once
-        # requirements.txt floors on a release with the fix
-        res = _engine(image, **kwargs)
-        if getattr(res, "word_results", None) == (("", 1.0, None),):
-            res.word_results = ()
-        return res
-
-    _OCR = rapidocr_backend(engine=_run)
 _NO_OCR = ("OCR is unavailable on this instance, so only born-digital PDFs work here: scanned "
            "pages and image files need RapidOCR "
            "(pip install 'pdf-strikethrough-detect[rapidocr]').")
