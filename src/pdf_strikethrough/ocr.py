@@ -238,6 +238,10 @@ def rapidocr_backend(engine=None, **engine_kwargs):
                 "rapidocr>=3.2 (pip install 'rapidocr>=3.2')")
         out = []
         for line in (res.word_results or []):
+            if line and isinstance(line[0], str):
+                # a bare (text, score, box) triple in place of a line of them: rapidocr (3.9 at
+                # least) returns (('', 1.0, None),) when it detects no text at all
+                line = (line,)
             for (text, score, box) in line:
                 if text and str(text).strip():
                     out.append(Word(str(text), _bbox_from_points(box, w, h),
