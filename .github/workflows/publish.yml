@@ -1,7 +1,7 @@
 name: Publish to PyPI
 
 # On a GitHub Release: build, test the built wheel, and publish to PyPI.
-# On a manual run (workflow_dispatch): build, test, and publish to TestPyPI as a rehearsal.
+# On a manual run (workflow_dispatch): the build job alone, a dry run that publishes nothing.
 # Uses PyPI Trusted Publishing (OIDC) — no API token is stored.
 on:
   release:
@@ -66,22 +66,3 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           attestations: true   # explicit (also the action default under Trusted Publishing)
-
-  # Rehearsal — manual run only. Requires a TestPyPI trusted publisher for this repo/workflow
-  # + a `testpypi` environment. Lets you dry-run the whole path without cutting a real release.
-  publish-testpypi:
-    needs: build
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: testpypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          attestations: true
