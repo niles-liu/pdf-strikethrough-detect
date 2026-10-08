@@ -140,6 +140,14 @@ All notable changes to this project are documented here. The format follows
   now, and a page with words but no usable box raises `ValueError`, as a page with no width
   already did.
 
+#### Word documents
+- **Strike formatting from a style was missed**: a character style, a paragraph style (following
+  `basedOn`, with the two toggling one another as Word does) or the document defaults. So were
+  struck runs inside text boxes (each read once, though Word stores two copies, and reported under
+  the body paragraph the box is anchored in, so body numbering is unchanged) and every strike in a
+  Strict OOXML file. Malformed XML or a damaged archive now raises the documented `ValueError`,
+  naming a `Path` source.
+
 ### Security
 - **`ensure_model` could load content it had not verified.** An empty digest skipped the check,
   and `meta_url` without `meta_sha256` — the README's own example — loaded unverified thresholds: a
@@ -162,6 +170,7 @@ All notable changes to this project are documented here. The format follows
 - The underline exclusion band comes from the font's box, so for some fonts (Courier, Symbol) a line
   at the baseline still counts as a strike.
 - On a scan, a strike over the first letters of a long word can read as a full-word strike.
+- A tracked move in a Word document (`w:moveFrom`) is not reported.
 
 ## [0.11.0] — 2026-09-04
 

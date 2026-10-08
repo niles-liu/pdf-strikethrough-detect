@@ -151,7 +151,8 @@ The same detection reaches inputs that never were a born-digital PDF:
 # placeholder 72/96 counts as none), and a phone photo's EXIF rotation is applied before OCR.
 res = st.detect_image_file("scan.tiff", ocr=rapidocr_backend())
 
-# Word .docx — strike formatting (w:strike/w:dstrike) + tracked deletions (w:del, with author/date).
+# Word .docx — strike formatting (w:strike/w:dstrike, set directly or by a style; text boxes too)
+# + tracked deletions (w:del, with author/date).
 # No OCR, no geometry: records use tier="docx" and a `para` index. Stdlib-only, no extra needed.
 for w in st.strikethroughs_in_docx("contract.docx"):
     print(w["para"], repr(w["chars"]), w["docx_change"], w.get("docx_author"))
