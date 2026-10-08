@@ -63,8 +63,11 @@ the evidence that decided them — `score`, `cnn_prob`, `cnn_agrees`, `conf`, `g
 (and `conf_veto: True` when the calibrated-confidence gate downgrades a high-confidence word) — and
 `tier` is `"auto"`/`"review"`. The keys are documented as `TypedDict`s in `pdf_strikethrough.types`
 (`StruckWord`, `DetectResult`, `Passage`); the package ships `py.typed`, so type checkers see them.
-Partial strikes (`semi-` of `semi-monthly`) are resolved to a char range. `bbox_frac` is in
-fractions of the rendered page (rotation-aware), so it maps directly onto a rendered pixmap.
+Partial strikes (`semi-` of `semi-monthly`) are resolved to the characters the strike actually
+crosses, read from the PDF's own glyph boxes, and a word counts as fully struck only when every
+character is — so a replacement printed straight after a deletion (`~~December~~May`) survives in
+`clean_text`. `bbox_frac` is in fractions of the rendered page (rotation-aware), so it maps
+directly onto a rendered pixmap.
 
 Three native detectors, all **base-PyMuPDF only** (no pymupdf4llm), selected by `method`:
 
@@ -252,7 +255,8 @@ python examples/rag_provenance.py         # clean_text vs provenance_text ([dele
 ## How it works
 
 - **Native**: merged horizontal vector strokes through a word's middle band (excludes under/over-
-  lines); coverage ≥ 50% → struck, partials resolved to a char range.
+  lines); a character is struck when a stroke crosses ≥ 50% of its glyph box, and a word is fully
+  struck only when every character is.
 - **Scanned geometry** (`lines.py`): per-angle morphological opening extracts stroke *fragments*,
   collinear fragments are stitched, then strict filters (spine fill, stroke run-thickness,
   angle/length) separate real strikes from bold crossbars and serif-glyph chains.

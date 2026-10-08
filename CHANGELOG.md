@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Native strike spans are character-exact.** The vector, flag and annotation detectors map a
+  strike onto the characters it actually crosses, read from the PDF's own glyph boxes, where they
+  used to split the word box evenly by character count; and a word is a **full** strike only when
+  every character is struck, where it used to be one whenever the strike covered 70% of its width.
+  On the 10-document benchmark corpus (55.2k vector records) this removes 41 records (37 edges of a
+  filled watermark shape, 4 of a dashed diagram box), adds 464 (single struck characters: relettered
+  labels such as `(e)` → `(d)`, recased words) and corrects 1,140 (502 full strikes become partial
+  because trailing punctuation or text inserted after the deletion is not struck, 614 partial spans
+  move onto the struck characters, 24 partials become full because a struck sub- or superscript now
+  counts). The flag detector changes similarly (287 removed, 491 added, 1,444 corrected). Each kind
+  of change was checked against the rendered pages. `confirmation_rate.py` still reports 99.8% of
+  vector detections confirmed by the flag signal, and the per-document floor rose from 92.5% to
+  99.6%.
+
 ### Added
 - **`schema_version` on every `detect_pdf` / `detect_image_file` result**, the same number the CLI
   `--json` / `--jsonl` payloads already carried. The constant now lives in
@@ -31,6 +46,45 @@ All notable changes to this project are documented here. The format follows
   carrying the fix above, it guards the same empty-page placeholder itself, because a Space
   installs the package from PyPI. It also caps image uploads at `MAX_PAGES` frames, as it already
   did PDF pages.
+
+#### Native path
+- **Text inserted straight after a deletion was deleted with it.** A redline that prints the
+  replacement with no space (`~~December~~May`) is one word to the extractor; a strike over 70% of
+  it counted as a full strike, so `clean_text` lost `May`. See **Changed** for the measured effect.
+- **Fill-only shapes read as strikes.** A filled path's outline was judged by its stroke colour,
+  which is unset and read as black: a watermark or a white background shape whose edge crossed a
+  line of text struck every word on it. Each subpath of a fill-only path now counts as a bar when it
+  is as thin as one, and reports its fill colour (a red bar used to report black). A line stroked
+  wider than about a third of the word's height (a highlighter swipe) no longer counts either.
+- **A line-tool strike drawn at a slight slant was ignored.** The 1.5 pt rise limit applied to the
+  whole line, so a 0.5° strike across a line of text struck nothing. Lines leaning up to 2° are now
+  tested at the height where they cross each word.
+- **Content drawn rotated and turned upright by `/Rotate`** (pdflscape tables, ps2pdf
+  auto-rotation): the vector detector read a short mark crossing a vertical word as a strike, and
+  the flag detector dropped two of the four text directions. The vector detector now skips words
+  that run vertically in text space; the flag and annotation detectors read all four.
+- **Scans routed to the native path, which sees no strikes on them**: a full-page scan on a
+  `/Rotate 90` legal or tabloid page (image boxes were measured unrotated against the rotated page,
+  61% coverage), and a scan covering less than 70% of its page under an invisible OCR layer.
+- **Deletion passages joined across live text** (`~~semi-~~monthly ~~rate~~` gave one passage
+  "semi- rate"), and **a word straddling the page edge vanished** from `markdown` and `clean_text`
+  on a two-column page.
+- **Annotation forensics:** a gray or CMYK `/C` colour came through as a 1- or 4-tuple where an RGB
+  triple is documented, and a `/NoView` annotation, which paints nothing, was reported.
+
+### Documented (not yet fixed)
+- `markdown` marks a partial strike in place (`~~semi-~~monthly`); a strict CommonMark renderer
+  does not treat a `~~` that touches punctuation this way as a delimiter, and a struck word that
+  itself ends in `~` confuses `strip_struck` / `provenance_text`. The word records are exact; a
+  different marker is a format change, so it waits.
+- The vector detector reads horizontal strokes only, so a strike on content drawn rotated in text
+  space is found by `method="flag"` / `"both"`, not by the default.
+- The flag detector reports MuPDF's own per-character decision, which can include the character a
+  strike line ends against (`DecemberM`); `vector` and `both` stop at `December`.
+- A struck word narrower than 3 pt (a lone `I` at 10 pt) is not reported. Lowering that floor added
+  22 records on the benchmark corpus, all chart gridlines crossing glyphs, and no real strike.
+- The underline exclusion band comes from the font's box, so for some fonts (Courier, Symbol) a line
+  at the baseline still counts as a strike.
 
 ## [0.11.0] — 2026-09-04
 
