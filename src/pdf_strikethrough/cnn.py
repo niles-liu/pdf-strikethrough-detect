@@ -134,7 +134,7 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
 
 
 def word_crop_px(gray, bbox_frac, pad_x=PAD_X, pad_y=PAD_Y):
-    """Grey page raster (0=black..255=white; uint8 or float — [0,1] floats are handled) +
+    """Grey page raster (0=black..255=white, uint8 or float; `std_crop` rescales [0,1] floats) +
     normalized word box (x0,y0,x1,y1 as PAGE FRACTIONS in [0,1], origin top-left) -> padded
     word crop (float32 HxW), or None if the box is too small. Raises ValueError when the box
     looks like pixel coordinates rather than fractions."""
@@ -153,10 +153,10 @@ def word_crop_px(gray, bbox_frac, pad_x=PAD_X, pad_y=PAD_Y):
 
 def std_crop(crop):
     """Raw grey crop (0=black..255=white; [0,1] floats are rescaled, values clipped — no mod-256
-       wraparound) -> (CROP_H, CROP_W) float32, ink-positive, height-normalized isotropically;
-       width center-cropped/padded (a strike spans the word, so any window still shows it).
-       A shaded ground (a grey highlight block) is flattened back to white first; ordinary paper is
-       untouched."""
+    wraparound) -> (CROP_H, CROP_W) float32, ink-positive, height-normalized isotropically;
+    width center-cropped/padded (a strike spans the word, so any window still shows it).
+    A shaded ground (a grey highlight block) is flattened back to white first; ordinary paper is
+    untouched."""
     crop = np.asarray(crop)
     if np.issubdtype(crop.dtype, np.floating):
         if crop.size and float(crop.max()) <= 1.0:

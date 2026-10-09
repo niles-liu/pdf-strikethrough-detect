@@ -56,7 +56,7 @@ def _fetch(name, url, want, dest):
     try:
         print(f"fetch   {name} <- {url}")
         _download(url, dest)
-    except Exception as e:                           # noqa: BLE001 - report and continue the batch
+    except Exception as e:                           # report it and continue the batch
         print(f"FAILED  {name}: {e}", file=sys.stderr)
         return "failed"
     got = _sha256(dest)

@@ -101,7 +101,7 @@ def test_isolated_short_tick_is_not_a_strike():
     # a lone sub-MIN_STROKE_LEN tick must not chain into (or be promoted to) a strike
     doc = _one_page(lambda p: p.insert_text((50, 100), "keep deleted text here", fontsize=12))
     page = doc[0]
-    x0, y0, x1, y1 = _word_box(page, "deleted")
+    x0, y0, _, y1 = _word_box(page, "deleted")
     ym = (y0 + y1) / 2
     page.draw_line(fitz.Point(x0, ym), fitz.Point(x0 + 3, ym), width=1.0)
     assert not any(r["chars"] == "deleted" for r in st.native_page_strikes(page, 0))
@@ -198,7 +198,6 @@ def test_truncated_pdf_handled_cleanly():
 @pytest.mark.filterwarnings("ignore:the PDF is damaged:UserWarning")
 def test_byteflip_fuzz_never_hangs_or_crashes():
     good = _one_page(lambda p: p.insert_text((40, 60), "keep deleted words here now")).tobytes()
-    _solid = bytearray(good)
     for off in range(30, len(good), max(1, len(good) // 50)):    # deterministic, evenly spaced
         data = bytearray(good)
         data[off] ^= 0xFF
@@ -268,7 +267,7 @@ def test_strike_across_hyphenated_line_break_is_one_passage():
 # ===== R-cjk (slice 1: horizontal CJK) ========================================================
 def test_cjk_horizontal_strike_detected():
     # A horizontal strike over horizontally-set CJK text is detected by the vector path — strikes
-    # stay horizontal regardless of script (vertical writing modes remain out of scope). Escapes:
+    # stay horizontal regardless of script (vertical writing modes remain out of scope). Glosses:
     # 合同 = "contract", 已删除 = "deleted", 条款 = "clause".
     doc = fitz.open()
     page = doc.new_page(width=400, height=200)
@@ -281,6 +280,7 @@ def test_cjk_horizontal_strike_detected():
     assert len(recs) == 1 and recs[0]["coverage"] >= 0.7
 
 
+# ===== R-layout, continued ===================================================================
 def test_single_column_prose_is_not_split():
     items = [(f"word{i}", (0.1 + 0.08 * (i % 8), 0.1 + 0.03 * (i // 8),
                            0.16 + 0.08 * (i % 8), 0.12 + 0.03 * (i // 8)), None) for i in range(24)]

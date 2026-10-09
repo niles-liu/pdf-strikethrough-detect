@@ -36,7 +36,8 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
 
 class OcrRequiredError(ValueError):
-    """A scanned page was hit but no OCR backend (or DI result) was provided."""
+    """A scanned page or image frame was hit with no OCR words for it: no `ocr` backend, no
+    `di_result`, and no `words_by_page` entry."""
 
 
 class EncryptedPdfError(ValueError):
@@ -248,13 +249,14 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
             h["verdict"] = cnn.verdict_of(p, meta) if p is not None else "unsure"
             h["final"] = h["verdict"] == "struck"
 
-    # Fix A (0.9.1) — DI-confidence veto. On the calibrated-confidence (DI) path a word that OCRs
-    # ABOVE max_clean_conf is clean printed text (a struck word's OCR is damaged to at-or-below it —
-    # same boundary as the chain gate's strict >). If such a word ALSO lacks corroborating strike
-    # geometry (no in-band line with ink on both sides — i.e. it rode the CNN alone, or a one-sided
-    # rule / underline), the struck verdict is StrikeNet over-firing on a faint scan. Downgrade it.
-    # Guardrails: never on confidence alone (a genuinely struck word keeps its geometry, so it is
-    # spared) and never on the confidence-free path (RapidOCR etc.), so recall there cannot regress.
+    # The DI-confidence veto (issue #4·A, 0.9.1). On the calibrated-confidence (DI) path a word
+    # that OCRs ABOVE max_clean_conf is clean printed text (a struck word's OCR is damaged to
+    # at-or-below it — same boundary as the chain gate's strict >). If such a word ALSO lacks
+    # corroborating strike geometry (no in-band line with ink on both sides — i.e. it rode the CNN
+    # alone, or a one-sided rule / underline), the struck verdict is StrikeNet over-firing on a
+    # faint scan. Downgrade it. Guardrails: never on confidence alone (a genuinely struck word keeps
+    # its geometry, so it is spared) and never on the confidence-free path (RapidOCR etc.), so
+    # recall there cannot regress.
     if getattr(config, "confidence_gating", False):
         max_clean = getattr(config, "max_clean_conf", 1.0)
         for h in kept:
@@ -526,7 +528,7 @@ def _di_pages(di_result):
 
 
 def _resolve_native_method(method, native_method):
-    """Back-compat shim for the 0.6.0 R-name rename. detect_pdf's native-page selector is now
+    """Back-compat shim for the 0.6.0 rename. detect_pdf's native-page selector is now
     ``method`` (matching ``strikethroughs_in_pdf``/``page_strikes`` and the CLI ``--method``);
     ``native_method`` is the deprecated alias, honored with a ``DeprecationWarning``. Passing both
     with different values is an error."""

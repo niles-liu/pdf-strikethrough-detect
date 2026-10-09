@@ -49,8 +49,9 @@ from .scanned import ScanConfig, analyze_scanned_page
 from .types import DetectResult, Passage, StruckWord
 
 # Library logging etiquette: attach a NullHandler so importing the package never emits records on
-# its own. Diagnostics (page routing, tier decisions, OCR/CNN timing) are logged at DEBUG under the
-# "pdf_strikethrough" logger — a caller opts in with logging.getLogger("pdf_strikethrough").
+# its own. Diagnostics (page routing, per-page record counts, OCR/CNN timing) are logged at DEBUG
+# under the "pdf_strikethrough" logger, which a caller opts into with
+# logging.getLogger("pdf_strikethrough").
 # ``warnings`` stays reserved for caller-facing hazards (silent-[] on scans, scanned-fallback, ...).
 _logging.getLogger("pdf_strikethrough").addHandler(_logging.NullHandler())
 

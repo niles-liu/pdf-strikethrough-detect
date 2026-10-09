@@ -40,13 +40,13 @@ def test_ruled_forms_config_flag():
 def test_is_printed_rule_predicate():
     assert _is_printed_rule(_line(fill=0.95, straightness=3.0))          # solid -> rule
     assert _is_printed_rule(_line(fill=0.70, straightness=0.5))          # dead-straight -> rule
-    assert not _is_printed_rule(_line(fill=0.70, straightness=3.0))      # shattered + wobbly -> strike
+    assert not _is_printed_rule(_line(fill=0.70, straightness=3.0))      # shattered, wobbly: strike
     # thresholds are the documented operating point
     assert PRINTED_RULE_FILL_MAX == 0.88 and PRINTED_RULE_STRAIGHT_MAX == 1.80
 
 
 def test_veto_off_by_default_keeps_solid_straight_strike():
-    """A clean strike is solid and straight; the DEFAULT config must still flag it (no regression)."""
+    """A clean strike is solid and straight; the DEFAULT config must still flag it."""
     gray = np.full((400, 800), 255, np.uint8)
     line, words = _line(fill=0.95, straightness=0.4), _words()
     _tagged, struck = classify_lines([line], words, gray)                # default: veto off

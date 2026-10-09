@@ -5,7 +5,7 @@ import hashlib
 import json
 import pathlib
 
-import fitz
+import pymupdf as fitz
 import numpy as np
 import pytest
 
@@ -61,7 +61,7 @@ def test_conformal_threshold_recall_guarantee():
     pos = np.clip(rng.beta(6, 2, size=100), 0, 1)
     t = calibration.conformal_threshold(pos, alpha=0.1)
     assert np.mean(pos >= t) >= 0.9 - 1e-9
-    assert calibration.conformal_threshold([0.9], alpha=0.4) == 0.0    # too few points -> accept all
+    assert calibration.conformal_threshold([0.9], alpha=0.4) == 0.0    # too few: accept all
     with pytest.raises(ValueError):
         calibration.conformal_threshold([], alpha=0.1)
 
@@ -92,7 +92,7 @@ def test_operating_points_carry_thresholds():
 
 
 def test_operating_point_changes_review_verdict(monkeypatch):
-    """A review word scoring 0.7: struck under recall_first (p_hi 0.5), not under the 0.85 default."""
+    """A review word scoring 0.7: struck under recall_first (p_hi 0.5), not at the 0.85 default."""
     from pdf_strikethrough import cnn, detect
     monkeypatch.setattr(cnn, "get_model_meta", lambda: {"p_hi": 0.85, "p_lo": 0.15})
     monkeypatch.setattr(cnn, "score_crops", lambda crops: np.full(len(crops), 0.7))
@@ -100,7 +100,8 @@ def test_operating_point_changes_review_verdict(monkeypatch):
     rec = {"tier": "review", "bbox_frac": (0.10, 0.40, 0.50, 0.50), "text": "x", "cnn_prob": None}
 
     r_def = detect.apply_cnn_verdict([copy.deepcopy(rec)], gray, config=st.ScanConfig())
-    r_rec = detect.apply_cnn_verdict([copy.deepcopy(rec)], gray, config=st.ScanConfig.recall_first())
+    r_rec = detect.apply_cnn_verdict([copy.deepcopy(rec)], gray,
+                                     config=st.ScanConfig.recall_first())
     assert r_def[0]["final"] is False and r_def[0]["verdict"] == "unsure"
     assert r_rec[0]["final"] is True and r_rec[0]["verdict"] == "struck"
 
@@ -113,7 +114,8 @@ def test_dump_crops_writes_manifest_and_pngs(tmp_path):
     summary = st.dump_crops(png, str(out), words_by_page={0: words}, image=True)
     assert summary["n_crops"] >= 1
     manifest = pathlib.Path(summary["manifest"])
-    rows = [json.loads(ln) for ln in manifest.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    lines = manifest.read_text(encoding="utf-8").splitlines()
+    rows = [json.loads(ln) for ln in lines if ln.strip()]
     assert len(rows) == summary["n_crops"]
     row = rows[0]
     assert row["label"] is None                            # left for the human to fill
@@ -159,7 +161,8 @@ def test_ensure_model_verifies_and_loads(tmp_path):
         got = st.ensure_model(onnx.as_uri(), onnx_sha, meta=meta, cache_dir=str(cache))
         assert pathlib.Path(got) == cache
         assert (cache / "strike_verdict_cnn.onnx").exists()
-        assert hashlib.sha256((cache / "strike_verdict_cnn.onnx").read_bytes()).hexdigest() == onnx_sha
+        cached = (cache / "strike_verdict_cnn.onnx").read_bytes()
+        assert hashlib.sha256(cached).hexdigest() == onnx_sha
         assert st.get_model_meta()["p_hi"] == meta["p_hi"]     # loader picked up the cached model
     finally:
         st.cnn.set_model_dir(None)                             # restore the packaged model

@@ -4,7 +4,7 @@ import io
 import json
 import zipfile
 
-import fitz
+import pymupdf as fitz
 from PIL import Image
 
 import pdf_strikethrough as st

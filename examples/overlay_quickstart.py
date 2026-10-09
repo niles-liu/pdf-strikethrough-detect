@@ -2,7 +2,7 @@
 
 Builds a small redline PDF (a vector strike plus an explicit /StrikeOut annotation with an author),
 then (1) prints the evidence each record carries — stroke color/width for the vector strike, and
-author/color for the annotation — and (2) writes a before/after overlay image pair showing the
+author/color for the annotation — and (2) writes an overlay image of each struck page with the
 detected strikes boxed. This is the figure the README/launch post is built around.
 
     python examples/overlay_quickstart.py [OUT_DIR]
@@ -25,7 +25,8 @@ def build_redline_pdf() -> bytes:
     boxes = {w[4]: pymupdf.Rect(w[:4]) for w in page.get_text("words")}
     r = boxes["brown"]
     ymid = (r.y0 + r.y1) / 2
-    page.draw_line(pymupdf.Point(r.x0, ymid), pymupdf.Point(r.x1, ymid), width=1.2, color=(0.8, 0, 0))
+    page.draw_line(pymupdf.Point(r.x0, ymid), pymupdf.Point(r.x1, ymid), width=1.2,
+                   color=(0.8, 0, 0))
     annot = page.add_strikeout_annot(boxes["lazy"])
     annot.set_info(title="J. Reviewer")
     annot.set_colors(stroke=(1, 0, 0))

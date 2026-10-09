@@ -73,7 +73,7 @@ def test_shaded_word_scores_clean_like_its_white_twin():
     assert abs(p_shaded - p_white) < 0.15
 
 
-# --- grey conversion + shaded-page binarization (lines.py) -------------------------------------------------
+# --- grey conversion + shaded-page binarization (lines.py) ---------------------------------------
 
 def _page_with_band(ground_rgb, h=400, w=600):
     """A white page of text-like bars with a horizontal band washed to `ground_rgb`."""
@@ -106,7 +106,8 @@ def test_to_gray_u8_grayscale_input_untouched():
 
 def test_ink_mask_survives_a_shaded_band():
     """One global Otsu splits page-from-block instead of ink-from-paper once a band is dark enough,
-    and returns the whole band as ink. The gated fallback re-thresholds on a flattened background."""
+    and returns the whole band as ink. The gated fallback re-thresholds on a flattened
+    background."""
     from pdf_strikethrough.lines import ink_mask
     for ground in (255, 211, 195, 175, 150):
         page = _page_with_band((ground, ground, ground))
