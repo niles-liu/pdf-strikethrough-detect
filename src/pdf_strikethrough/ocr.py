@@ -58,7 +58,7 @@ def _bbox_from_points(points, w, h):
     return (min(xs) / w, min(ys) / h, max(xs) / w, max(ys) / h)
 
 
-# --------------------------------------------------------------------------- Azure Document Intelligence
+# --------------------------------------------------------------------- Azure Document Intelligence
 
 def words_from_azure_di(di_page) -> list[Word]:
     """Convert one Azure DI ``pages[i]`` dict (prebuilt-layout / read) into Words. DI word
@@ -221,7 +221,7 @@ def words_from_docai(document) -> "dict[int, list[Word]]":
     return by_page
 
 
-# --------------------------------------------------------------------------- RapidOCR (free, pip-only)
+# ----------------------------------------------------------------------- RapidOCR (free, pip-only)
 
 def _ver_tuple(v):
     """Best-effort (major, minor, patch) from a version string; non-numeric parts -> 0."""
@@ -282,11 +282,11 @@ def rapidocr_backend(engine=None, **engine_kwargs):
     return backend
 
 
-# --------------------------------------------------------------------------- Tesseract (word-level boxes)
+# -------------------------------------------------------------------- Tesseract (word-level boxes)
 
 def tesseract_backend(lang="eng", config="", min_conf=0.0):
     """Return an OCR backend using Tesseract via pytesseract (needs the tesseract binary too;
-    `pip install pdf-strikethrough-detect[tesseract]` then install tesseract). Gives genuine
+    `pip install "pdf-strikethrough-detect[tesseract]"`, then install tesseract). Gives genuine
     word-level boxes and per-word confidence (0..1) — closest to Azure DI granularity."""
     def backend(image) -> list[Word]:
         import pytesseract

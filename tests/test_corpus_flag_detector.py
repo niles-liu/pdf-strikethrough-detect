@@ -9,8 +9,8 @@ input.
 
 The gap was real-world PDF structure, so the first two tests point the detector at whatever corpus
 is on disk. That corpus is git-ignored and re-downloadable, so they skip when it is absent -- which
-means they guard a dev machine and not CI. `test_flag_detector_*_version_*` carry the CI half:
-they pin the guard that turns the crash into an exception, and run everywhere.
+means they guard a dev machine and not CI. The version tests below carry the CI half: they pin
+the guard that turns the crash into an exception, and run everywhere.
 
 ⚠ A failure of the crash kind is a **process crash**, not an assertion: it takes the whole pytest
 run down with SIGSEGV / 0xC0000005 and no traceback. If the suite dies partway with no report,

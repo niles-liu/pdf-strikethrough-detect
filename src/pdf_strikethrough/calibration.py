@@ -54,8 +54,8 @@ def threshold_for_recall(probs, labels, target_recall):
         raise ValueError("target_recall must be in (0, 1]")
     pos = np.sort(p[y])                          # struck-word probabilities, ascending
     n = pos.size
-    # recall at t = share of positives with prob >= t; ceil(n*target) must stay at or above t, so
-    # the k-th lowest positive is the highest t that qualifies (1e-9 absorbs float error)
+    # recall at t = share of positives with prob >= t; at least ceil(n*target) positives must score
+    # >= t, so the k-th lowest positive is the highest t that qualifies (1e-9 absorbs float error)
     k = min(n - int(np.ceil(n * target_recall - 1e-9)), n - 1)
     return float(pos[k])
 

@@ -12,18 +12,19 @@ change. When the corpus ships a `ground-truth.json` it scores TP / FP / FN again
 quoting raw counts — a raw struck-final count is NOT a false-positive count, because it includes the
 real strikes. Quote the number this prints; do not quote a remembered one.
 
-The corpus is private and is NOT committed (see `.gitignore: /benchmarks/private/`). Point the
-harness at a local copy — one subfolder per document, each holding a `*.pdf` and a `di-result.json`
-(an Azure DI `prebuilt-layout` analyze result, so no cloud call is made), plus an optional
-`ground-truth.json` at the corpus root (schema documented in its own `_schema` key):
-
 ``--switches`` scores all four combinations of the two provisional precision switches
 (``veto_printed_rules`` and ``rescue_clean_chains``), since they are independent and opted into
 separately — it reports what each buys alone and how much they overlap.
 
+The corpus is private and is NOT committed (see `.gitignore: /benchmarks/private/`). Point the
+harness at a local copy — one subfolder per document, each holding a `*.pdf` and a
+`di-result.json` (an Azure DI `prebuilt-layout` analyze result, so no cloud call is made), plus
+an optional `ground-truth.json` at the corpus root (schema documented in its own `_schema` key):
+
     python benchmarks/confidence_veto.py [CORPUS_DIR] [--ab | --switches]
 
-CORPUS_DIR defaults to `benchmarks/private/ruled-tables/` or the PDF_STRIKETHROUGH_CORPUS_DIR env var.
+CORPUS_DIR defaults to `benchmarks/private/ruled-tables/` or the PDF_STRIKETHROUGH_CORPUS_DIR
+env var.
 """
 from __future__ import annotations
 
@@ -209,8 +210,9 @@ def run_switches(corpus_dir, docs):
     print(f"\nseparately the two switches remove {apart} FPs, together {together} — "
           f"an overlap of {apart - together}.")
     if unlabeled:
-        print(f"\n!! {len(unlabeled)} document(s) absent from ground-truth.json, scored as having NO "
-              f"real strikes: {', '.join(unlabeled)}. Label them or these counts are wrong.")
+        print(f"\n!! {len(unlabeled)} document(s) absent from ground-truth.json, scored as "
+              f"having NO real strikes: {', '.join(unlabeled)}. Label them or these counts are "
+              f"wrong.")
     if min(t["tp"] for t in totals.values()) < totals["default"]["tp"]:
         print("\n!! a switch COST RECALL on this corpus — it must not ship in that state.")
     return 0

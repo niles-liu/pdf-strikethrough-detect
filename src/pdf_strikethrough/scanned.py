@@ -26,24 +26,25 @@ PARTIAL_MIN_WCOV    = 0.12   # ...and >= this fraction of the word width
 PARTIAL_ISO_MAX_OFF = 0.08   # isolated partial (line strikes nothing else): must sit dead-center
 INK_MAX_OFF         = 0.40   # pixel test still considered up to this |off| (box-lies rescue)
 INK_MIN_FRAC        = 0.35   # min fraction of covered columns with glyph ink above resp. below
-INK_ONESIDE_MAX     = 0.15   # a side with less ink than this is "empty": the underline/table-rule
-                             # signature is ink well on ONE side and ~none on the other (Fix B, 0.9.1)
+INK_ONESIDE_MAX     = 0.15   # a side with less ink than this is "empty"; an underline or table
+                             # rule has ink on ONE side and ~none on the other (issue #4·B)
 INK_SHORT_LEN_IN    = 0.50   # pixel test REQUIRED only for lines shorter than this (+ rescues)
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
-                             # strike, unless it shows through-glyph ink on BOTH sides (Fix B, 0.9.1)
+                             # strike, unless it shows through-glyph ink on BOTH sides (issue #4·B)
 # --- printed-rule veto (issue #7 / v0.10.0), opt-in via ScanConfig.ruled_forms(): a degraded-scan
-# table rule / form line rides a dead-straight, near-solid path, while a pen or typed strike crossing
-# raised glyphs SHATTERS (fill drops) and WANDERS (wobble rises). Geometry-only, so it needs no OCR
-# confidence. PROVISIONAL and thin: calibrated on ONE positive document -- the benchmark corpus holds
-# 3 real strikes, all the same morphology, and they clear both bars. Do not tighten these without
-# more labeled positives; the measured distribution is in the corpus ground-truth.json _calibration.
+# table rule / form line rides a dead-straight, near-solid path, while a pen or typed strike
+# crossing raised glyphs SHATTERS (fill drops) and WANDERS (wobble rises). Geometry-only, so it
+# needs no OCR confidence. PROVISIONAL and thin: calibrated on ONE positive document -- the
+# benchmark corpus holds 3 real strikes, all the same morphology, and they clear both bars. Do not
+# tighten these without more labeled positives; the measured distribution is in the corpus
+# ground-truth.json _calibration.
 PRINTED_RULE_FILL_MAX     = 0.88  # fill above this = a solid drawn rule, not a shattered strike
 PRINTED_RULE_STRAIGHT_MAX = 1.80  # wobble px @RENDER_DPI below this = a drawn rule, not a strike
 TWIN_MIN_LEN_IN     = 0.60   # substantial line: >=2 fully-struck words, or one word + long line
 FULL_CHAR_COVER     = 0.70   # unioned char coverage >= this -> whole word counts as struck
 
-AUTO_SCORE = 0.55            # score >= this -> tier 'auto'; >= REVIEW_SCORE -> 'review'; else 'weak'
+AUTO_SCORE = 0.55            # score >= this: tier 'auto'; >= REVIEW_SCORE: 'review'; else 'weak'
 REVIEW_SCORE = 0.20
 
 
@@ -76,10 +77,10 @@ class ScanConfig:
     ``benchmarks/confidence_veto.py --switches``."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # fill<FILL_STRONG: some struck word must OCR at or below this
-    inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued if OCR is this damaged
+    inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued at OCR conf <= this
     page_edited_min: float = 0.03     # frac words conf<=0.90 >= this -> page has pen edits
-    cnn_p_hi: float | None = None     # override the CNN struck threshold (operating point); None = model default
-    cnn_p_lo: float | None = None     # override the CNN clean threshold; None = model default
+    cnn_p_hi: float | None = None     # override the CNN struck threshold; None = the model's
+    cnn_p_lo: float | None = None     # override the CNN clean threshold; None = the model's
     veto_printed_rules: bool = False  # drop solid/dead-straight lines as drawn rules (issue #7)
     rescue_clean_chains: bool = True  # let an EDITED page's clean-OCR glyph chain reach the CNN
 
@@ -99,6 +100,7 @@ class ScanConfig:
 
     @classmethod
     def azure_di(cls):
+        """Azure Document Intelligence calibration: the defaults, with confidence gating on."""
         return cls()
 
     @classmethod
@@ -108,9 +110,9 @@ class ScanConfig:
         the CNN over-fires on it. Turns on the printed-rule veto (:func:`_is_printed_rule`): any
         detected line that is solid and/or dead-straight is treated as printed furniture rather than
         a strike. In practice most of what it removes is short solid/straight *fragments* — glyph
-        strokes and pieces of rules thrown off by a degraded scan — not just full-width rules. Off by
-        default because on a CLEAN scan a real strike is ALSO solid and straight — enable this only
-        when inputs are known-degraded ruled forms and precision matters more than catching a
+        strokes and pieces of rules thrown off by a degraded scan — not just full-width rules. Off
+        by default because on a CLEAN scan a real strike is ALSO solid and straight — enable this
+        only when inputs are known-degraded ruled forms and precision matters more than catching a
         pristine strike. See issue #7.
 
         This is a stopgap for one input class, and its thresholds are calibrated on a small labeled
@@ -147,7 +149,8 @@ class ScanConfig:
 def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):
     """Fractions of covered columns with glyph ink above resp. below the stroke. A strike runs
     THROUGH glyphs -> ink both sides; an underline has ink above only; a glyph chain has ~none
-    above. The stroke y is interpolated from the LINE ENDPOINTS at the word's x-midpoint."""
+    above. The stroke y is interpolated from the LINE ENDPOINTS at the center of the word's
+    overlap with the line."""
     (sx, sy), (ex, ey) = line_ends_px
     wx0, wy0, wx1, wy1 = word_bbox_px
     x0, x1 = max(sx, wx0), min(ex, wx1)
@@ -203,13 +206,14 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
         x0, y0, x1, y1 = ln["bbox_px"]
         lx0, lx1 = x0 / pix_w, x1 / pix_w
         llen = max(lx1 - lx0, 1e-9)
-        # endpoints for interpolating the stroke-y at each word's x-midpoint (a sloped strike sits
-        # at a different height over each word — a single global center mis-attributes them all).
+        # endpoints for interpolating the stroke-y over each word, at the center of its overlap with
+        # the line (a sloped strike sits at a different height over each word — a single global
+        # center mis-attributes them all).
         (sx, sy), (ex, ey) = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
         short_line = ln.get("len_in", 0.0) < INK_SHORT_LEN_IN
 
         def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None, strike_geom=False):
-            wx0, wy0, wx1, wy1 = wbox
+            wx0, _, wx1, _ = wbox
             f0 = (max(lx0, wx0) - wx0) / max(wx1 - wx0, 1e-9)
             f1 = (min(lx1, wx1) - wx0) / max(wx1 - wx0, 1e-9)
             c0 = int(np.floor(f0 * len(txt)))
@@ -258,10 +262,11 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
                         continue
             elif (line_fill >= FILL_STRONG and ln.get("len_in", 0.0) >= TABLE_RULE_MIN_LEN_IN
                   and one_sided):
-                # Fix B (0.9.1): a long, solid (high-fill) in-band line with ink on only ONE side
-                # is a table rule / underline, not a strike. Previously in-band long lines skipped
-                # the ink test entirely and rode high fill straight to 'auto'. Real strikes SHATTER
-                # on the glyphs (fill < FILL_STRONG) and keep ink on BOTH sides, so they are spared.
+                # Issue #4·B (0.9.1): a long, solid (high-fill) in-band line with ink on only ONE
+                # side is a table rule / underline, not a strike. Previously in-band long lines
+                # skipped the ink test entirely and rode high fill straight to 'auto'. Real strikes
+                # SHATTER on the glyphs (fill < FILL_STRONG) and keep ink on BOTH sides, so they are
+                # spared.
                 continue
             ink_ok = not in_band
             # Strike-geometry corroboration (0.9.1): a genuine strike crosses the x-height (in-band)
@@ -294,15 +299,17 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
             min_conf = min((h["conf"] if h["conf"] is not None else 1.0) for h in hits)
             if min_conf > config.max_clean_conf:
                 n_strong = sum(1 for h in hits if h["strong"])
-                substantial = n_strong >= 2 or (n_strong >= 1 and ln.get("len_in", 0) >= TWIN_MIN_LEN_IN)
+                substantial = n_strong >= 2 or (
+                    n_strong >= 1 and ln.get("len_in", 0) >= TWIN_MIN_LEN_IN)
                 # The escape: on a page that looks pen-edited, a substantial clean-OCR line might
-                # still be a real strike, so let the CNN call it. Turn OFF on degraded ruled forms —
-                # there `edit_prior` reads scan quality rather than edits (it is anti-correlated
-                # with real edits on the corpus) and the saturated CNN confirms whatever it is given.
+                # still be a real strike, so let the CNN call it. Turn it OFF on degraded ruled
+                # forms: there `edit_prior` reads scan quality rather than edits (it is
+                # anti-correlated with real edits on the corpus) and the saturated CNN confirms
+                # whatever it is given.
                 if (config.rescue_clean_chains and substantial
                         and edit_prior >= config.page_edited_min):
                     for h in hits:
-                        h["twin"] = True       # pixel-twin on an edited page: CNN decides (->review)
+                        h["twin"] = True       # edited-page pixel twin: the CNN decides (review)
                 else:
                     hits, chain = [], True
         if hits:

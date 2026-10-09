@@ -77,7 +77,7 @@ def test_partial_strike_wraps_only_struck_chars():
 
 def _synthetic_native_pdf():
     """Born-digital PDF: one line of text with a vector strike through 'deleted text'."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 100), "keep this deleted text here", fontsize=12)
@@ -98,7 +98,7 @@ def test_native_vector_flag_and_both_on_synthetic_pdf():
 
 
 def test_native_words_arg_equivalent_to_extracting():
-    """F7: passing words= yields records identical to letting the detector extract them itself,
+    """Passing words= yields records identical to letting the detector extract them itself,
     for vector, flag, and both."""
     doc = _synthetic_native_pdf()
     page = doc[0]
@@ -111,7 +111,7 @@ def test_native_words_arg_equivalent_to_extracting():
 
 
 def test_detect_pdf_extracts_words_once_per_native_page(monkeypatch):
-    """F7: under native_method='both', a native page extracts get_text('words') once and threads
+    """Under method='both', a native page extracts get_text('words') once and threads
     it through the vector + flag detectors and the markdown match, instead of re-extracting per
     call (was up to four extractions/page). classify's own light-image-branch extraction is the
     only other one, so the page totals two — not four."""
@@ -215,7 +215,7 @@ def test_dpi_scaling_still_detects():
 
 
 def _strikeout_annot_doc(update=True, hidden=False):
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=400, height=200)
     page.insert_text((50, 100), "keep deleted text here", fontsize=12)
@@ -229,10 +229,10 @@ def _strikeout_annot_doc(update=True, hidden=False):
 
 
 def test_acrobat_strikeout_annotation_is_detected():
-    """Acrobat /StrikeOut annotations are caught only because PyMuPDF flows their appearance
-    streams through get_drawings(); nothing else pins it, so an upstream change could silently
-    remove the recall. Pin it (with and without annot.update()) until the explicit annotation
-    pass lands."""
+    """The default vector path catches Acrobat /StrikeOut annotations only because PyMuPDF
+    flows their appearance streams through get_drawings(); nothing else pins that, so an
+    upstream change could silently remove the recall. Pinned with and without annot.update();
+    `method='annot'` reads the annotations themselves."""
     for update in (True, False):
         doc, page = _strikeout_annot_doc(update=update)
         assert sorted(r["text"] for r in st.native_page_strikes(page, 0)) == ["deleted"], update
@@ -277,7 +277,7 @@ def test_std_crop_handles_uint16_crop():
 
 
 def test_rotated_page_bbox_in_unit_range():
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 700), "keep gone here", fontsize=12)
@@ -297,7 +297,7 @@ def test_rotated_page_bbox_in_unit_range():
 
 def test_sparse_native_page_not_dropped():
     """Pages with <5 words (signature pages etc.) used to be misrouted to blank/scanned."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page()
     page.insert_text((72, 100), "delete this now", fontsize=12)
@@ -311,7 +311,7 @@ def test_sparse_native_page_not_dropped():
 
 
 def test_encrypted_pdf_raises_dedicated_error():
-    import fitz
+    import pymupdf as fitz
     doc = _synthetic_native_pdf()
     data = doc.tobytes(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="secret")
     doc.close()
@@ -423,7 +423,7 @@ def test_rapidocr_backend_reads_a_bare_word_triple_as_a_one_word_line():
 def test_invisible_stroke_is_not_a_strike():
     """A white / opacity-0 line leaves no ink; the vector detector must not confirm it as a
     strike (it accepted paths on geometry alone before)."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=500, height=200)
     page.insert_text((50, 100), "keep deleted text here", fontsize=12)
@@ -440,7 +440,7 @@ def test_invisible_stroke_is_not_a_strike():
 def test_flag_grazing_overshoot_does_not_flag_neighbor():
     """A strike over one word overshooting a little into the next used to emit a spurious 1-char
     partial on the neighbor via the flag path (and 'both' kept it); the grazing guard drops it."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=500, height=200)
     page.insert_text((50, 100), "keep deleted text here", fontsize=12)
@@ -455,13 +455,13 @@ def test_flag_grazing_overshoot_does_not_flag_neighbor():
 
 
 def test_sloped_strike_attributes_to_every_word():
-    """A multi-word strike on a sloped (~7°) baseline: the stroke-y is interpolated at each
-    word's x-midpoint, so every crossed word is attributed. A single global line-center (the old
-    behavior) put the end words far out of band and dropped all but the middle one."""
+    """A multi-word strike on a sloped (~7°) baseline: the stroke-y is interpolated over each
+    word (at the center of its overlap with the line), so every crossed word is attributed. A
+    single global line-center (the old behavior) put the end words far out of band and dropped all
+    but the middle one."""
     from pdf_strikethrough.scanned import classify_lines
-    from pdf_strikethrough.ocr import Word
     pix_h, pix_w = 400, 800
-    gray = np.full((pix_h, pix_w), 255, np.uint8)      # ink irrelevant: in-band hits skip the pixel test
+    gray = np.full((pix_h, pix_w), 255, np.uint8)      # blank: no ink, so no line reads one-sided
     words = []
     for i in range(5):                                 # 5 words on a rising baseline
         cx, cy = 160 + i * 120, 150 + i * 15
@@ -478,7 +478,7 @@ def test_sloped_strike_attributes_to_every_word():
 def test_full_bleed_background_image_page_is_native():
     """A born-digital page with a full-bleed background image must stay native (image coverage is
     unioned, and visible text over real drawings beats the image) and still detect its strike."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 60, 84))
@@ -497,7 +497,7 @@ def test_full_bleed_background_image_page_is_native():
 def test_repeated_image_does_not_inflate_coverage():
     """Summing image bboxes made the same small image placed many times read as a full-page scan;
     the coarse-grid union keeps a text page with a repeated logo classified 'native'."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20))
@@ -550,7 +550,7 @@ def test_cli_writes_non_cp1252_output_without_crashing(tmp_path, monkeypatch):
 def test_authenticated_encrypted_pdf_detects():
     """A doc encrypted then authenticated keeps needs_pass truthy but is_encrypted=False; the gate
     now lets it through, so the recover-and-retry workflow the error message recommends works."""
-    import fitz
+    import pymupdf as fitz
     doc = _synthetic_native_pdf()
     data = doc.tobytes(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="secret")
     doc.close()
@@ -608,7 +608,7 @@ def _mixed_native_scanned_pdf():
 
 
 def test_strikethroughs_in_pdf_warns_on_scanned():
-    """F1: a scanned page yields a silent [] for that page — warn so the caller knows to route it
+    """A scanned page yields a silent [] for that page — warn so the caller knows to route it
     through detect_pdf(ocr=...)."""
     import warnings
     doc = _mixed_native_scanned_pdf()
@@ -633,7 +633,7 @@ def test_strikethroughs_in_pdf_no_warning_when_all_native():
 
 def _three_page_native_pdf():
     """Pages 0 and 2 carry a strike; page 1 is clean."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     for pno in range(3):
         page = doc.new_page(width=595, height=842)
@@ -646,7 +646,7 @@ def _three_page_native_pdf():
 
 
 def test_detect_pdf_pages_subset_and_progress():
-    """F5: pages= processes only the requested pages, progress= fires once per processed page,
+    """`pages=` processes only the requested pages, progress= fires once per processed page,
     the result carries a `pages` key aligned to page_sources, and page_count stays the full doc."""
     doc = _three_page_native_pdf()
     seen = []
@@ -688,12 +688,13 @@ def test_detect_pdf_no_pages_key_when_full():
 
 
 def test_types_module_exports():
-    """F2: the typed shapes are importable from the package and the types submodule."""
+    """The typed shapes are importable from the package and the types submodule."""
     from pdf_strikethrough import types as t
     assert st.StruckWord is t.StruckWord
     assert st.DetectResult is t.DetectResult and st.Passage is t.Passage
     # TypedDicts carry their documented keys in __annotations__
-    assert {"page", "text", "tier", "final", "coverage", "cnn_prob"} <= set(t.StruckWord.__annotations__)
+    assert ({"page", "text", "tier", "final", "coverage", "cnn_prob"}
+            <= set(t.StruckWord.__annotations__))
     assert {"page_count", "page_sources", "words", "pages"} <= set(t.DetectResult.__annotations__)
 
 
@@ -704,7 +705,7 @@ def test_py_typed_marker_shipped():
     assert os.path.exists(marker)
 
 
-# --------------------------------------------------------------------- CLI (F4)
+# --------------------------------------------------------------------- CLI
 
 def _write_three_page_pdf(tmp_path):
     doc = _three_page_native_pdf()
@@ -774,11 +775,12 @@ def test_confidence_free_ignores_confidence():
     assert [r["tier"] for r in a] == [r["tier"] for r in b]
 
 
-# --------------------------------------------------------------------- F6: verdict consistency
+# --------------------------------------------------------------------- verdict consistency
 
 def test_auto_record_verdict_not_struck_when_cnn_drops(monkeypatch):
-    """F6: an 'auto' word the CNN votes down (final=False) must not keep verdict='struck' — that
-    contradicts the ship decision. Report the CNN's read instead; a confirmed word stays 'struck'."""
+    """An 'auto' word the CNN votes down (final=False) must not keep verdict='struck' — that
+    contradicts the ship decision. Report the CNN's read instead; a confirmed word stays
+    'struck'."""
     from pdf_strikethrough import cnn, detect
     gray = _synthetic_struck_page(True)
     H, W = gray.shape
@@ -812,7 +814,7 @@ def test_no_record_claims_struck_while_not_final():
 # --------------------------------------------------------------------- v0.6.0 surface
 
 def test_detect_pdf_method_alias_deprecated_but_honored():
-    """R-name: detect_pdf's native-page selector is now `method`; the old `native_method` still
+    """detect_pdf's native-page selector is now `method`; the old `native_method` still
     works but emits a DeprecationWarning, and passing both with different values raises."""
     import warnings
     doc = _synthetic_native_pdf()
@@ -820,7 +822,8 @@ def test_detect_pdf_method_alias_deprecated_but_honored():
         warnings.simplefilter("always")
         res = st.detect_pdf(doc, native_method="both")
     assert res["n_struck_final"] == 2
-    assert any(issubclass(w.category, DeprecationWarning) for w in rec), [str(w.message) for w in rec]
+    assert any(issubclass(w.category, DeprecationWarning) for w in rec), (
+        [str(w.message) for w in rec])
     # method= is the new name and takes the same values
     assert st.detect_pdf(doc, method="vector")["n_struck_final"] == 2
     try:
@@ -832,9 +835,9 @@ def test_detect_pdf_method_alias_deprecated_but_honored():
 
 
 def test_vector_records_carry_stroke_color_and_width():
-    """R-forensics: native vector records report the dominant contributing stroke's color + width
+    """Native vector records report the dominant contributing stroke's color + width
     (RGB in [0,1], width in pt) — pen-color conventions are evidence in legal review."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 100), "keep deleted here", fontsize=12)
@@ -850,7 +853,7 @@ def test_vector_records_carry_stroke_color_and_width():
 def test_vector_filled_bar_reports_fill_color():
     """A strike drawn as a thin FILLED bar reports the fill paint as stroke_color and the bar
     height as stroke_width."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 100), "keep deleted here", fontsize=12)
@@ -863,9 +866,9 @@ def test_vector_filled_bar_reports_fill_color():
 
 
 def test_annot_pass_detects_with_forensics():
-    """R-annot: the explicit /StrikeOut annotation pass reports tier='annot' plus the annotation's
+    """The explicit /StrikeOut annotation pass reports tier='annot' plus the annotation's
     author/date/color forensics."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=400, height=200)
     page.insert_text((50, 100), "keep deleted text here", fontsize=12)
@@ -891,7 +894,7 @@ def test_annot_pass_skips_hidden_annotation():
 
 def test_page_strikes_annot_method_and_both_union():
     """method='annot' routes to the annotation pass; 'both' unions vector+flag+annot (deduped)."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=400, height=200)
     page.insert_text((50, 100), "keep deleted text here", fontsize=12)
@@ -910,7 +913,7 @@ def test_both_grafts_annotation_forensics_onto_covering_record():
     """A /StrikeOut annotation's appearance stream is also caught by the vector path, so under
     method='both' the vector record covers it. The union must GRAFT the annotation's author/color
     onto that record rather than drop it — otherwise the forensics are lost."""
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=400, height=200)
     page.insert_text((50, 100), "keep deleted text here", fontsize=12)
@@ -935,7 +938,7 @@ def test_page_strikes_rejects_unknown_method():
 
 
 def test_render_overlay_boxes_struck_pages():
-    """R-overlay: render_overlay returns one RGB image per struck page, boxing every final record."""
+    """render_overlay returns one RGB image per struck page, boxing every final record."""
     doc = _three_page_native_pdf()          # pages 0 and 2 struck, page 1 clean
     pages = st.render_overlay(doc, dpi=100)
     assert [p["page"] for p in pages] == [0, 2]
@@ -946,7 +949,7 @@ def test_render_overlay_boxes_struck_pages():
 
 
 def test_render_overlay_empty_without_strikes():
-    import fitz
+    import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=300, height=120)
     page.insert_text((40, 60), "nothing struck here", fontsize=12)
@@ -955,7 +958,7 @@ def test_render_overlay_empty_without_strikes():
 
 
 def test_save_overlays_dir_and_prefix(tmp_path):
-    """save_overlays writes overlay-p{n}.png into a directory, or {root}-p{n}{ext} for a filename."""
+    """save_overlays writes overlay-p{n}.png into a directory, or {root}-p{n}{ext} for a file."""
     doc = _synthetic_native_pdf()
     pdf = tmp_path / "x.pdf"
     pdf.write_bytes(doc.tobytes())
@@ -978,8 +981,8 @@ def test_cli_overlay_writes_images(tmp_path):
 
 
 def test_cli_json_carries_forensic_evidence(tmp_path):
-    """The CLI JSON now includes stroke_color/stroke_width (vector) and annot_* (annotation)."""
-    import fitz
+    """The CLI's JSON carries an annotation strike's forensics (`annot_author`)."""
+    import pymupdf as fitz
     import json
     from pdf_strikethrough import __main__ as cli
     doc = fitz.open()
@@ -999,7 +1002,7 @@ def test_cli_json_carries_forensic_evidence(tmp_path):
 
 
 def test_logger_has_null_handler_and_emits_debug(caplog):
-    """R-log: the package attaches a NullHandler (silent by default) and logs pipeline
+    """The package attaches a NullHandler (silent by default) and logs pipeline
     diagnostics at DEBUG under the 'pdf_strikethrough' logger when a caller opts in."""
     import logging
     handlers = logging.getLogger("pdf_strikethrough").handlers

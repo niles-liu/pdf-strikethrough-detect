@@ -17,8 +17,8 @@ space, where strikes over upright text stay horizontal regardless of /Rotate.
 Scope — HORIZONTAL (left-to-right) text only. The vector path (``horiz_strokes``) matches only
 near-horizontal strokes, so it skips words that run vertically in text space (vertical writing, or
 content rotated by /Rotate); the flag and annotation paths read those. Vertical writing modes and
-non-Latin scripts whose strikes run along a different axis are otherwise out of scope. Full support
-is roadmap R-cjk (add a CJK redline test doc + document the validated scripts).
+non-Latin scripts whose strikes run along a different axis are otherwise out of scope. Horizontal
+CJK is regression-tested; vertical writing modes remain on the roadmap.
 """
 import math
 import re
@@ -39,7 +39,7 @@ MID_BAND = 0.22          # strokes within [y0 + f*h, y1 - f*h] count as through-
 DASH_MIN_SEG = 1.0       # pt; below this a segment is graphics noise, never a dash
 DASH_MAX_GAP = 4.0       # pt; max x-gap between dashes of one chained strike
 
-FLAG_MIN_WCOV = 0.15     # flag path: a struck span must cover >= this of a word to count
+FLAG_MIN_WCOV = 0.15     # a span on a word with no character boxes must cover >= this of it
 
 METHODS = ("vector", "flag", "annot", "both")    # the native detectors page_strikes selects
 
@@ -217,7 +217,7 @@ def horiz_strokes(page):
 def _merged_intervals(wx0, wx1, ivals):
     """Clip intervals to [wx0, wx1] and merge overlaps. Returns (merged, covered_length)."""
     ivals = sorted((max(a, wx0), min(b, wx1)) for a, b in ivals)
-    merged, tot = [], 0.0
+    merged = []
     for a, b in ivals:
         if b <= a:
             continue

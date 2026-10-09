@@ -8,8 +8,8 @@ Strikes over typed text SHATTER: hyphen-overtype strikes break at every char gap
 sloped pen strokes straddle two angle bins. So the pipeline extracts fragments PERMISSIVELY,
 stitches collinear ones, and only then applies the strict filters to the stitched line:
   spine fill >= MIN_FILL              kills chains stitched from sparse glyph bits
-  run-thickness p25 <= MAX_STROKE_RUN kills bold display-font crossbars
-  MIN_LINE_LEN / angle                geometric sanity on the stitched line
+  run-thickness p25 <= MAX_STROKE_RUN_PX kills bold display-font crossbars
+  MIN_LINE_LEN_IN / angle             geometric sanity on the stitched line
 
 Attributing lines to words (which word was struck, char spans, partial strikes) needs word
 boxes from an OCR engine and lives in a separate layer.
@@ -19,16 +19,16 @@ from scipy import ndimage
 
 # --- raster / detector tunables ---
 RENDER_DPI        = 200           # reference raster resolution (px-per-inch the tunables assume)
-MIN_LINE_LEN_IN   = 0.08          # min STITCHED line length (~16px@200dpi; '19'-class strikes ~0.12in)
+MIN_LINE_LEN_IN   = 0.08          # min STITCHED length (16px@200dpi; '19'-class strikes ~0.12in)
 SEG_LEN_IN        = 0.05          # straight-segment length for the orientation filter
-GAP_BRIDGE_PX     = 8             # morphological closing along the angle (pen gaps within a fragment)
+GAP_BRIDGE_PX     = 8             # closing along the angle (bridges pen gaps within a fragment)
 ANGLE_STEP_DEG    = 15            # sweep 0..180 in these steps
 MAX_ANGLE_DEG     = 25            # near-horizontal only; drops vertical letter-stems (l, I, f, 1)
 MAX_LINE_THICK_PX = 10            # pre-stitch PCA thickness cap
-DEDUP_IOU         = 0.30          # merge near-duplicate detections from adjacent angles, keep longest
+DEDUP_IOU         = 0.30          # merge near-duplicates from adjacent angles, keep the longest
 OTSU_OFFSET       = 15            # recall knob: ink if gray < otsu()+this (recovers faint strokes)
 MIN_FILL          = 0.65          # fraction of the stitched spine that must be RAW ink
-MAX_STROKE_RUN_PX = 4             # p25 of vertical ink-run lengths along the spine = stroke thickness
+MAX_STROKE_RUN_PX = 4             # stroke thickness: p25 of vertical ink runs along the spine
 STITCH_GAP_PX     = 26            # max x-gap between fragments to stitch (~a word space + slack)
 STITCH_DY_PX      = 6.0           # max |y| between endpoints at the junction
 STITCH_DY_TIGHT   = 2.5           # fallback tolerance for re-stitching poisoned groups
@@ -113,9 +113,9 @@ def ink_mask(gray):
     One global threshold cannot serve a page holding both white and shaded regions: once a highlight
     block's ground is dark enough, Otsu splits page-from-block instead of ink-from-paper and the
     whole block comes back as ink (measured: ink fraction 0.07 at ground 211, 1.00 at 195, and every
-    downstream stage then returns nothing). So when the mask comes back implausibly inky, flatten the
-    paper block-wise and threshold that instead. The fallback is gated, not unconditional, because
-    every geometry filter downstream is calibrated against the plain global mask."""
+    downstream stage then returns nothing). So when the mask comes back implausibly inky, flatten
+    the paper block-wise and threshold that instead. The fallback is gated, not unconditional,
+    because every geometry filter downstream is calibrated against the plain global mask."""
     gray = to_gray_u8(gray)
     mask = gray < (otsu_threshold(gray) + OTSU_OFFSET)
     if mask.mean() <= BG_INK_MAX:
@@ -157,8 +157,8 @@ def _spine_fill(ink, center, u, length, halfwidth=2):
 
 def _spine_run_thickness(ink, center, u, length, max_k=20):
     """p25 of vertical ink-run lengths sampled along the major axis, in the RAW ink mask.
-       Real strikes give short runs (2-3px) in inter-glyph gaps; bold-title crossbars are >=5px
-       thick everywhere, so their p25 is high."""
+    Real strikes give short runs (2-3px) in inter-glyph gaps; bold-title crossbars are >=5px
+    thick everywhere, so their p25 is high."""
     n = max(int(length), 2)
     ts = np.linspace(-length / 2.0, length / 2.0, n)
     H, W = ink.shape
@@ -199,10 +199,11 @@ def _spine_straightness(ink, center, u, length, run_px):
     scanned printed-rule veto reads a LOW value as "drawn rule, drop the detection", so an
     unmeasurable line must never come back low or a real strike is silently lost.
 
-    TRIED AND REJECTED (2026-07-29): **detrending** the deviations — residual RMS about a fitted line
-    instead of scatter about their mean — to stop a spine/ink angular mismatch (a linear ramp) from
-    inflating the wobble of dotted pre-printed rules. Measured, it missed them anyway (their wobble is
-    jitter across sparse dots, not a ramp) and halved the real strikes' margin above the veto bar.
+    TRIED AND REJECTED (2026-07-29): **detrending** the deviations — residual RMS about a fitted
+    line instead of scatter about their mean — to stop a spine/ink angular mismatch (a linear ramp)
+    from inflating the wobble of dotted pre-printed rules. Measured, it missed them anyway (their
+    wobble is jitter across sparse dots, not a ramp) and halved the real strikes' margin above the
+    veto bar.
     Dotted fill-in rules are underlines below the baseline; they need a positional discriminator.
     """
     if not np.isfinite(run_px):
@@ -230,8 +231,8 @@ def _spine_straightness(ink, center, u, length, run_px):
 
 def _collect_fragments(ink, dpi, scale=1.0):
     """Per-angle opening + gap-bridging with PERMISSIVE per-fragment filters.
-       Returns fragments as (start_xy, end_xy) endpoint pairs along the major axis.
-       `scale` = dpi / RENDER_DPI rescales the pixel-space tunables (calibrated at 200 dpi)."""
+    Returns fragments as (start_xy, end_xy) endpoint pairs along the major axis.
+    `scale` = dpi / RENDER_DPI rescales the pixel-space tunables (calibrated at 200 dpi)."""
     seg = max(3, int(SEG_LEN_IN * dpi))
     gap_bridge = int(round(GAP_BRIDGE_PX * scale))
     frags = []
@@ -250,7 +251,7 @@ def _collect_fragments(ink, dpi, scale=1.0):
             pts = np.column_stack([xs, ys]).astype(np.float32)
             c = pts.mean(0)
             d = pts - c
-            evals, evecs = np.linalg.eigh((d.T @ d) / len(d))
+            _, evecs = np.linalg.eigh((d.T @ d) / len(d))
             major, minor = evecs[:, 1], evecs[:, 0]
             if major[0] < 0:                                   # orient +x so endpoints sort by x
                 major = -major
@@ -268,7 +269,7 @@ def _collect_fragments(ink, dpi, scale=1.0):
 
 def _stitch_fragments(frags, dy=None, scale=1.0):
     """Union-find merge of collinear fragments. Returns [(seg, member_fragments), ...] so failed
-       groups can be re-stitched tighter. `scale` rescales the pixel-space stitch tolerances."""
+    groups can be re-stitched tighter. `scale` rescales the pixel-space stitch tolerances."""
     # floor the pixel-space stitch tolerances so they don't collapse below a couple of pixels at
     # low dpi (at 72 dpi a raw *scale would leave sub-pixel gaps/dy that never stitch)
     dy = max(2.0, STITCH_DY_PX * scale) if dy is None else dy
@@ -285,7 +286,7 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
     if n:
         # Endpoint arrays in start-x order. This is the pipeline's hottest loop (n runs to thousands
         # on a dense scan), so the pair tests are vectorized per fragment; native dtype is preserved
-        # so the comparisons match the scalar ones exactly.
+        # so each comparison rounds as a per-pair float32 test would.
         pts = np.asarray(frags)                       # (n, 2, 2): [frag][start|end][x|y]
         order = np.argsort(pts[:, 0, 0], kind="stable")
         sx, sy = pts[order, 0, 0], pts[order, 0, 1]
@@ -293,15 +294,16 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
         idx = order.tolist()
         for oi in range(n - 1):
             # Only later fragments whose START lies within max_gap of i's END can stitch; start-x is
-            # sorted, so the rest are unreachable (what the scalar loop's `break` relied on). The
-            # bound is slack by a hair and the exact gap test is reapplied below.
+            # sorted, so the rest are unreachable. The bound is slack by a hair and the exact gap
+            # test is reapplied below.
             hi = int(np.searchsorted(sx, ex[oi] + max_gap + 1e-3, side="right"))
             lo = oi + 1
             if hi <= lo:
                 continue
             ok = (sx[lo:hi] - ex[oi]) <= max_gap
             ok &= np.abs(ey[oi] - sy[lo:hi]) <= dy
-            ok &= ~((sx[lo:hi] > sx[oi]) & (ex[lo:hi] < ex[oi]))  # j inside i: dedup handles overlap
+            # j inside i: dedup handles that overlap
+            ok &= ~((sx[lo:hi] > sx[oi]) & (ex[lo:hi] < ex[oi]))
             for j in np.flatnonzero(ok):
                 ra, rb = find(idx[oi]), find(idx[lo + int(j)])
                 if ra != rb:
@@ -388,8 +390,8 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
                     cands.append(sub)
 
     cands.sort(key=lambda c: -c["_len"])                       # longest first, then drop overlaps
-    # Vectorized equivalent of "keep c unless it overlaps anything already kept": one IoU pass per
-    # candidate against every kept box at once, instead of a scalar call per pair.
+    # Keep c unless it overlaps anything already kept: one IoU pass per candidate against every
+    # kept box at once.
     kept = []
     boxes = np.empty((len(cands), 4), dtype=np.float64)
     for c in cands:

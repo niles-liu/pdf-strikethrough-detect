@@ -61,11 +61,11 @@ class StruckWord(TypedDict, total=False):
     # scanned only
     score: float                 # layer-1 geometric score
     cnn_prob: Optional[float]    # StrikeNet probability (None if the crop was too small to score)
-    cnn_agrees: Optional[bool]   # on 'auto' records: did the CNN confirm at p_hi? (None if unscored)
+    cnn_agrees: Optional[bool]   # 'auto' records: did the CNN confirm at p_hi? (None if unscored)
     conf: Optional[float]        # OCR word confidence, if the backend supplied one
-    geom_corroborated: bool      # has an in-band, through-glyph, shattered-fill strike (real-strike
-                                 # geometry) — spares the word from the DI-confidence veto
-    conf_veto: bool              # True when the 0.9.1 DI-confidence veto downgraded this record
+    geom_corroborated: bool      # in-band line with glyph ink on both sides (solid or shattered),
+                                 # i.e. real-strike geometry, which the DI-confidence veto spares
+    conf_veto: bool              # True when the DI-confidence veto downgraded this record
                                  # (OCR conf > max_clean_conf AND no corroborating geometry)
 
 

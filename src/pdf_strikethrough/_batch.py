@@ -1,12 +1,12 @@
-"""Batch-mode helpers for the CLI (R-batch): per-file detection + the multiprocessing worker.
+"""Batch-mode helpers for the CLI: per-file detection + the multiprocessing worker.
 
 These live in a regular importable module, NOT in ``__main__``: a ``ProcessPoolExecutor`` worker is
 pickled by its qualified name, and under ``python -m pdf_strikethrough`` the ``__main__`` module is
 re-registered so a worker defined there can't be resolved in the spawned child. Defined here it
 pickles the same way whether the CLI was launched via the console script or ``-m``.
 
-The single-file CLI (``__main__``) imports ``SCHEMA_VERSION`` / ``_JSON_EVIDENCE`` / the OCR builders
-from here too, so the shared payload shape has one home (the version is in ``types``).
+The single-file CLI (``__main__``) imports ``SCHEMA_VERSION`` / ``_JSON_EVIDENCE`` / the OCR
+builders from here too, so the shared payload shape has one home (the version is in ``types``).
 """
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ def _detect_payload(path, opts):
                 "page_count": res["page_count"], "page_sources": res["page_sources"],
                 "n_struck_final": len(final), "warnings": res.get("warnings", []),
                 "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
-    except Exception as e:               # noqa: BLE001 — batch resilience: report, don't abort the run
+    except Exception as e:               # batch resilience: report it, don't abort the run
         return {"schema_version": SCHEMA_VERSION, "source": path,
                 "error": f"{type(e).__name__}: {e}"}
 

@@ -72,17 +72,40 @@ def load_dataset(dataset_dir):
     return np.stack(xs).astype(np.float32), np.asarray(ys, dtype=np.float32), digest
 
 
+def split(n, val_frac, seed):
+    """The (validation, training) indices `train` uses for `n` crops: a seeded permutation whose
+    first max(1, n * val_frac) entries are held out."""
+    idx = np.random.default_rng(seed).permutation(n)
+    n_val = max(1, int(n * val_frac))
+    return idx[:n_val], idx[n_val:]
+
+
+def split_shortfall(y, val_frac, seed, alpha):
+    """Why :func:`split` cannot calibrate a model from labels `y`, or None if it can: the
+    validation split needs enough struck crops for `alpha`'s conformal threshold and a clean one,
+    and the training split needs a crop. Too few struck crops and conformal_threshold returns
+    0.0, a model that calls every candidate struck."""
+    val_idx, tr_idx = split(len(y), val_frac, seed)
+    n_struck = int(y[val_idx].sum())
+    n_clean = len(val_idx) - n_struck
+    need = int(np.ceil(1 / alpha)) - 1
+    if len(tr_idx) and n_struck >= need and n_clean:
+        return None
+    return (f"the validation split holds {n_struck} struck and {n_clean} clean crops and the "
+            f"training split {len(tr_idx)}; --alpha {alpha} needs at least {need} struck and 1 "
+            f"clean to set the thresholds, and training needs a crop (label more crops, or "
+            f"adjust --val-frac or --alpha)")
+
+
 def train(x, y, *, epochs=40, val_frac=0.2, batch=64, lr=1e-3, seed=0):
-    """Train StrikeNet on standardized crops. Returns (net, val_probs, val_labels)."""
+    """Train StrikeNet on standardized crops, holding out :func:`split`'s validation crops.
+    Returns (net, val_probs, val_labels)."""
     import torch
     from torch import nn
 
     from pdf_strikethrough.cnn import _build_torch_net
-    rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
-    idx = rng.permutation(len(x))
-    n_val = max(1, int(len(x) * val_frac))
-    val_idx, tr_idx = idx[:n_val], idx[n_val:]
+    val_idx, tr_idx = split(len(x), val_frac, seed)
     xt = torch.from_numpy(x[tr_idx][:, None, :, :])
     yt = torch.from_numpy(y[tr_idx])
     xv = torch.from_numpy(x[val_idx][:, None, :, :])
@@ -146,7 +169,7 @@ def export(net, out_dir, *, p_hi, p_lo, version, training=None):
         meta["training"] = training
     meta_path.unlink(missing_ok=True)               # the new graph never sits beside an old meta
     tmp.replace(onnx_path)
-    meta_path.write_text(json.dumps(meta, indent=2))
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8", newline="\n")
     return onnx_path, meta
 
 
@@ -172,20 +195,16 @@ def main(argv=None):
 
     x, y, digest = load_dataset(args.dataset_dir)
     print(f"loaded {len(x)} labeled crops ({int(y.sum())} struck, {int((1 - y).sum())} clean)")
+    problem = split_shortfall(y, args.val_frac, args.seed, args.alpha)   # before the epochs
+    if problem:
+        sys.exit(problem)
     hparams = {"epochs": args.epochs, "val_frac": args.val_frac, "batch": args.batch,
                "lr": args.lr, "seed": args.seed}
     net, val_probs, val_y = train(x, y, **hparams)
 
     # p_hi: split-conformal threshold on validation struck-word probabilities (a 1-alpha recall
     # floor on crops like them). p_lo: the precision-oriented clean boundary, mirrored below.
-    # Too few struck crops and conformal_threshold returns 0.0, a model that calls every
-    # candidate struck.
     struck_probs, clean_probs = val_probs[val_y > 0.5], val_probs[val_y <= 0.5]
-    need = int(np.ceil(1 / args.alpha)) - 1
-    if struck_probs.size < need or not clean_probs.size:
-        sys.exit(f"the validation split holds {struck_probs.size} struck and {clean_probs.size} "
-                 f"clean crops; --alpha {args.alpha} needs at least {need} struck and 1 clean to "
-                 f"set the thresholds (label more crops, or raise --val-frac or --alpha)")
     p_hi = calibration.conformal_threshold(struck_probs, alpha=args.alpha)
     p_lo = float(np.quantile(clean_probs, 1 - args.alpha))
     p_lo = min(p_lo, p_hi)                          # keep the 'unsure' band well-formed

@@ -2,12 +2,12 @@
 
 Scanned, tightly-ruled tables and forms (via Azure DI) over-flagged clean text: a solid full-width
 table rule rode high spine-fill straight to tier 'auto', and StrikeNet saturates (prob -> 1.0) on
-faint scans so it confirmed nearly everything. Two fixes:
+faint scans so it confirmed nearly everything. Two fixes, issue #4·B and #4·A:
 
   Fix B (geometry) — an in-band, long, solid line with ink on only ONE side is a table rule /
     underline, not a strike; reject it instead of accepting on fill alone.
   Fix A (verdict)  — on the calibrated-confidence (DI) path, downgrade a struck candidate that
-    OCRs at/above ``max_clean_conf`` AND lacks corroborating strike geometry.
+    OCRs above ``max_clean_conf`` AND lacks corroborating strike geometry.
 
 The originating corpus is private; these use synthetic rasters that reproduce the same geometry.
 See CHANGELOG 0.9.1.
@@ -134,4 +134,5 @@ def test_fix_a_corroborated_high_conf_word_survives_veto(monkeypatch):
         f"{[(s['text'], s.get('geom_corroborated')) for s in struck]}")
     recs = detect.detect_scanned_image(gray, words, config=ScanConfig.azure_di(), dpi=DPI)
     by = {r["text"]: r for r in recs}
-    assert by.get("struck", {}).get("final"), f"corroborated high-conf strike was wrongly vetoed: {recs}"
+    assert by.get("struck", {}).get("final"), (
+        f"corroborated high-conf strike was wrongly vetoed: {recs}")

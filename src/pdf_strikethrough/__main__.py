@@ -414,7 +414,7 @@ def _cmd_detect_docx(args, path):
     return 0
 
 
-# --- batch mode (R-batch): many files, optional multiprocessing, JSONL output -----------------
+# --- batch mode: many files, optional multiprocessing, JSONL output ---------------------------
 # The per-file worker + payload builder live in _batch.py (picklable under both the console script
 # and `python -m`); this module only orchestrates output and the aggregate exit code.
 

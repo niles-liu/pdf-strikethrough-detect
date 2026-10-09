@@ -31,7 +31,7 @@ try:
 
     from pdf_strikethrough.ocr import rapidocr_backend
     _OCR = rapidocr_backend(engine=RapidOCR())
-except Exception as e:                               # noqa: BLE001 - OCR is optional in the demo
+except Exception as e:                               # OCR is optional in the demo
     print(f"OCR unavailable, scanned pages will be skipped: {type(e).__name__}: {e}",
           file=sys.stderr)
     _OCR = None
@@ -49,7 +49,7 @@ try:
         meta_url=f"{_MODEL_BASE}/strike_verdict_cnn.meta.json",
         meta_sha256="4388b14715bfb1f51b56bb6c463d8f5c0847533316297890e70ac0b2234405d4",
     )
-except Exception:                                    # noqa: BLE001 - packaged model is the fallback
+except Exception:                                    # the packaged model is the fallback
     pass
 
 MAX_PAGES = 5                                        # keep the hosted demo responsive
@@ -83,7 +83,7 @@ def analyze(file):
 
     try:
         res = _detect(path, is_image)
-    except Exception as e:                           # noqa: BLE001 - say why, not a bare "Error"
+    except Exception as e:                           # say why, not a bare "Error"
         return [], "", "", f"Detection failed: {type(e).__name__}: {e}"
     n_final = sum(1 for w in res["words"] if w.get("final"))
     warns = "\n".join(f"warning: {w}" for w in res.get("warnings", []))

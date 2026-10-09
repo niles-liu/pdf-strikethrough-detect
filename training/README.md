@@ -38,8 +38,9 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
   mirrors it on the clean class. See `pdf_strikethrough.calibration`. The floor holds for new crops
   exchangeable with the validation crops. The split is random over crops, not documents, so the
   validation crops come from documents the model also trained on; on any document outside the
-  labeled set, recall can fall below the floor. The script stops when the validation split holds
-  fewer struck crops than `--alpha` needs (19 at the default 0.05), or no clean ones.
+  labeled set, recall can fall below the floor. Before it trains, the script stops if the
+  validation split holds fewer struck crops than `--alpha` needs (19 at the default 0.05) or no
+  clean ones, or leaves nothing to train on.
 - **The model records what it was trained on.** The exported meta carries a `training` block: the
   sha256 of the labeled set (one `"<crop sha256> <label>"` line per labeled row in `crops.jsonl`
   order, so it changes with any crop file, label or row order, but not with file names), the

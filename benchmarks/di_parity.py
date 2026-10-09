@@ -50,7 +50,8 @@ def main() -> None:
         print("No manifest entries carry both `di_result` and `di_reference_struck` — nothing to "
               "compare (see benchmarks/README.md).")
         return
-    overall = min(total_ours, total_ref) / max(total_ours, total_ref) if max(total_ours, total_ref) else 1.0
+    hi = max(total_ours, total_ref)
+    overall = min(total_ours, total_ref) / hi if hi else 1.0
     print(f"{'TOTAL':<40} {total_ours:>6} {total_ref:>7} {overall:>6.1%}")
     print(f"\n{total_ours} vs {total_ref} struck words -> {overall:.1%} parity with the original "
           f"Azure-DI pipeline.")
