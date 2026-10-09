@@ -33,6 +33,24 @@ All notable changes to this project are documented here. The format follows
   the sdist and wheel, checks them and tests the wheel, and publishes nothing; a GitHub Release
   publishes to PyPI as before.
 
+### Fixed
+- **The model card described the CNN thresholds wrongly.** Of the two, only `p_hi` decides what
+  is reported: a candidate the CNN does not confirm at `p_hi` is dropped, and `p_lo` only labels
+  the rest clean or unsure. The card wrote the unsure band as `[p_lo, p_hi)`, said unsure words
+  were deferred to geometry, and gave `ScanConfig.precision_first` a `cnn_p_lo` argument; it
+  takes `cnn_p_hi`.
+- **`tools/export_model.py` could leave a new model beside an old meta.** It wrote the ONNX into
+  the package before its parity check, an `assert` that `python -O` skips. It now writes to a
+  temporary file and replaces the model and meta only after the check passes, and no longer
+  crashes printing `Δ` on a cp1252 console after writing the files. Both training tools write
+  their meta with LF line endings.
+- **`training/train_strikenet.py` checked its validation split only after training**, and one
+  labeled crop crashed it on an empty training split. It now stops before the first epoch and
+  says what the split lacks; the same seed still gives the same split and model.
+- **A test pinned the wrong switch.** The chain-gate escape test ran `ScanConfig.ruled_forms()`,
+  whose printed-rule veto removes the line before the escape is reached, so nothing tested
+  `rescue_clean_chains=False`; now one test does, and another pins the veto's order.
+
 ## [0.12.1] — 2026-10-08
 
 Correctness patch for the shipped StrikeNet's documentation and the tooling around it. Nothing
