@@ -25,7 +25,7 @@ detection is "universally poor" across 15 VLMs, with strikethrough not broken ou
 - The models get their best shot: both input routes, a prompt ladder, explicit per-model settings
   (effort or thinking budget, output limit, image resolution) and a tiled-image condition.
 - Ground truth is independent of the package where possible (G0, G2). Where it is not (G1), the
-  package is not scored against it as a contest, and an independent annotator measures its error
+  package is not scored against it as a contest, and independent annotators measure its error
   rate.
 - The package runs [frozen](#package-under-test-frozen), never tuned on the test split.
 - Every loss sits in the same table as the wins, and the failure gallery shows every arm's worst
@@ -33,7 +33,7 @@ detection is "universally poor" across 15 VLMs, with strikethrough not broken ou
 - Code, prompts, cached responses and annotation labels are public, so anyone can re-score the run,
   or re-run it with their own keys.
 - The package's author designs and runs the benchmark. The pre-registration, the independent
-  annotator and the public responses are the checks on that.
+  annotators and the public responses are the checks on that.
 
 ## Expected outcomes
 
@@ -112,10 +112,11 @@ pooled ones.
     and its scanned path were checked against these documents. The manifest's `scanned_pages` are
     excluded from the G1 sample, which removes the Copyright Office document (all four of its
     pages), so G1 samples nine documents.
-  - **Its error rate is measured.** Before any test call, an annotator who did not build the package
-    labels a stratified sample of G1-test words from the page image, without seeing the ground
-    truth; the error rate is reported with a CI. Words on which most R-best model arms disagree with
-    the ground truth are adjudicated the same way, and corrections apply to every arm.
+  - **Its error rate is measured.** Before any test call, the two annotators (see the
+    [audit](#checks-and-the-audit)) label a stratified sample of G1-test words from the page image,
+    without seeing the ground truth; the error rate is reported with a CI. Words on which most
+    R-best model arms disagree with the ground truth are adjudicated the same way, and corrections
+    apply to every arm.
   - **Sample:** per document, up to 10 struck pages stratified by strike density and partial-word
     strikes (all of them where fewer exist), and about 3 strike-free pages from each document that
     has any (five of the nine do). Two documents are dev; the page list and its seed are tagged.
@@ -151,7 +152,9 @@ pooled ones.
     ceiling.
   - Google: Gemini Pro and Flash.
   - OpenAI: the flagship and its mini.
-  - One open-weights VLM, run locally: the "also free" comparator.
+  - One or two open-weights vision models (for example Qwen's VL line or Kimi-VL), served through a
+    hosted API with the provider and the precision pinned: anyone can re-run them with the same
+    weights.
   - One OCR-to-markdown model (olmOCR, Mistral OCR or PaddleOCR-VL), with its documented prompt,
     once it is checked to emit `~~` at all.
 
@@ -289,12 +292,14 @@ its code is hashed into the second pre-registration tag.
   The arm is never shown. A *no* on question 2 is a ground-truth error, and on question 3 a scorer
   bug; each is fixed at its source and every affected score recomputed. No number is overridden by
   hand.
-- **The second annotator** is someone outside the package's development, named in the write-up. They
-  read the definitions above and label 10 practice items with known answers, then label a random
-  25% of the audit items independently, plus every *no* on questions 2 and 3. Agreement on question
-  1 is reported as Cohen's κ with a CI; below 0.7 (*proposed*), the definitions are revised and the
-  round repeated. Pre-adjudication labels are published. For a pilot audit of up to 140 items (up
-  to 20 per arm), that is about an hour.
+- **Two annotators** do the labelling: members of a related course project who had no part in the
+  package's development, named in the write-up with their consent. Each reads the definitions
+  above and labels 10 practice items with known answers. They then split the audit items and the
+  G1 sample, with 25% of the items labelled by both, independently, and each checks every *no* the
+  other gives on questions 2 and 3. Agreement on question 1 is reported as Cohen's κ with a CI;
+  below 0.7, the definitions are revised and the round repeated. The author adjudicates
+  disagreements, and the pre-adjudication labels are published. For a pilot audit of up to 140
+  items (up to 20 per arm), that is about an hour each.
 
 ## Package under test: frozen
 
@@ -341,8 +346,10 @@ its code is hashed into the second pre-registration tag.
 - `--dry-run` prices a run before anything is spent: input tokens exactly by each provider's token
   counting, output and thinking tokens at the 95th percentile seen on dev (the pilot and the
   ladder) per model and rung.
-- Batch APIs (about 50% off at all three providers). API keys come from the environment or the
-  repo's `.env` (git-ignored), never a committed file.
+- Requests go to each provider's own API, where batching (about 50% off at all three) and token
+  counting are native; the open models go through a hosted API whose provider and precision are
+  recorded. API keys come from the environment or the repo's `.env` (git-ignored), never a
+  committed file.
 - RapidOCR downloads its OCR models on first use: their sha256s are recorded and the files mirrored.
 - Cached responses go to the Hugging Face dataset
   [`niles-liu/strikethrough-benchmark`](https://huggingface.co/datasets/niles-liu/strikethrough-benchmark)
@@ -381,7 +388,8 @@ Each tag:
    The repository's releases are immutable, so the tag cannot move to another commit, and GitHub
    records when the release was published. A tag that does not start with `v` runs no publish
    job, and `--latest=false` keeps the package's release marked latest.
-3. Archive the release on Zenodo or OSF.
+3. Zenodo archives the release, with a DOI: its GitHub integration does this for every release of
+   the repository once switched on.
 
 Every results file records both tags. A change after a tag is a logged deviation, with the results
 shown both ways.
@@ -400,7 +408,8 @@ a future model trained on the public pages can still be checked.
 - The prompt ladder on dev: about 20 pages × 7 rungs × 3 non-flagship models, plus paraphrases and
   C2-tiled, $15–25.
 - The main run: about 150 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for all
-  seven models together, with markdown-length answers. That is about $25 per prompt × input cell,
+  seven paid models together, with markdown-length answers (the open vision models, through a
+  hosted API, add a few dollars). That is about $25 per prompt × input cell,
   so R0, R1 and R-best on C1 and C2 come to about $150, or $75 batched. C1′ at R0 and R1, C2-tiled
   at R-best and the R1 paraphrases add about $90–115 batched.
 - The Fable 5.1 subset, the QA probe, the latency sample (unbatched) and C3: about $30–50.
@@ -433,7 +442,7 @@ a future model trained on the public pages can still be checked.
   masking, the independent error-rate sample, scoring package-against-model contests on G0 and G2
   only, and labelling P-scan's G1 results in-sample.
 - The package's author designs the benchmark. Mitigated by the pre-registration tags and archive,
-  the independent annotator, G0's fixed strata, and public responses and labels.
+  the independent annotators, G0's fixed strata, and public responses and labels.
 - Synthetic pages and scans are cleaner than real ones; the printed-and-scanned G0 pages and G2 are
   the checks.
 - Contamination: G0 and G2 are the controls, and a held-back G0 seed set covers future models.
@@ -441,6 +450,6 @@ a future model trained on the public pages can still be checked.
 - Model drift: model IDs are dated, each test batch runs within a week, and a canary closes it.
 - Prompt sensitivity: a seven-rung ladder chosen on dev, plus the paraphrase spread.
 - Scorer bugs: golden tests, the hash in `prereg-2`, and the audits.
-- Annotation: most audit items have one annotator; a second, outside annotator labels an overlap
-  sample, and κ is reported.
+- Annotation: two annotators from outside the package's development do the labelling, 25% of it
+  double-labelled for κ, and the author only adjudicates.
 - Small samples: the bootstrap over documents, per-document results, and "insufficient data" cells.
