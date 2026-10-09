@@ -1,9 +1,10 @@
 # Frontier-model benchmark: plan
 
 **Status: a working plan. Nothing here has run, and nothing is pre-registered yet.** The frozen
-protocol will be `PREREG.md` in this directory, committed and timestamped in two steps (see
-[Pre-registration](#pre-registration)) before any arm touches a test page. Where the two differ,
-`PREREG.md` governs. Values marked *proposed* are this plan's defaults until `PREREG.md` fixes them.
+protocol is [`PREREG.md`](PREREG.md), a draft until it is committed and timestamped in two steps
+(see [Pre-registration](#pre-registration)) before any arm touches a test page. Where the two
+differ, `PREREG.md` governs. Values marked *proposed* are this plan's defaults until `PREREG.md`
+fixes them.
 
 **Names used below.** Questions Q1–Q6; ground-truth sets G0–G4; arms B-* (baselines), P-* (this
 package), M (a model alone), M+P (a model with the package) and P→M (the package's text to a
@@ -13,10 +14,12 @@ on dev; stages B0–B6 (see [Order](#order)), always written "stage B1" outside 
 ## The question
 
 Can a frontier model do this package's job: find struck-through (deleted) text in a PDF or a scan,
-and keep it out of the live text? No published number answers it. No strikethrough evaluation of
-LLMs or VLMs turned up, and olmOCR-bench and OmniDocBench do not score it. The closest evidence is
-[arXiv 2603.08497](https://arxiv.org/abs/2603.08497) ("Reading ≠ Seeing"), where font-style
-detection is "universally poor" across 15 VLMs, with strikethrough not broken out.
+and keep it out of the live text? No published number answers it. ParseBench
+([arXiv 2604.08538](https://arxiv.org/abs/2604.08538)) scores strikethrough markup on real
+enterprise pages, but folds it into one semantic-formatting score with bold, superscripts and
+headings. In [arXiv 2603.08497](https://arxiv.org/abs/2603.08497) ("Reading ≠ Seeing"),
+font-style detection is "universally poor" across 15 VLMs, with strikethrough not broken out.
+olmOCR-bench and OmniDocBench do not score it.
 
 ## Ground rules
 
@@ -64,20 +67,21 @@ Hypotheses, reported whichever way they come out.
 **Primary endpoints:** at most four, each with a win rule; everything else is exploratory.
 *Proposed:*
 1. Leakage at R0 (Q1), per flagship model, on G0-test, G1-test and G2-test, with its confidence
-   interval. On G0 and G2 the package wins if the paired 95% CI of model minus package leakage
-   lies above 0.
+   interval. On G0 and G2 the package (P-native) wins if model minus package leakage lies above 0
+   on both C1 and C2.
 2. Leakage at R1 (Q6), per flagship, on the C2 pages of G0-test and G2-test: a model matches the
-   package if the paired CI of model minus package leakage lies within ±1 point and the upper
-   bound of the difference in marked over-deletion is under 1 point.
+   package (P-native) if model minus package leakage lies within ±1 point and model minus
+   package marked over-deletion lies below 1 point.
 3. Struck-word F1 at R-best (Q2), on the image condition chosen per provider on dev and fixed in
-   `prereg-2`, model against package on G0-test and G2-test: the side whose paired CI excludes 0
-   wins.
-4. C1 against C2 leakage at R0 (Q3), per flagship: C1 leaks more if the paired CI of C1 minus C2
-   lies above 0.
+   `prereg-2`, model against P-scan on G0-test and G2-test: either side wins when the difference
+   lies on its side of 0.
+4. C1 against C2 leakage at R0 (Q3), per flagship, on G0-test and G2-test (G1 is reported, not
+   tested): C1 leaks more if C1 minus C2 lies above 0.
 
-Comparisons across flagships are Holm-adjusted. Cells holding fewer than 200 struck sub-tokens or
-fewer than 3 documents (*proposed*) read "insufficient data". Per-document results sit beside the
-pooled ones.
+`PREREG.md` decides each claim by an exact sign-flip test over clusters (documents, or G0 pages),
+Holm-adjusted within the endpoint, with the intervals reported beside it. Cells holding fewer
+than 200 struck sub-tokens or fewer than 6 clusters (*proposed*) read "insufficient data".
+Per-cluster results sit beside the pooled ones.
 
 ## Ground truth
 
@@ -122,12 +126,13 @@ pooled ones.
     has any (five of the nine do). Two documents are dev; the page list and its seed are tagged.
   - G1's documents are public, so a model may have seen them, or their final text, in training. G0
     and G2 are the controls.
-- **G2 US Congress bills.** GPO bill XML marks deleted text with `<deleted-text>`; aligned to the
-  rendered strike, that gives ground truth independent of this package, and new bills appear daily,
-  so some postdate the latest training cutoff of every model in the run. A slice of 4 or more such
-  bills (about 30 pages) joins the main run (stage B3). Alignment coverage is reported per page and
-  pages under 98% are dropped; the annotators hand-check 100 aligned spans; margin line numbers
-  are page furniture.
+- **G2 US Congress bills.** GPO bill XML marks struck phrases with `<deleted-phrase>` and struck
+  sections with `changed="deleted"`; aligned to the rendered strike, that gives ground truth
+  independent of this package, and new bills appear daily, so some postdate the latest training
+  cutoff of every model in the run. A slice of 12 or more such bills (about 40 pages) joins the
+  main run (stage B3). Alignment coverage is reported per page and pages under 98% are dropped;
+  the annotators hand-check 100 aligned spans; GPO's typesetting slug, margin lines, running foot
+  and line numbers are page furniture.
 - **G3 Handwritten strike-outs:** the HWG dataset
   ([Zenodo 21560739](https://zenodo.org/records/21560739), CC-BY 4.0): its `written` and
   `synthetic` parts and the ASAP and GoBo crops of `collected` (its IAM samples and the `SOW` part
@@ -148,16 +153,15 @@ pooled ones.
   dpi=200)`. Any other package configuration (`method="both"`, say) is a separate arm, never a
   replacement.
 - **M, a model alone.** At least a flagship and a small tier per provider:
-  - Anthropic: Claude Opus 5.5, Sonnet 5.5 and Haiku 4.5, plus Fable 5.1 on a subset as the
+  - Anthropic: Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5, plus Fable 5.1 on a subset as the
     ceiling.
-  - Google: Gemini Pro and Flash.
-  - OpenAI: the flagship and its mini.
-  - xAI: the Grok flagship and a smaller Grok.
-  - One or two open-weights vision models (for example Qwen's VL line or Kimi-VL), served through a
-    hosted API with the provider and the precision pinned: anyone can re-run them with the same
-    weights.
-  - One OCR-to-markdown model (olmOCR, Mistral OCR or PaddleOCR-VL), with its documented prompt,
-    once it is checked to emit `~~` at all.
+  - Google: Gemini 3.1 Pro, a preview (Google has no stable 3.x Pro), and Gemini 3.8 Flash.
+  - OpenAI: GPT-6 Astra and GPT-6 Luna, the family's smallest tier (GPT-6 has no mini).
+  - xAI: Grok 4.7 and Grok 4.3.
+  - Two open-weights vision models, Qwen3.8-27B and Kimi K3, each served through a hosted API at
+    its released precision with the provider pinned: anyone can re-run them with the same weights.
+  - One OCR-to-markdown model, Chandra OCR 2, whose documented prompt allows a strikethrough tag,
+    run as documented once it is checked to emit strike markup at all.
 
   `PREREG.md` pins exact model IDs and a per-model settings table: effort or thinking budget (set
   explicitly; provider defaults differ), output token limit, maximum image resolution or detail, and
@@ -172,16 +176,17 @@ pooled ones.
 ## Inputs
 
 - **C1 PDF upload,** each provider's native document input (Claude receives page images plus the
-  extracted text). xAI's, by its docs, gives the model a search tool over the file rather than the
-  page (stage B1 checks this with an image-only PDF); it is Grok's C1 all the same, since it is the
-  route a developer gets. The open vision models have no document input, so no C1.
+  extracted text). By xAI's docs, its document input treats a PDF as a text format and gives the
+  model a search tool over it, not the page (stage B1 checks this with an image-only PDF); it is
+  Grok's C1 all the same, since it is the route a developer gets. The open vision models have no
+  document input, so no C1.
 - **C1′ Image plus text:** the C2 image with the page's extracted text as a text block, the same for
   every provider. It isolates the text layer for Q3.
 - **C2 Page image:** 200 dpi, identical bytes for every model.
 - **C2-tiled:** the same page as overlapping full-resolution bands, at R-best for every model. A
-  thin strike can vanish when a provider downscales a page: Claude's high-resolution models take up
-  to 2576 px on the long edge (about 4.8k image tokens), and Haiku 4.5 about 1.15 MP, so a 200 dpi
-  page is downscaled for it. Effective pixels are recorded.
+  thin strike can vanish when a provider downscales a page: Claude's models take up to 2576 px on
+  the long edge or about 4.8k image tokens, so a 200 dpi page arrives at about 99%, and OpenAI's
+  `detail: high` shrinks one to about 81%. Effective pixels are recorded.
 - **C3 Degradation:** a grid of degradation levels on G0 dev pages, up to the level where a person
   can no longer read 95% of a page, reported per level; plus 20 G0-test pages printed and scanned.
 - **C4 Handwritten crops** (G3).
@@ -214,13 +219,14 @@ Protocol:
 - The prompt texts live in this directory. The ladder is designed on the dev split only: 2 G1
   documents and a G0 dev seed. The pilot draws from dev only.
 - One ladder serves every provider. Provider settings are recorded inputs, not prompt edits.
-- **R-best is chosen per provider on dev** (*proposed*): the rung with the lowest leakage whose
-  marked over-deletion stays within 1 point of R0's, ties going to the cheaper rung. It is chosen on
-  one non-flagship model per provider (Sonnet 5.5, Gemini Flash, the OpenAI mini, the smaller
-  Grok) and confirmed on that provider's flagship before the second pre-registration tag. If the
-  flagship's best rung differs, it keeps the non-flagship's choice and the gap is reported. Each
-  open vision model chooses for itself. The image condition, C2 or C2-tiled, is chosen per
-  provider on dev the same way.
+- **R-best is chosen per provider on dev** (*proposed*): of the rungs that ask for marks (R2–R6),
+  the one leaving the fewest struck sub-tokens unmarked (live or absent) whose over-deletion, marked
+  and absent, stays no more than 1 point above R0's, ties going to the cheaper rung. It is chosen on
+  one non-flagship model per provider (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and
+  checked on that provider's flagship, which runs R-best and the runner-up, before the second
+  pre-registration tag. If the runner-up does better there, the non-flagship's choice stands and the
+  gap is reported. Each open vision model chooses for itself. The image condition, C2 or C2-tiled,
+  is then chosen per provider at that rung the same way.
 - The full test run carries R0, R1 and R-best for every model. The per-rung curve is exploratory;
   Q6 is answered on test by R0, R1 and R-best.
 - Three paraphrases each of R0, R1 and R-best give a paraphrase spread on dev; the R1 paraphrases
@@ -273,7 +279,8 @@ its code is hashed into the second pre-registration tag.
   batch turnaround is not latency.
 - **Properties, not contests:** determinism and native CER hold by construction. Word location
   counts only against an R4 variant that returns boxes (IoU ≥ 0.5).
-- **Statistics:** paired bootstrap, 10,000 replicates with a fixed seed, pages nested in documents.
+- **Statistics:** decisions by an exact paired sign-flip test over clusters (documents, or G0
+  pages); intervals from a paired cluster bootstrap, 10,000 replicates with a fixed seed.
 
 ## Checks and the audit
 
@@ -305,7 +312,7 @@ its code is hashed into the second pre-registration tag.
   adjudicates disagreements, and the pre-adjudication labels are published. A pilot audit of up
   to 160 items (up to 20 per arm) takes each annotator about 2 to 3 hours, and the test-run audit,
   160 items across the arms that enter a primary endpoint, about as long again. The G1 sample
-  (sized in `PREREG.md`) and the G2 spans add about an hour each.
+  (sized in `PREREG.md`) and the G2 spans add about an hour per annotator.
 
 ## Package under test: frozen
 
@@ -351,11 +358,11 @@ its code is hashed into the second pre-registration tag.
   scored as failures.
 - `--dry-run` prices a run before anything is spent: input tokens exactly by the provider's token
   counting where it counts images, otherwise from the `usage` seen on dev for the same route and
-  image size; output and thinking tokens, and xAI's billed document searches, at the 95th
-  percentile seen on dev (the pilot and the ladder) per model and rung.
-- Requests go to each provider's own API, batched where it can be: about 50% off at Anthropic,
-  Google and OpenAI, 20% off the smaller Grok, and nothing for the Grok flagship, which has no
-  batch API. The open models go through a hosted API whose provider and precision are pinned and
+  image size; output and thinking tokens, and xAI's billed document searches with the input they
+  add, at the 95th percentile seen on dev (the pilot and the ladder) per model and rung.
+- Requests go to each provider's own API, batched where the provider allows: about 50% off at
+  Anthropic, Google and OpenAI, 20% off Grok 4.3, and nothing for Grok 4.7, which has no batch
+  API. The open models go through a hosted API whose provider and precision are pinned and
   recorded. API keys come from the environment or the repo's `.env` (git-ignored), never a
   committed file.
 - RapidOCR downloads its OCR models on first use: their sha256s are recorded and the files mirrored.
@@ -381,11 +388,12 @@ author sets. So each stage of `PREREG.md` is tagged and archived:
 - **`prereg-1`, before the pilot** (end of stage B1): the questions, primary endpoints and win
   rules, the arms, the model list and the exact package calls, the G1 page list, seed and dev
   documents, the G0 generator commit, seeds and test-file sha256s, the G2 bill list with its
-  sha256s, cutoff date and alignment rule, the failure rule, the spending cap and the order in
-  which arms are dropped if it is reached.
-- **`prereg-2`, before any arm touches a test page** (end of stage B2): the scorer's code hash,
-  the R-best and image-condition choices, the prompt texts with their paraphrases and few-shot
-  images, the M+P and text-only prompts, and the per-model settings table.
+  sha256s and cutoff date, the failure rule, the spending cap and the order in which arms are
+  dropped if it is reached.
+- **`prereg-2`, before any arm touches a test page** (end of stage B2): the scorer's and the
+  statistics' code hashes, the R-best and image-condition choices, the prompt texts with their
+  paraphrases and few-shot images, the M+P and text-only prompts, the per-model settings table, and
+  the G2 alignment rule, which the span check may change.
 
 No arm, free or paid, touches a test page before `prereg-2`.
 
@@ -394,8 +402,8 @@ Each tag:
 2. Publish a GitHub Release on that commit:
    `gh release create prereg-1 --target <full commit sha> --title "Frontier benchmark pre-registration 1" --notes "PREREG.md sha256 <digest>" --latest=false`.
    The repository's releases are immutable, so the tag cannot move to another commit, and GitHub
-   records when the release was published. A tag that does not start with `v` runs no publish
-   job, and `--latest=false` keeps the package's release marked latest.
+   records when the release was published. A tag that does not start with `v` runs no publish job,
+   and `--latest=false` keeps the package's release marked latest.
 3. Zenodo archives the release, with a DOI. Its GitHub integration archives every release of the
    repository once switched on, so it is switched on before `prereg-1` is published.
 
@@ -415,7 +423,7 @@ a future model trained on the public pages can still be checked.
 - The pilot: 30 dev pages × 4 models × R2, about $6.
 - The prompt ladder on dev: about 20 pages × 7 rungs × 4 non-flagship models, plus paraphrases and
   C2-tiled, $20–30; the open vision models' own ladders add a few dollars.
-- The main run: about 150 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for the
+- The main run: about 165 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for the
   seven Anthropic, Google and OpenAI models together, with markdown-length answers. That is about
   $25 per prompt × input cell, so R0, R1 and R-best on C1 and C2 come to about $150, or $75
   batched. C1′ at R0 and R1, C2-tiled at R-best and the R1 paraphrases add about $90–115 batched.
@@ -429,14 +437,15 @@ a future model trained on the public pages can still be checked.
 
 ## Order
 
-- **B0** Write `PREREG.md`: the questions, endpoints, win rules, arms, package calls and spending
-  cap, and the model list.
-- **B1** Build the G0 generator, the G1 page sampler, the scorer and its golden tests, and the
-  harness with its dry run; run the free arms (B-naive, B-pm4llm, P-native, P-scan) on dev only.
-  Freeze the data, and tag `prereg-1`.
+- **B0** Write `PREREG.md` (drafted): the questions, endpoints, win rules, arms, package calls and
+  spending cap, and the model list.
+- **B1** Pin the models and smoke-test each one, xAI's document input with an image-only PDF
+  among the checks. Build the G0 generator, the G1 page sampler, the scorer and its golden tests,
+  and the harness with its dry run; run the free arms (B-naive, B-pm4llm, P-native, P-scan) on
+  dev only. Freeze the data, and tag `prereg-1`.
 - **B2** The pilot on dev (about $6): hand-audit, fix the scorer. The prompt ladder and C2-tiled
-  on dev ($20–30): choose R-best and the image condition per provider and confirm them on the
-  flagships. The G1 error-rate sample. Tag `prereg-2`.
+  on dev ($20–30, and a few dollars for the open models): choose R-best and the image condition
+  per provider and confirm them on the flagships. The G1 error-rate sample. Tag `prereg-2`.
 - **B3** The test run, batched where the provider allows, with the G2 slice: every arm, the R1
   paraphrases, the Fable 5.1 subset, the QA probe, the interactive latency sample, the test-run
   audit, confidence intervals, the results table, a leakage-against-cost scatter ($ per 1,000
@@ -457,11 +466,12 @@ a future model trained on the public pages can still be checked.
   the checks.
 - Contamination: G0 and G2 are the controls, and a held-back G0 seed set covers future models.
 - Provider downscaling: effective pixels are recorded, and C2-tiled is the countermeasure.
-- Model drift: model IDs are pinned, dated where the provider offers it, and each response's
-  reported version is recorded; each model's test requests run within a week, and a canary
-  closes them.
+- Model drift: model IDs are pinned, dated where the provider offers it, and the model ID and
+  version each response reports are recorded; each model's test requests run within a week, and
+  a canary closes them.
 - Prompt sensitivity: a seven-rung ladder chosen on dev, plus the paraphrase spread.
 - Scorer bugs: golden tests, the hash in `prereg-2`, and the audits.
 - Annotation: two annotators from outside the package's development do the labelling, with 25% of
   the audit and G1 items double-labelled for κ; the author only adjudicates.
-- Small samples: the bootstrap over documents, per-document results, and "insufficient data" cells.
+- Small samples: exact sign-flip tests and bootstrap intervals over clusters, per-cluster
+  results, and "insufficient data" cells.
