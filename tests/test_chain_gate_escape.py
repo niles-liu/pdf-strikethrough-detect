@@ -6,9 +6,10 @@ undamaged OCR on every hit is the glyph-chain signature. The gate has an escape:
 looks pen-edited it spares the line anyway and lets the CNN decide.
 
 On degraded ruled forms that escape is the dominant residual false-positive source, because
-``edit_prior`` measures scan quality rather than edits and the CNN saturates. ``ruled_forms()``
-therefore turns it off. These tests pin BOTH directions, so neither the default rescue nor the
-ruled-forms suppression can be lost silently.
+``edit_prior`` measures scan quality rather than edits and the CNN saturates.
+``rescue_clean_chains=False`` turns it off; it is deliberately not bundled into ``ruled_forms()``.
+These tests pin BOTH directions, so neither the default rescue nor its suppression can be lost
+silently.
 
 Synthetic rasters (the originating corpus is private) — same construction as
 ``test_one_sided_rules_and_confidence_veto.py``.
@@ -65,17 +66,30 @@ def test_escape_on_by_default_marks_the_clean_chain_twin():
         f"escape fired but did not stamp twin: {[(s['text'], s.get('twin')) for s in struck]}")
 
 
-def test_ruled_forms_suppresses_the_escape(monkeypatch):
-    """``ruled_forms()`` turns the escape off, so the same clean-OCR glyph chain is rejected at
-    layer 1 and never reaches the saturated CNN. Guards the measured 42 -> 28 FP drop."""
+def test_disabling_the_escape_rejects_the_clean_chain(monkeypatch):
+    """``rescue_clean_chains=False`` turns the escape off, so the same clean-OCR glyph chain is
+    rejected at layer 1 as a chain and never reaches the saturated CNN. The printed-rule veto stays
+    off, so this switch is the only one in play. On the private ruled-forms corpus it takes the
+    false positives from 113 to 96 on its own (0.12.0)."""
     _saturated_cnn(monkeypatch)
     gray, words = _clean_chain_page()
-    _tagged, struck = analyze_scanned_page(gray, words, config=ScanConfig.ruled_forms(), dpi=DPI)
+    config = ScanConfig(rescue_clean_chains=False)
+    tagged, struck = analyze_scanned_page(gray, words, config=config, dpi=DPI)
+    assert [t["label"] for t in tagged] == ["chain"], tagged
     assert not [s for s in struck if s["text"] == "caption"], (
-        f"clean-OCR glyph chain survived under ruled_forms(): {struck}")
-    recs = detect.detect_scanned_image(gray, words, config=ScanConfig.ruled_forms(), dpi=DPI)
+        f"clean-OCR glyph chain survived with the escape off: {struck}")
+    recs = detect.detect_scanned_image(gray, words, config=config, dpi=DPI)
     assert not any(r["text"] == "caption" and r.get("final") for r in recs), (
         f"chain reached the CNN and was confirmed: {recs}")
+
+
+def test_ruled_forms_vetoes_the_line_before_the_chain_gate():
+    """Under ``ruled_forms()`` this line never reaches the chain gate: the printed-rule veto tags it
+    a rule first, so the escape setting is moot there. Pinned so the test above cannot again be
+    mistaken for, or replaced by, a ruled-forms test."""
+    gray, words = _clean_chain_page()
+    tagged, _struck = analyze_scanned_page(gray, words, config=ScanConfig.ruled_forms(), dpi=DPI)
+    assert [t["label"] for t in tagged] == ["rule"], tagged
 
 
 def test_escape_is_independently_controllable():
