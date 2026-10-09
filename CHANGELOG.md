@@ -14,8 +14,8 @@ All notable changes to this project are documented here. The format follows
   `main` cannot reach the results.
 - **`benchmarks/frontier/PREREG.md` drafts that benchmark's pre-registration.** It names the
   models (Anthropic, Google, OpenAI and xAI, with open-weights vision models), fixes the decision
-  rules, the ground truth, the scoring and the audit, and adds a build guide for the stages before
-  its first tag. It binds only once tagged.
+  rules, the ground truth, the scoring and the audit, and adds a build guide for stages B1 to B3.
+  It binds only once tagged.
 
 ### Changed
 - **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub

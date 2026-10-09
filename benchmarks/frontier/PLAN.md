@@ -79,7 +79,7 @@ Hypotheses, reported whichever way they come out.
    lies above 0.
 
 Comparisons across flagships are Holm-adjusted. Cells holding fewer than 200 struck sub-tokens or
-fewer than 3 documents (*proposed*) read "insufficient data". Per-document results sit beside the
+fewer than 6 documents (*proposed*) read "insufficient data". Per-document results sit beside the
 pooled ones.
 
 ## Ground truth
@@ -125,12 +125,13 @@ pooled ones.
     has any (five of the nine do). Two documents are dev; the page list and its seed are tagged.
   - G1's documents are public, so a model may have seen them, or their final text, in training. G0
     and G2 are the controls.
-- **G2 US Congress bills.** GPO bill XML marks deleted text with `<deleted-text>`; aligned to the
-  rendered strike, that gives ground truth independent of this package, and new bills appear daily,
-  so some postdate the latest training cutoff of every model in the run. A slice of 4 or more such
-  bills (about 30 pages) joins the main run (stage B3). Alignment coverage is reported per page and
-  pages under 98% are dropped; the annotators hand-check 100 aligned spans; margin line numbers
-  are page furniture.
+- **G2 US Congress bills.** GPO bill XML marks struck phrases with `<deleted-phrase>` and struck
+  sections with `changed="deleted"`; aligned to the rendered strike, that gives ground truth
+  independent of this package, and new bills appear daily, so some postdate the latest training
+  cutoff of every model in the run. A slice of 12 or more such bills (about 40 pages) joins the
+  main run (stage B3). Alignment coverage is reported per page and pages under 98% are dropped;
+  the annotators hand-check 100 aligned spans; GPO's typesetting slug, margin lines and line
+  numbers are page furniture.
 - **G3 Handwritten strike-outs:** the HWG dataset
   ([Zenodo 21560739](https://zenodo.org/records/21560739), CC-BY 4.0): its `written` and
   `synthetic` parts and the ASAP and GoBo crops of `collected` (its IAM samples and the `SOW` part
@@ -151,7 +152,7 @@ pooled ones.
   dpi=200)`. Any other package configuration (`method="both"`, say) is a separate arm, never a
   replacement.
 - **M, a model alone.** At least a flagship and a small tier per provider:
-  - Anthropic: Claude Opus 5.5, Sonnet 5.5 and Haiku 4.5, plus Fable 5.1 on a subset as the
+  - Anthropic: Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5, plus Fable 5.1 on a subset as the
     ceiling.
   - Google: Gemini 3.1 Pro, a preview (Google has no stable 3.x Pro), and Gemini 3.8 Flash.
   - OpenAI: GPT-6 Astra and GPT-6 Luna, the family's smallest tier (GPT-6 has no mini).
@@ -182,9 +183,9 @@ pooled ones.
   every provider. It isolates the text layer for Q3.
 - **C2 Page image:** 200 dpi, identical bytes for every model.
 - **C2-tiled:** the same page as overlapping full-resolution bands, at R-best for every model. A
-  thin strike can vanish when a provider downscales a page: Claude's high-resolution models take up
-  to 2576 px on the long edge (about 4.8k image tokens), and Haiku 4.5 about 1.15 MP, so a 200 dpi
-  page is downscaled for it. Effective pixels are recorded.
+  thin strike can vanish when a provider downscales a page: Claude's models take up to 2576 px on
+  the long edge or about 4.8k image tokens, so a 200 dpi page arrives at about 99%, and OpenAI's
+  `detail: high` shrinks one to about 81%. Effective pixels are recorded.
 - **C3 Degradation:** a grid of degradation levels on G0 dev pages, up to the level where a person
   can no longer read 95% of a page, reported per level; plus 20 G0-test pages printed and scanned.
 - **C4 Handwritten crops** (G3).
@@ -217,13 +218,14 @@ Protocol:
 - The prompt texts live in this directory. The ladder is designed on the dev split only: 2 G1
   documents and a G0 dev seed. The pilot draws from dev only.
 - One ladder serves every provider. Provider settings are recorded inputs, not prompt edits.
-- **R-best is chosen per provider on dev** (*proposed*): the rung with the lowest leakage whose
-  marked over-deletion stays within 1 point of R0's, ties going to the cheaper rung. It is chosen on
-  one non-flagship model per provider (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and
-  confirmed on that provider's flagship before the second pre-registration tag. If the flagship's
-  best rung differs, it keeps the non-flagship's choice and the gap is reported. Each open vision
-  model chooses for itself. The image condition, C2 or C2-tiled, is chosen per provider on dev
-  the same way.
+- **R-best is chosen per provider on dev** (*proposed*): of the rungs that ask for marks (R2–R6),
+  the one with the lowest leakage whose over-deletion, marked and absent, stays within 1 point of
+  R0's, ties going to the cheaper rung. It is chosen on one non-flagship model per provider
+  (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and checked on that provider's flagship,
+  which runs R-best and the runner-up, before the second pre-registration tag. If the runner-up
+  does better there, the non-flagship's choice stands and the gap is reported. Each open vision
+  model chooses for itself. The image condition, C2 or C2-tiled, is then chosen per provider at
+  that rung the same way.
 - The full test run carries R0, R1 and R-best for every model. The per-rung curve is exploratory;
   Q6 is answered on test by R0, R1 and R-best.
 - Three paraphrases each of R0, R1 and R-best give a paraphrase spread on dev; the R1 paraphrases
@@ -276,7 +278,8 @@ its code is hashed into the second pre-registration tag.
   batch turnaround is not latency.
 - **Properties, not contests:** determinism and native CER hold by construction. Word location
   counts only against an R4 variant that returns boxes (IoU ≥ 0.5).
-- **Statistics:** paired bootstrap, 10,000 replicates with a fixed seed, pages nested in documents.
+- **Statistics:** decisions by an exact paired sign-flip test over documents; intervals from a
+  paired bootstrap, 10,000 replicates with a fixed seed, pages nested in documents.
 
 ## Checks and the audit
 
@@ -308,7 +311,7 @@ its code is hashed into the second pre-registration tag.
   adjudicates disagreements, and the pre-adjudication labels are published. A pilot audit of up
   to 160 items (up to 20 per arm) takes each annotator about 2 to 3 hours, and the test-run audit,
   160 items across the arms that enter a primary endpoint, about as long again. The G1 sample
-  (sized in `PREREG.md`) and the G2 spans add about an hour each.
+  (sized in `PREREG.md`) and the G2 spans add about an hour per annotator.
 
 ## Package under test: frozen
 
@@ -384,11 +387,12 @@ author sets. So each stage of `PREREG.md` is tagged and archived:
 - **`prereg-1`, before the pilot** (end of stage B1): the questions, primary endpoints and win
   rules, the arms, the model list and the exact package calls, the G1 page list, seed and dev
   documents, the G0 generator commit, seeds and test-file sha256s, the G2 bill list with its
-  sha256s, cutoff date and alignment rule, the failure rule, the spending cap and the order in
-  which arms are dropped if it is reached.
+  sha256s and cutoff date, the failure rule, the spending cap and the order in which arms are
+  dropped if it is reached.
 - **`prereg-2`, before any arm touches a test page** (end of stage B2): the scorer's code hash,
   the R-best and image-condition choices, the prompt texts with their paraphrases and few-shot
-  images, the M+P and text-only prompts, and the per-model settings table.
+  images, the M+P and text-only prompts, the per-model settings table, and the G2 alignment
+  rule, which the span check may change.
 
 No arm, free or paid, touches a test page before `prereg-2`.
 
@@ -468,4 +472,5 @@ a future model trained on the public pages can still be checked.
 - Scorer bugs: golden tests, the hash in `prereg-2`, and the audits.
 - Annotation: two annotators from outside the package's development do the labelling, with 25% of
   the audit and G1 items double-labelled for κ; the author only adjudicates.
-- Small samples: the bootstrap over documents, per-document results, and "insufficient data" cells.
+- Small samples: exact sign-flip tests and bootstrap intervals over documents, per-document
+  results, and "insufficient data" cells.

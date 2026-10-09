@@ -22,16 +22,17 @@ pinned model retired before its test requests run is dropped and reported as dro
 its place in a primary endpoint.
 
 - **Anthropic** (Messages API, Message Batches): Claude Opus 5.5 `claude-opus-5-5`, Claude
-  Sonnet 5.5 `claude-sonnet-5-5` and Claude Haiku 4.5 `claude-haiku-4-5-20251001`, plus Claude
-  Fable 5.1 `claude-fable-5-1` on a ceiling subset. Haiku 4.5 is listed as legacy, retired no
-  earlier than 2026-10-15, so it may be dropped under the rule above.
+  Sonnet 5.5 `claude-sonnet-5-5` and Claude Haiku 5.5 `claude-haiku-5-5` (released 2026-10-07),
+  plus Claude Fable 5.1 `claude-fable-5-1` on a ceiling subset. Anthropic's IDs are pinned
+  snapshots.
 - **Google** (Gemini API, its Batch API): Gemini 3.1 Pro `gemini-3.1-pro-preview` and Gemini 3.8
   Flash `gemini-3.8-flash`. Google has no stable 3.x Pro, so the flagship is a preview, which Google
-  may change or close with two weeks' notice; a stable Pro released before `prereg-1` replaces it.
+  may deprecate with two weeks' notice; a stable Pro released before `prereg-1` replaces it.
 - **OpenAI** (Responses API, Batch API): GPT-6 Astra `gpt-6-astra` and GPT-6 Luna `gpt-6-luna`,
   the family's smallest tier (GPT-6 has no mini).
-- **xAI** (Chat Completions API, which documents the image `detail` setting; the Batch API for
-  Grok 4.3 only): Grok 4.7 `grok-4.7` and Grok 4.3 `grok-4.3`. If Grok 4.3 fails a stage B1 smoke
+- **xAI** (Chat Completions API for images, the one that documents the image `detail` setting;
+  the Responses API for C1, the one that documents file attachments; the Batch API for Grok 4.3
+  only): Grok 4.7 `grok-4.7` and Grok 4.3 `grok-4.3`. If Grok 4.3 fails a stage B1 smoke
   test (images in a batch, or a PDF attachment), `grok-4.20-0309-reasoning` replaces it before
   `prereg-1`: the same price, images and a 20% batch discount, and a dated ID.
 - **Open weights,** each on a host that serves its released weights at their released precision,
@@ -41,10 +42,10 @@ its place in a primary endpoint.
   and `allow_fallbacks: false`. If Kimi K3 fails a stage B1 smoke test, Qwen3.5-397B-A17B at its
   official FP8 replaces it. DeepSeek is left out: its API resizes an image to about 1,300 × 1,300
   px, well below a 200 dpi page, and its earlier vision model's name now points at another model.
-- **OCR-to-markdown:** Chandra OCR 2 (`datalab-to/chandra-ocr-2`), the one such model whose
-  documented prompt allows a strikethrough tag (`<del>`), run as documented through Datalab's API
-  or from its released checkpoint. It joins only if it emits strike markup on dev at all (stage
-  B2), and then runs one cell, its own prompt on C2, reported beside the free arms.
+- **OCR-to-markdown:** Chandra OCR 2 (`datalab-to/chandra-ocr-2`), whose documented prompt allows a
+  strikethrough tag (`<del>`), unlike the other OCR models checked, run as documented through
+  Datalab's API or from its released checkpoint. It joins only if it emits strike markup on dev at
+  all (stage B2), and then runs one cell, its own prompt on C2, reported beside the free arms.
 
 The GPT-6 and Grok IDs, and Gemini 3.1 Pro's preview ID, name a model that its provider can update
 in place: none has a dated snapshot, and OpenAI has already changed GPT-6 models' image handling in
@@ -60,18 +61,23 @@ place once. So every response also records what the provider reports about the v
 - **Fable 5.1** runs on a ceiling subset of 50 test pages, stratified by set, at R0, R1 and
   Anthropic's R-best, on C2.
 
-**Settings.** One row per model, fixed in `prereg-2` and recorded with every response:
+**Settings.** One row per model, fixed in `prereg-2` (TBD (B2)) and recorded with every
+response:
 
 | Model | Effort | Image | Batch |
 |---|---|---|---|
-| Opus 5.5, Sonnet 5.5, Fable 5.1 | `effort: high` | as sent (up to 2,576 px) | Message Batches |
-| Haiku 4.5 | thinking on, 16,000-token budget | as sent (scaled to 1,568 px) | Message Batches |
-| Gemini 3.1 Pro, Gemini 3.8 Flash | `thinking_level: high` | `media_resolution: high` | Batch API |
+| Opus, Sonnet and Haiku 5.5; Fable 5.1 | `effort: high` | as sent | Message Batches |
+| Gemini 3.1 Pro, Gemini 3.8 Flash | `thinking_level: high` | `ultra_high` (see below) | Batch API |
 | GPT-6 Astra, GPT-6 Luna | `reasoning.effort: high` | `detail: original` | Batch API |
 | Grok 4.7 | `reasoning_effort: high` | `detail: high` | none: sequential |
 | Grok 4.3 | `reasoning_effort: high` | `detail: high` | Batch API |
 | Qwen3.8-27B, Kimi K3 | thinking on, if the host can | as sent; host limit recorded | sequential |
 
+- Images: Claude takes up to 2,576 px or 4,784 image tokens, so a full page arrives at about 99%
+  and a band unscaled. Gemini's image parts take `media_resolution: ultra_high` (2,240 tokens an
+  image) if stage B1 shows its Batch API accepts it, else `high` (1,120). GPT-6 Luna takes
+  `detail: high` if stage B1 shows it refuses `original`, which OpenAI's docs list only for GPT-6
+  Astra.
 - Effort is set explicitly at each model's documented `high` level, or its nearest equivalent,
   because the models get their best shot and provider defaults differ. The effort ablation runs
   the low level on a 20-page dev subset.
@@ -102,15 +108,16 @@ pages. "Points" are percentage points.
    G2-test: C1 leaks more when the difference lies above 0.
 
 **The decision rule.** Each claim above is one or more one-sided hypotheses about a paired
-difference. Each has a bootstrap p-value (see [Statistics](#statistics)); a claim needing several
-components to hold (both inputs in endpoint 1, three bounds in endpoint 2) takes the largest of
-their p-values. Within each endpoint the p-values are Holm-adjusted across flagships and sets
-(endpoint 3 counts each direction as its own hypothesis), and a claim holds when its adjusted
-p-value is below 0.025, the one-sided form of a 95% two-sided interval. Reported intervals are
-unadjusted 95% percentile intervals.
+difference, each with an exact p-value from a sign-flip test over clusters (see
+[Statistics](#statistics)). A claim needing several parts to hold (both inputs in endpoint 1,
+three bounds in endpoint 2) takes the largest of their p-values. Within each endpoint the
+p-values are Holm-adjusted across flagships and sets (endpoint 3 counts each direction as its
+own hypothesis), and a claim holds when its adjusted p-value is below 0.025, the one-sided form
+of a 95% two-sided interval. Reported intervals are unadjusted 95% bootstrap intervals.
 
-**Insufficient data.** A cell with fewer than 200 struck sub-tokens, or fewer than 3 documents,
-reads "insufficient data" and leaves its family before the Holm adjustment.
+**Insufficient data.** A cell with fewer than 200 struck sub-tokens, or fewer than 6 clusters
+(the fewest with which the sign-flip test can reach 0.025), reads "insufficient data" and
+leaves its family before the Holm adjustment.
 
 ## Ground truth
 
@@ -134,13 +141,14 @@ A seeded generator, `g0.py`, grown from `examples/native_quickstart.py::build_re
   stratum.
 - **Negatives:** N1 strike-free pages; N2 underlined words, including Courier with the underline
   at the baseline (a declared limitation); N3 table rules running close to text.
-- **Quotas,** in G0-test: at least 220 struck sub-tokens in each of E1–E6 and S2–S7, at least 1,500
-  live sub-tokens under N2 or beside N3, and 8 N1 pages. The generator packs strata onto pages
-  until every quota is met (about 45 pages); G0-dev holds 40% of each quota.
+- **Quotas,** in G0-test: at least 220 struck sub-tokens in each of E1–E6 and S2–S7 (S2–S7 words are
+  E1-encoded, so they count toward E1 too), at least 1,500 live sub-tokens under N2 or beside N3,
+  and 8 N1 pages. Each page is drawn independently of the others. The generator packs strata onto
+  pages until every quota is met (about 45 pages); G0-dev holds 40% of each quota.
 - **QA items:** for each S7 correction the generator also writes a question whose answer the
   deletion changed, with its live and struck answers, for the QA probe.
-- **Seeds:** dev `20261008`, test `20261009`. The held-back set's seed is chosen at stage B1,
-  kept private, and only its sha256 is published: TBD (B1).
+- **Seeds:** dev `20261008`, test `20261009`. The held-back set's seed is a random 128-bit number
+  drawn at stage B1 and kept private; only its sha256 is published: TBD (B1).
 - **Ground truth** is written by the generator from what it draws: each word's text, box and
   struck character spans. Each test file's sha256 is tagged in `prereg-1` (TBD (B1)), with the
   generator's commit.
@@ -150,35 +158,49 @@ A seeded generator, `g0.py`, grown from `examples/native_quickstart.py::build_re
 - **Documents:** the nine in [`../manifest.json`](../manifest.json) left once the manifest's
   `scanned_pages` are removed (the Copyright Office document leaves entirely).
 - **Ground truth:** per page, the package's `vector` and `flag` detectors (0.12.1, as frozen) run
-  separately. A word is struck where both report it, with the agreement's character span; a word
-  only one of them reports is masked for every arm and counted; every other word is live. Words
-  come from PyMuPDF's `page.get_text("words")` in extraction order.
-- **Dev documents:** two of the nine, drawn with `random.Random(20261010).sample(sorted(files), 2)`.
-  The other seven are G1-test.
-- **Pages,** per test document: up to 10 struck pages, sampled with seed `20261010` across six
-  cells (the document's strike-density tertiles crossed with whether the page has a partial-word
-  strike) in proportion to the cells' sizes, all of them where fewer exist; and up to 3
-  strike-free pages where the document has any. The page list is tagged in `prereg-1`: TBD (B1).
+  separately, and their records are matched to PyMuPDF's `page.get_text("words")` by box
+  overlap. A word both report is struck, with the vector detector's character span (the flag
+  detector's can take in the next character); a word only one reports is masked for every arm
+  and counted; every other word is live. Words keep PyMuPDF's extraction order.
+- **Page kinds:** a struck page holds at least one struck word; a strike-free page has no report
+  from either detector; a page whose only reports are masked words is neither, and is not
+  sampled.
+- **Dev documents:** two of the nine, drawn with `random.Random(20261010).sample(sorted(files), 2)`,
+  where `files` are the manifest's file names. The other seven are G1-test.
+- **Pages,** per test document, drawn with `random.Random(20261010)` in manifest order: up to 10
+  struck pages and up to 3 strike-free ones. Struck pages fall into six cells: the document's
+  tertiles of struck words per page (ranked by count, ties by page index, split as evenly as the
+  count allows) crossed with whether the page holds a partial-word strike. Each cell's share of
+  the 10 is proportional to its size, rounded by largest remainder; a cell short of its share
+  gives all it has, and the rest goes to the largest cells left. A document with 10 or fewer
+  struck pages gives them all. The page list is tagged in `prereg-1`: TBD (B1).
 - **Its error rate** is measured on a sample of G1-test words (see [The audit](#the-audit)).
 
 ### G2 US Congress bills
 
 - **Source:** GovInfo's `BILLS` collection, which publishes each bill version's XML and PDF.
-  Reported versions mark text a committee struck with `<deleted-text>`, and the PDF draws it
-  struck through.
-- **Selection:** bill versions carrying `<deleted-text>` and published after the latest training
-  cutoff any model in the run states (its release date where it states none), so that no model can
-  have seen them: the cutoff date is TBD (B1),
-  once the IDs are pinned, and is no earlier than 2026-09-01, since Grok 4.7's model card reports
-  training data into August 2026. At least 4 bills and about 30 pages: per bill, up to 10 pages
-  carrying deleted text and up to 2 without, in page order. The bill list, its sha256s and the
-  cutoff date are tagged in `prereg-1`: TBD (B1).
-- **Alignment:** the XML's word sequence, each word flagged deleted or not, is aligned to the PDF's
-  words (PyMuPDF, extraction order) with the edit-distance alignment the scorer uses. A PDF word
-  aligned to a deleted XML word is struck. Coverage per page is the share of body words aligned;
-  pages under 98% are dropped. The annotators check 100 aligned spans by eye before `prereg-2`; a
-  bad span fixes the rule, and every G2 page is rebuilt.
-- **Furniture:** margin line numbers, running heads and page numbers.
+  Reported versions mark struck phrases with `<deleted-phrase>` and wholly struck sections or
+  titles with `changed="deleted"`, and the PDF prints that text struck through. Stage B1
+  confirms both on one reported bill before relying on them.
+- **Selection:** reported versions carrying struck text and published after the cutoff date: the
+  latest training cutoff any model in the run states (its release date where it states none).
+  The date is TBD (B1), once the IDs are pinned, and no earlier than 2026-09-01, since Grok 4.7's
+  model card reports training data into August 2026. A bill's struck text was public in its
+  introduced version, so bills introduced after the cutoff come first; if fewer than 12 of them
+  have a reported version with struck text by stage B1, the most recently introduced others fill
+  the slice, and every result is also shown on the strict subset.
+- **Size:** at least 12 bills, so that the sign-flip test has power; per bill, up to 3 pages
+  carrying struck text and up to 1 without, the first such pages in page order. The bill list,
+  its sha256s and the cutoff date are tagged in `prereg-1`: TBD (B1).
+- **Alignment:** the XML's words in document order, each flagged struck or not, are aligned to the
+  PDF's body words (PyMuPDF, extraction order, furniture removed) with the scorer's edit-distance
+  alignment. A PDF word aligned to a struck XML word is struck. Coverage per page is the share of
+  body words aligned; pages under 98% are dropped. The annotators check 100 aligned spans by eye
+  before `prereg-2`; a bad span fixes the rule and every G2 page is rebuilt, so the rule is
+  tagged in `prereg-2`: TBD (B2).
+- **Furniture,** found by position and rotation: GPO's typesetting slug (`VerDate … Jkt …`), the
+  rotated margin line, the running foot (such as `•HR 2670 RH`), margin line numbers, running
+  heads and page numbers. Stage B1 checks the rule on one bill from each chamber.
 
 ### G3 and G4
 
@@ -197,10 +219,12 @@ with its consent. Each is specified in an addendum before it runs, logged like a
   dpi=200)`, where `scan` is the page rasterized at 200 dpi by `_scanned.build_scanned_pdf`.
 
 The package is scored from its word records, never its `~~` markdown. P-native's output is the
-page's PyMuPDF words with the character spans of every `final` record marked; P-scan's is the
-words the same RapidOCR backend reads from the same 200 dpi render, marked the same way. On every
-dev page the reconstructed live text must equal the call's own `clean_text` (whitespace aside), or
-the harness stops.
+page's PyMuPDF words in extraction order, with the `char_span` of every `final` record marked.
+P-scan's is the words the OCR backend returned, captured by a pass-through wrapper around
+`rapidocr_backend()` that hands them on unchanged, put in the package's own reading order
+(`markdown.ordered_rows`) and marked the same way. On every dev page the unmarked words must
+equal the call's own `clean_text` as a multiset of tokens (the orders differ), or the harness
+stops.
 
 **Model inputs**, all built by `render.py` and hashed:
 - **C1 PDF upload:** the page as a single-page PDF (PyMuPDF `insert_pdf`, annotations kept), sent
@@ -215,13 +239,14 @@ the harness stops.
 - **C2 page image:** `page.get_pixmap(dpi=200)`, RGB PNG, annotations rendered: about
   1700 × 2200 px for US Letter. The same bytes for every model; each provider downscales by its own
   rules, and the effective pixel size is recorded per response.
-- **C2-tiled:** the C2 image cut into horizontal bands of the full page width, each at most 1,000 px
-  tall with 150 px of overlap, sent in order in one request, with one added prompt line: "The page
-  is given as N overlapping horizontal bands, top to bottom. Transcribe the page once."
-  Anthropic's high-resolution models and OpenAI's at `detail: original` take the bands unscaled,
-  and Haiku 4.5 scales them to 92%. Gemini's `high` budgets 1,120 tokens per image, each band
-  included. xAI documents no resolution limit or image-token formula, so its image tokens are
-  recorded from `usage` in place of an effective size.
+- **C2-tiled:** the C2 image cut into horizontal bands of the full page width, each 1,000 px tall,
+  starting every 850 px from the top; the last band ends at the bottom edge, overlapping its
+  neighbour by more where the height requires. The bands go in order in one request, with one added
+  prompt line: "The page is given as N overlapping horizontal bands, top to bottom. Transcribe the
+  page once." Claude's models and OpenAI's at `detail: original` take the bands unscaled. Gemini
+  spends its fixed per-image budget (see Settings) on each band. xAI documents no resolution limit
+  or image-token formula, so its image tokens are recorded from `usage` in place of an effective
+  size.
 - **C3 degradation** (stage B5): five levels of one fixed recipe (blur, noise, JPEG and a small
   rotation, each stepped together), on G0-dev pages, up to the level where the author can no longer
   read 95% of a 100-word sample; plus 20 G0-test pages printed and scanned at 300 dpi, then
@@ -234,8 +259,8 @@ R-best on the provider's chosen image condition, C2 or C2-tiled.
 
 ## Prompts
 
-The texts live in `prompts/`, one file per rung and paraphrase, each with its sha256 in
-`prereg-2`. Each rung adds one thing to the rung before. Drafts, tuned on dev until `prereg-2`:
+The texts live in `prompts/`, one file per rung and paraphrase, each with its sha256 in `prereg-2`
+(TBD (B2)). Each rung adds one thing to the rung before. Drafts, tuned on dev until `prereg-2`:
 
 - **R0** (user turn): "Transcribe this page to markdown. Output only the transcription."
 - **R1** = R0 plus a system line: "Documents may contain struck-through (deleted) text; never
@@ -260,11 +285,16 @@ The texts live in `prompts/`, one file per rung and paraphrase, each with its sh
 or PDF) comes before the instruction text, except in Gemini's image requests, where Google's
 guidance puts the text first.
 
-**R-best** is chosen per provider on dev, on its ladder model: the rung with the lowest leakage
-whose marked over-deletion stays within 1 point of R0's, ties going to the cheaper rung. It is
-confirmed on the provider's flagship before `prereg-2`; if the flagship's best rung differs, the
-ladder model's choice stands and the gap is reported. The image condition (C2 or C2-tiled) is
-chosen the same way. The choices are tagged in `prereg-2`: TBD (B2).
+**R-best** is chosen per provider on dev, on its ladder model, from the rungs that ask for marks
+(R2–R6), since an unmarked transcription can lower its leakage by dropping struck text: the rung
+with the lowest leakage whose over-deletion, marked and absent, each stays within 1 point of
+R0's, ties going to the cheaper rung. The rung is chosen on C2 first, then the image condition
+(C2 or C2-tiled) at that rung, by the same rule. The provider's flagship runs R-best and the
+runner-up rung on the same dev pages; if the runner-up does better there, the ladder model's
+choice stands and the gap is reported. The choices are tagged in `prereg-2`: TBD (B2).
+
+**Dev pages:** the pilot's 30 and the ladder's 20 are drawn with seed `20261013`, half from G0-dev
+and half from G1-dev, and listed in `prereg-1`: TBD (B1).
 
 **Paraphrases:** three of every rung, written and hashed before the first dev call, since R-best
 is not known yet. Those of R0, R1 and R-best run on dev, and the R1 paraphrases also on test.
@@ -274,25 +304,39 @@ struck one ("what is the rate?" where 5% is struck and 3% written beside it), as
 framing and again with R1's system line, on C2, to the flagships. An answer is scored as giving the
 live value, the struck value, both, or neither.
 
+**Stage B4's prompts,** drafts fixed in `prereg-2` (TBD (B2)):
+- **M+P context:** R2's prompt and the page, plus the package's output for the page (its struck
+  words with their struck characters, and `clean_text`), introduced as "A strikethrough detector
+  reports the following for this page. Use it, but trust the page where they disagree."
+- **P→M text-only:** no image; the page's `provenance_text`, in which deleted text reads
+  `[deleted: …]`, with "Transcribe the current text of this page to markdown, wrapping deleted
+  text in `~~`."
+
 ## Scoring
 
 The scorer, `score.py`, is built and golden-tested before any paid call, and its code's hash is
-tagged in `prereg-2`.
+tagged in `prereg-2` (TBD (B2)).
 
 - **Sub-tokens.** Each ground-truth word is split at its struck/live character boundaries, so
   `~~semi-~~monthly` is the struck sub-token `semi-` and the live sub-token `monthly`.
 - **Parsing an output.** Characters inside a marker on the fixed list (`~~…~~`, `<del>`, `<s>`,
-  `<strike>`, `[deleted: …]`) are marked, as is any character carrying U+0334–U+0338; the markers
-  are then removed. A JSON answer (R4–R6) is flattened word by word: a `struck` verdict marks the
-  word's `chars` where they occur in its `text`, else the whole word; `clean` and `unsure` count as
-  live. The last JSON object in the output is the answer.
-- **Normalization,** for alignment only: NFKC, case-folding, typographic quotes and dashes to
-  ASCII, U+0334–U+0338 removed, and leading and trailing punctuation stripped from each token.
+  `<strike>`, `[deleted: …]`) are marked, as is any character carrying U+0334–U+0338. Then the
+  markers and other markup are removed (HTML tags, heading `#`s, emphasis runs of `*` or `_`,
+  list markers, table pipes and rule rows, code fences, backslash escapes), and the rest is split
+  on whitespace into tokens. Each kept character carries its mark and its offset in the raw
+  output, so no later step loses a mark. A JSON answer (R4–R6) is flattened word by word: a
+  `struck` verdict marks the first occurrence of `chars` in `text`, or the whole word where
+  `chars` is empty or not found; `clean` and `unsure` count as live. The last JSON object in the
+  output is the answer.
+- **Normalization,** for alignment only, through an offset map back to the original characters:
+  NFKC, case-folding, typographic quotes and dashes to ASCII, U+0334–U+0338 removed, and leading
+  and trailing punctuation stripped from each token. A ground-truth sub-token that normalizes to
+  nothing (a struck "—" or ";") is dropped from scoring and counted.
 - **Alignment.** Output tokens are aligned to ground-truth words by a global edit-distance
-  alignment over normalized tokens: gaps cost 1 and a substitution costs twice the pair's
-  normalized character edit distance. An output token that equals two adjacent ground-truth words
-  joined (a hyphen split at a line end) may align to both. Within each aligned pair, characters are
-  aligned the same way.
+  alignment over normalized tokens: gaps cost 1, and a substitution costs twice the pair's
+  normalized edit distance (Levenshtein distance ÷ the longer token's length). An output token
+  that equals two adjacent ground-truth words joined (a hyphen split at a line end) may align to
+  both. Within each aligned pair, characters are aligned the same way, through the offset maps.
 - **Outcomes.** A ground-truth sub-token is *marked* when at least half of its characters align to
   marked output characters, *absent* when fewer than half align to any output character, and
   *live* otherwise. A pair whose normalized edit distance exceeds 0.5 counts as absent plus an
@@ -319,22 +363,31 @@ tagged in `prereg-2`.
 
 ## Statistics
 
-- **Bootstrap:** 10,000 paired replicates with seed `20261012`, two-stage: documents resampled
-  with replacement, then pages within each drawn document. Both sides of a comparison are scored
-  on the same draw; each metric is the pooled ratio over the draw's sub-tokens.
-- **G0 documents** are the generator's files: each holds 5 pages, and the file is the cluster.
-- **p-values:** one-sided, (1 + the number of replicates on the wrong side of the bound) ÷
-  10,001.
-- Per-document results sit beside the pooled ones, and per-stratum results for G0.
+- **Clusters:** a G0 page (the generator draws each page independently; its files are only
+  containers), a G1 document, a G2 bill.
+- **Tests.** A leakage or over-deletion claim uses a sign-flip test. Each cluster's difference
+  (model minus package, or C1 minus C2) minus the claim's bound is weighted by the cluster's
+  struck sub-tokens (live ones for over-deletion), so their weighted mean is the pooled
+  difference; the test flips the signs of a subset of clusters and recomputes it. An F1 claim
+  instead swaps the two sides' outputs in the flipped clusters and recomputes pooled F1. The
+  p-value is the share of flips at least as favourable to the claim as the observed data, ties
+  included: all 2^n flips when n is 16 or fewer, otherwise 10,000 random ones with seed
+  `20261012`, as (1 + count) ÷ 10,001.
+- **Intervals:** a paired two-stage cluster bootstrap (clusters, then pages within them, with
+  replacement), 10,000 replicates with seed `20261012`, both sides scored on the same draw and
+  each metric pooled over the draw's sub-tokens; 95% percentile intervals.
+- Per-cluster results sit beside the pooled ones, and per-stratum results for G0.
 
 ## The audit
 
 - **Items.** A disagreement between an arm's output and the ground truth, of one of four kinds:
   a leak, an over-deletion (marked or absent), a wrongly marked or missed strike, a hallucinated
-  token. The pilot audit samples up to 20 per pilot arm (5 per kind), up to 160 items. The test
-  audit samples 160 items across the arms that enter a primary endpoint (the package's arms and
-  each flagship's R0 C1, R0 C2, R1 C2 and R-best cells), equally per arm and kind. Seed
-  `20261011`.
+  token. The pilot audit samples up to 20 per pilot arm (5 per kind), up to 160 items, with seed
+  `20261011`. The test audit samples 160 items, with seed `20261014`, across the arms that enter
+  a primary endpoint (the package's arms and each flagship's R0 C1, R0 C2, R1 C2 and R-best
+  cells): each arm and kind gets an equal share, rounded by largest remainder, and a cell with
+  too few disagreements passes its unused share to the other kinds of the same arm, then to the
+  other arms, in a seeded order.
 - **The page** `audit.py` writes holds, per item, the page crop with the word boxed, then three
   questions in order: (1) on the crop alone, is the word struck through: *struck* (which
   characters, if only some), *not struck*, or *can't tell*; (2) shown the ground-truth label, is it
@@ -345,11 +398,11 @@ tagged in `prereg-2`.
   hand.
 - **Annotators:** two people who had no part in the package's development, named in the write-up
   with their consent. Each first labels 10 practice items with known answers. They split the items,
-  with a random 25% (seed `20261011`) labelled by both, and each checks every *no* the other gives
-  on questions 2 and 3. Agreement on question 1 is Cohen's κ over the shared items, with a
-  bootstrap CI; below 0.7, the definitions are revised and the round repeated. The author
-  adjudicates disagreements, and the pre-adjudication labels are published.
-- **G1's error rate,** before any test call: 400 G1-test words drawn with seed `20261011`, 200 of
+  with a random 25% (seed `20261016`) labelled by both, the G1 sample's words included, and each
+  checks every *no* the other gives on questions 2 and 3. Agreement on question 1 is Cohen's κ over
+  the shared items, with a bootstrap CI; below 0.7, the definitions are revised and the round
+  repeated. The author adjudicates disagreements, and the pre-adjudication labels are published.
+- **G1's error rate,** before any test call: 400 G1-test words drawn with seed `20261015`, 200 of
   them struck in the ground truth and 200 live words on lines carrying a strike, labelled from the
   page crop with question 1 only, without the ground truth. The error rate is reported separately
   for the struck words and for the live words on struck lines, where a missed strike would hide,
@@ -381,7 +434,8 @@ tagged in `prereg-2`.
   and OpenAI's exact token counting; for Gemini, whose image counts are estimates, for xAI, which
   counts text only, and for the open models' host, they come from the `usage` seen on dev for the
   same route and image size. Output and thinking tokens, and xAI's document searches, are taken at
-  the 95th percentile seen on dev, per model and rung.
+  the 95th percentile seen on dev, per model and rung. The first dry run, for stage B2, has no dev
+  runs yet, so it prices from the stage B1 smoke tests, with output and thinking tokens doubled.
 - **The cap** is TBD (B1), set by the author. If the dry run's total passes the cap, cells are
   dropped in this order (*proposed*), and never a cell that enters a primary endpoint, a free arm or
   the audit: the R1 paraphrases on test; C1′ at R1; C2-tiled for the non-flagship models; the Fable
@@ -392,12 +446,12 @@ tagged in `prereg-2`.
 
 - **`prereg-1`** (end of stage B1): this file with every TBD (B1) filled: the pinned model IDs,
   their knowledge cutoffs and the G2 cutoff date; the G0 generator commit, the held-back seed's
-  sha256 and every G0-test file's sha256; the G1 dev documents and page list; the G2 bill list and
-  sha256s; the cap and the drop order.
+  sha256 and every G0-test file's sha256; the G1 dev documents and page list; the pilot's and the
+  ladder's dev pages; the G2 bill list and sha256s; the cap and the drop order.
 - **`prereg-2`** (end of stage B2): every TBD (B2) filled: the scorer's hash, the per-model settings
   table, R-best and the image condition per provider, the prompt files' sha256s (paraphrases and
-  few-shot images included), the M+P and text-only prompts, and the G1 error-rate and G2 span-check
-  results.
+  few-shot images included), the M+P and text-only prompts, the G2 alignment rule and its
+  coverage, and the G1 error-rate and G2 span-check results.
 
 No arm, free or paid, touches a test page before `prereg-2`.
 
@@ -438,8 +492,7 @@ JSONL throughout, one record a line, every file listed by sha256 in a committed 
 - **Response:** `run_id`, `arm_id`, `page_id`, `input`, `rung`, `paraphrase`, the pinned and the
   reported model IDs, `settings`, the prompt's and the input's sha256, timestamps, `batch_id`,
   `attempt`, `status` (`ok`, `refusal`, `length`, `parse_error`, `request_error`), the raw output
-  text,
-  the raw `usage`, `cost_usd`, the harness commit, the package fingerprint (version, the ONNX
+  text, the raw `usage`, `cost_usd`, the harness commit, the package fingerprint (version, the ONNX
   sha256, `get_model_meta()`), and the pre-registration tags in force.
 - **Score:** per arm and page, the counts behind every metric (sub-tokens by truth and outcome,
   insertions, characters for CER), so tables are sums and nothing is re-derived from text.
@@ -466,22 +519,27 @@ Do these in order; each ends in a check.
    vector-flag agreement match `benchmarks/confirmation_rate.py` (55,171 vector detections, 99.85%
    confirmed); the page sample is reproducible from its seed; and B-naive's output aligns to at
    least 99% of the ground-truth words on every G1-dev page (it is the same text layer), so
-   extraction order is not breaking the alignment.
-4. **G2.** Write `g2.py`: list candidate bill versions after the cutoff date, fetch XML and PDF,
-   align, apply the 98% rule. Check: at least 4 bills survive; the coverage report is saved.
+   extraction order is not breaking the alignment. Then draw the pilot's and the ladder's dev pages
+   and the G1 error-rate sample.
+4. **G2.** Write `g2.py`: list reported bill versions after the cutoff date (GovInfo's API),
+   fetch their XML and PDF, confirm the struck-text markup and the furniture rule on one bill from
+   each chamber, align, apply the 98% rule. Check: at least 12 bills survive, with the strict
+   subset counted; the coverage report is saved.
 5. **Inputs.** Write `render.py`. Checks: identical hashes on a rerun; C2 is 200 dpi; the bands of
-   C2-tiled cover every pixel row.
-6. **Free arms.** Write `free_arms.py` and run all four on dev. Check: the reconstructed live text
-   equals `clean_text` on every dev page (Part A, Arms).
+   C2-tiled cover every pixel row, and the last ends at the bottom edge.
+6. **Free arms.** Write `free_arms.py` and run all four on dev. Check: on every dev page the
+   unmarked words equal `clean_text` as a multiset of tokens (Part A, Arms).
 7. **Scorer.** Write `score.py` with golden tests first, at least: a struck word output live (a
    leak), output marked, and absent; `~~semi-~~monthly`; `~~December~~May`; a JSON answer with a
-   partial `chars`; U+0336; a misread struck word; a hyphen split across a line end; a furniture
-   token; a masked word; each failure kind.
-8. **Statistics.** Write `stats.py`. Checks: the bootstrap reproduces by seed; Holm and the
-   largest-p rule match hand-worked examples.
+   partial `chars`, and one whose `chars` occurs twice; U+0336; a misread struck word; a hyphen
+   split across a line end; a markdown table and heading; a sub-token that normalizes to nothing;
+   a furniture token; a masked word; each failure kind.
+8. **Statistics.** Write `stats.py`. Checks: the bootstrap reproduces by seed; the sign-flip test
+   matches hand-worked examples, exact enumeration included; Holm and the largest-p rule match
+   hand-worked examples.
 9. **Harness.** Write `harness.py` and the provider adapters, tested against the fake provider:
    caching (a rerun never calls an API), the model-ID check, resubmission, and `--dry-run` pricing.
-   Then a real dry run of stage B2.
+   Then a dry run of stage B2, priced from the smoke tests.
 10. **The audit tool.** Write `audit.py`: items to an HTML page and a CSV, labels back in, κ.
 11. **Tag.** Fill every TBD (B1), merge, and publish `prereg-1` (PLAN.md's steps).
 
@@ -491,9 +549,10 @@ Do these in order; each ends in a check.
    run the pilot audit, fix what it finds, rescore.
 2. **The ladder:** R0–R6 on about 20 dev pages, on C2 and C2-tiled, on each ladder model and each
    open vision model; the paraphrases; the repeats; the effort ablation. Choose R-best and the image
-   condition, and confirm them on the flagships.
-3. **Labels:** the G1 error-rate sample and the G2 span check.
-4. **Freeze:** the scorer's hash, the prompts, the settings, then fill every TBD (B2) and publish
+   condition, and run R-best and the runner-up on each flagship.
+3. **Labels:** the G1 error-rate sample and the G2 span check; then fix the G2 alignment rule.
+4. **Stage B4's prompts:** write the M+P and text-only prompts and hash them.
+5. **Freeze:** the scorer's hash, the prompts, the settings, then fill every TBD (B2) and publish
    `prereg-2`.
 
 ## Stage B3: the test run
@@ -510,9 +569,11 @@ Do these in order; each ends in a check.
 - API access for each provider in [Models](#models), each with a spend limit, the keys in the
   repo's git-ignored `.env`: `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`,
   `DEEPINFRA_API_KEY` and `MOONSHOT_API_KEY` (or one `OPENROUTER_API_KEY` for both open models),
-  and `DATALAB_API_KEY` unless Chandra runs from its checkpoint.
+  `DATALAB_API_KEY` unless Chandra runs from its checkpoint, and a free api.data.gov key for
+  GovInfo's API, `GOVINFO_API_KEY`.
 - The spending cap, and a final word on the drop order, before `prereg-1`.
 - Zenodo's GitHub integration switched on before `prereg-1` is published.
-- Two annotators, with their consent to be named: about 2 to 3 hours each at the pilot audit,
-  about an hour for the G1 sample and the G2 check, and about 2 to 3 hours at the test audit.
+- Two annotators, with their consent to be named, each giving about 2 to 3 hours at the pilot
+  audit, about an hour for the G1 sample and the G2 check together, and about 2 to 3 hours at the
+  test audit.
 - A named machine for the package's CPU timing.
