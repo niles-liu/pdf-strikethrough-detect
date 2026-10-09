@@ -110,3 +110,4 @@ def test_split_shortfall_names_what_the_split_lacks():
     no_clean = np.ones(300, dtype=np.float32)
     assert "0 clean crops" in shortfall(no_clean, 0.2, 0, 0.05)
     assert "training split 0" in shortfall(np.ones(1, dtype=np.float32), 0.2, 0, 0.05)
+    assert "training split 0" in shortfall(labels, 1.0, 0, 0.05)    # only the training clause
