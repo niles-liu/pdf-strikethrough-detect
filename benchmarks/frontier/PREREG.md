@@ -117,9 +117,9 @@ own hypothesis), and a claim holds when its adjusted p-value is below 0.025, the
 of a 95% two-sided interval. Reported intervals are unadjusted 95% bootstrap intervals.
 
 **Insufficient data.** A cell with fewer than 200 struck sub-tokens, or fewer than 6 clusters
-counted in its test (see [Statistics](#statistics); the fewest with which an unadjusted p-value
-can reach 0.025), reads "insufficient data" and
-leaves its family before the Holm adjustment.
+counted in its test (the fewest with which an unadjusted p-value can reach 0.025; see
+[Statistics](#statistics)), reads "insufficient data" and leaves its family before the Holm
+adjustment.
 
 ## Ground truth
 
@@ -167,10 +167,11 @@ A seeded generator, `g0.py`, grown from `examples/native_quickstart.py::build_re
 - **Page kinds:** a struck page holds at least one struck word; a strike-free page has no report
   from either detector; a page whose only reports are masked words is neither, and is not
   sampled.
-- **Dev documents:** two of the nine, drawn with `random.Random(20261010).sample(sorted(files), 2)`,
-  where `files` are the manifest's file names. The other seven are G1-test.
-- **Pages,** per test document, drawn with `random.Random(20261010)` in manifest order: up to 10
-  struck pages and up to 3 strike-free ones. Struck pages fall into six cells: the document's
+- **Dev documents:** one generator, `random.Random(20261010)`, first draws two of the nine with
+  `.sample(sorted(files), 2)`, where `files` are the manifest's file names, and then each test
+  document's pages, in manifest order. The other seven documents are G1-test.
+- **Pages,** per test document, from that generator: up to 10 struck pages and up to 3
+  strike-free ones. Struck pages fall into six cells: the document's
   tertiles of struck words per page (ranked by count, ties by page index, split as evenly as the
   count allows) crossed with whether the page holds a partial-word strike. Each cell's share of
   the 10 is proportional to its size, rounded by largest remainder; a cell short of its share
@@ -299,7 +300,7 @@ choice stands and the gap is reported. The choices are tagged in `prereg-2`: TBD
 **Dev pages:** one generator seeded with `20261013` draws, in this order, the pilot's 30 pages,
 half from G0-dev and half from G1-dev (either set fills the other's shortfall), and then, from
 those 30, the ladder's 20, the repeats' 20, the effort ablation's 20 and the canary's 10, each
-half from each set where it can. All are listed in `prereg-1`: TBD (B1).
+split evenly between the two sets where it can. All are listed in `prereg-1`: TBD (B1).
 
 **Paraphrases:** three of every rung, written and hashed before the first dev call, since R-best
 is not known yet. Those of R0, R1 and R-best run on dev, and the R1 paraphrases also on test.
@@ -375,15 +376,16 @@ paid call, and their code's hashes are tagged in `prereg-2` (TBD (B2)).
   statistic is the sum over clusters of ±(E_A − E_B − b·S), where S is the cluster's struck
   sub-tokens (its live ones, for over-deletion) and E_A, E_B count those each side gets wrong
   (struck scored live; live scored marked). With every sign positive it is S's total times the
-  pooled difference minus b. Clusters with S = 0 carry no information and are left out of n. For a
+  pooled difference minus b. Clusters with S = 0 carry no information and are left out of n; an
+  F1 test keeps every cluster, since a page with nothing struck can still hold false alarms. For a
   bound other than 0 (endpoint 2) the test assumes each cluster's difference is symmetric about the
   bound, and the bootstrap interval is reported beside it. An F1 claim instead swaps the two sides'
   outputs in the flipped clusters and recomputes pooled F1. The p-value is the share of sign
   patterns at least as favourable to the claim as the observed one, ties included: all 2^n of them
   when n is 16 or fewer, otherwise 10,000 random ones from NumPy's PCG64 seeded with `20261012`, as
   (1 + count) ÷ 10,001.
-- **Intervals:** a paired cluster bootstrap (clusters resampled with replacement, the pages of each
-  kept whole), 10,000 replicates from PCG64 seeded with `20261017`, both sides scored on the
+- **Intervals:** a paired cluster bootstrap (clusters resampled with replacement, each with all its
+  pages), 10,000 replicates from PCG64 seeded with `20261017`, both sides scored on the
   same draw and each metric pooled over the draw's sub-tokens; 95% percentile intervals.
 - Per-cluster results sit beside the pooled ones, and per-stratum results for G0.
 
