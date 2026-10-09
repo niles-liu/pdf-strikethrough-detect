@@ -126,8 +126,8 @@ pooled ones.
   rendered strike, that gives ground truth independent of this package, and new bills appear daily,
   so some postdate the latest training cutoff of every model in the run. A slice of 4 or more such
   bills (about 30 pages) joins the main run (stage B3). Alignment coverage is reported per page and
-  pages under 98% are dropped; 100 aligned spans are hand-checked; margin line numbers are page
-  furniture.
+  pages under 98% are dropped; the annotators hand-check 100 aligned spans; margin line numbers
+  are page furniture.
 - **G3 Handwritten strike-outs:** the HWG dataset
   ([Zenodo 21560739](https://zenodo.org/records/21560739), CC-BY 4.0): its `written` and
   `synthetic` parts and the ASAP and GoBo crops of `collected` (its IAM samples and the `SOW` part
@@ -152,6 +152,7 @@ pooled ones.
     ceiling.
   - Google: Gemini Pro and Flash.
   - OpenAI: the flagship and its mini.
+  - xAI: the Grok flagship and a smaller Grok.
   - One or two open-weights vision models (for example Qwen's VL line or Kimi-VL), served through a
     hosted API with the provider and the precision pinned: anyone can re-run them with the same
     weights.
@@ -171,7 +172,9 @@ pooled ones.
 ## Inputs
 
 - **C1 PDF upload,** each provider's native document input (Claude receives page images plus the
-  extracted text).
+  extracted text). xAI's runs a search tool over the file's text and never shows the model the
+  page; it is Grok's C1 all the same, since it is the route a developer gets. The open vision
+  models have no document input, so no C1.
 - **C1′ Image plus text:** the C2 image with the page's extracted text as a text block, the same for
   every provider. It isolates the text layer for Q3.
 - **C2 Page image:** 200 dpi, identical bytes for every model.
@@ -213,10 +216,11 @@ Protocol:
 - One ladder serves every provider. Provider settings are recorded inputs, not prompt edits.
 - **R-best is chosen per provider on dev** (*proposed*): the rung with the lowest leakage whose
   marked over-deletion stays within 1 point of R0's, ties going to the cheaper rung. It is chosen on
-  one non-flagship model per provider (Sonnet 5.5, Gemini Flash, the OpenAI mini) and confirmed on
-  that provider's flagship before the second pre-registration tag. If the flagship's best rung
-  differs, it keeps the non-flagship's choice and the gap is reported. The image condition, C2 or
-  C2-tiled, is chosen per provider on dev the same way.
+  one non-flagship model per provider (Sonnet 5.5, Gemini Flash, the OpenAI mini, the smaller
+  Grok) and confirmed on that provider's flagship before the second pre-registration tag. If the
+  flagship's best rung differs, it keeps the non-flagship's choice and the gap is reported. Each
+  open vision model chooses for itself. The image condition, C2 or C2-tiled, is chosen per
+  provider on dev the same way.
 - The full test run carries R0, R1 and R-best for every model. The per-rung curve is exploratory;
   Q6 is answered on test by R0, R1 and R-best.
 - Three paraphrases each of R0, R1 and R-best give a paraphrase spread on dev; the R1 paraphrases
@@ -261,10 +265,10 @@ its code is hashed into the second pre-registration tag.
   G2); live-text character and word error rates (CER, WER), so the package's OCR is not flattered;
   hallucinated tokens, digits above all; verbalized confidence against the package's `cnn_prob` as
   reliability diagrams, both over the same words: those on scanned pages the package scored.
-- **Cost:** API spend from each response's `usage` (thinking included, at batch prices). The
-  package: measured CPU-seconds per page on a named machine, OCR included, at a named on-demand
-  rate per vCPU-hour (the local VLM per GPU-hour). The cost frontier's accuracy axis is both errors:
-  an arm dominates only if it is better on leakage and on marked over-deletion.
+- **Cost:** API spend from each response's `usage` (thinking included, at batch prices where the
+  model has them). The package: measured CPU-seconds per page on a named machine, OCR included,
+  at a named on-demand rate per vCPU-hour. The cost frontier's accuracy axis is both errors: an
+  arm dominates only if it is better on leakage and on marked over-deletion.
 - **Latency:** from a separate interactive sample, 30 pages per arm, sequential, back-off excluded;
   batch turnaround is not latency.
 - **Properties, not contests:** determinism and native CER hold by construction. Word location
@@ -292,14 +296,15 @@ its code is hashed into the second pre-registration tag.
   The arm is never shown. A *no* on question 2 is a ground-truth error, and on question 3 a scorer
   bug; each is fixed at its source and every affected score recomputed. No number is overridden by
   hand.
-- **Two annotators** do the labelling: members of a related course project who had no part in the
-  package's development, named in the write-up with their consent. Each reads the definitions
-  above and labels 10 practice items with known answers. They then split the audit items and the
-  G1 sample, with 25% of the items labelled by both, independently, and each checks every *no* the
-  other gives on questions 2 and 3. Agreement on question 1 is reported as Cohen's κ with a CI;
-  below 0.7, the definitions are revised and the round repeated. The author adjudicates
-  disagreements, and the pre-adjudication labels are published. For a pilot audit of up to 140
-  items (up to 20 per arm), that is about an hour each.
+- **Two annotators** do the labelling: people who had no part in the package's development, named
+  in the write-up with their consent. Each reads the definitions above and labels 10 practice
+  items with known answers. They then split the audit items, the G1 sample and the G2 span check,
+  with 25% of the audit and G1 items labelled by both, independently, and each checks every *no*
+  the other gives on questions 2 and 3. Agreement on question 1 is reported as Cohen's κ with a
+  CI; below 0.7 (*proposed*), the definitions are revised and the round repeated. The author
+  adjudicates disagreements, and the pre-adjudication labels are published. A pilot audit of up
+  to 160 items (up to 20 per arm) takes each annotator about 2 to 3 hours, and the test-run audit
+  about as long again; `PREREG.md` sizes the G1 sample.
 
 ## Package under test: frozen
 
@@ -343,11 +348,13 @@ its code is hashed into the second pre-registration tag.
 - Each model's test batch runs within 7 days, with a 10-page canary at the end; a model released
   meanwhile is an extra arm, never a replacement. Batch errors are resubmitted three times, then
   scored as failures.
-- `--dry-run` prices a run before anything is spent: input tokens exactly by each provider's token
-  counting, output and thinking tokens at the 95th percentile seen on dev (the pilot and the
-  ladder) per model and rung.
-- Requests go to each provider's own API, where batching (about 50% off at all three) and token
-  counting are native; the open models go through a hosted API whose provider and precision are
+- `--dry-run` prices a run before anything is spent: input tokens exactly by the provider's token
+  counting where it counts images, otherwise from the `usage` seen on dev for the same image size;
+  output and thinking tokens, and xAI's billed document searches, at the 95th percentile seen on
+  dev (the pilot and the ladder) per model and rung.
+- Requests go to each provider's own API, batched where it can be: about 50% off at Anthropic,
+  Google and OpenAI, 20% off the smaller Grok, and nothing for the Grok flagship, which has no
+  batch API. The open models go through a hosted API whose provider and precision are pinned and
   recorded. API keys come from the environment or the repo's `.env` (git-ignored), never a
   committed file.
 - RapidOCR downloads its OCR models on first use: their sha256s are recorded and the files mirrored.
@@ -388,8 +395,8 @@ Each tag:
    The repository's releases are immutable, so the tag cannot move to another commit, and GitHub
    records when the release was published. A tag that does not start with `v` runs no publish
    job, and `--latest=false` keeps the package's release marked latest.
-3. Zenodo archives the release, with a DOI: its GitHub integration does this for every release of
-   the repository once switched on.
+3. Zenodo archives the release, with a DOI. Its GitHub integration archives every release of the
+   repository once switched on, so it is switched on before `prereg-1` is published.
 
 Every results file records both tags. A change after a tag is a logged deviation, with the results
 shown both ways.
@@ -404,17 +411,18 @@ a future model trained on the public pages can still be checked.
 
 ## Budget
 
-- The pilot: 30 dev pages × 3 models × R2, about $5.
-- The prompt ladder on dev: about 20 pages × 7 rungs × 3 non-flagship models, plus paraphrases and
-  C2-tiled, $15–25.
-- The main run: about 150 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for all
-  seven paid models together, with markdown-length answers (the open vision models, through a
-  hosted API, add a few dollars). That is about $25 per prompt × input cell,
-  so R0, R1 and R-best on C1 and C2 come to about $150, or $75 batched. C1′ at R0 and R1, C2-tiled
-  at R-best and the R1 paraphrases add about $90–115 batched.
+- The pilot: 30 dev pages × 4 models × R2, about $6.
+- The prompt ladder on dev: about 20 pages × 7 rungs × 4 non-flagship models, plus paraphrases and
+  C2-tiled, $20–30.
+- The main run: about 150 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for the
+  seven Anthropic, Google and OpenAI models together, with markdown-length answers. That is about
+  $25 per prompt × input cell, so R0, R1 and R-best on C1 and C2 come to about $150, or $75
+  batched. C1′ at R0 and R1, C2-tiled at R-best and the R1 paraphrases add about $90–115 batched.
+  xAI's two models add about $60–80, nearly all unbatched, and the open vision models a few
+  dollars.
 - The Fable 5.1 subset, the QA probe, the latency sample (unbatched) and C3: about $30–50.
 - The handwritten crops about $5; repeats and effort ablations $10–20.
-- All in for stages B2, B3 and B5: about $230–300, against a cap of $300 (*proposed*); the dry run
+- All in for stages B2, B3 and B5: about $300–380, against a cap set in `PREREG.md`; the dry run
   prices it first, and the drop order decides if it is reached. If R-best is a JSON rung (R4–R6),
   output tokens rise several-fold. Stage B4 is priced by the dry run when it comes.
 
@@ -425,8 +433,8 @@ a future model trained on the public pages can still be checked.
 - **B1** Build the G0 generator, the G1 page sampler, the scorer and its golden tests, and the
   harness with its dry run; run the free arms (B-naive, B-pm4llm, P-native, P-scan) on dev only.
   Freeze the data, and tag `prereg-1`.
-- **B2** The pilot on dev (about $5): hand-audit, fix the scorer. The prompt ladder and C2-tiled
-  on dev ($15–25): choose R-best and the image condition per provider and confirm them on the
+- **B2** The pilot on dev (about $6): hand-audit, fix the scorer. The prompt ladder and C2-tiled
+  on dev ($20–30): choose R-best and the image condition per provider and confirm them on the
   flagships. The G1 error-rate sample. Tag `prereg-2`.
 - **B3** The test run, batched, with the G2 slice: every arm, the R1 paraphrases, the Fable 5.1
   subset, the QA probe, the interactive latency sample, the test-run audit, confidence
@@ -450,6 +458,6 @@ a future model trained on the public pages can still be checked.
 - Model drift: model IDs are dated, each test batch runs within a week, and a canary closes it.
 - Prompt sensitivity: a seven-rung ladder chosen on dev, plus the paraphrase spread.
 - Scorer bugs: golden tests, the hash in `prereg-2`, and the audits.
-- Annotation: two annotators from outside the package's development do the labelling, 25% of it
-  double-labelled for κ, and the author only adjudicates.
+- Annotation: two annotators from outside the package's development do the labelling, with 25% of
+  the audit and G1 items double-labelled for κ; the author only adjudicates.
 - Small samples: the bootstrap over documents, per-document results, and "insufficient data" cells.
