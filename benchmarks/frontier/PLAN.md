@@ -75,12 +75,13 @@ Hypotheses, reported whichever way they come out.
 3. Struck-word F1 at R-best (Q2), on the image condition chosen per provider on dev and fixed in
    `prereg-2`, model against package on G0-test and G2-test: the side whose paired CI excludes 0
    wins.
-4. C1 against C2 leakage at R0 (Q3), per flagship: C1 leaks more if the paired CI of C1 minus C2
-   lies above 0.
+4. C1 against C2 leakage at R0 (Q3), per flagship, on G0-test and G2-test (G1's reported, not
+   tested): C1 leaks more if the paired CI of C1 minus C2 lies above 0.
 
-Comparisons across flagships are Holm-adjusted. Cells holding fewer than 200 struck sub-tokens or
-fewer than 6 documents (*proposed*) read "insufficient data". Per-document results sit beside the
-pooled ones.
+`PREREG.md` decides each rule by an exact sign-flip test over clusters (documents, or G0 pages),
+Holm-adjusted within the endpoint, with the intervals reported beside it. Cells holding fewer
+than 200 struck sub-tokens or fewer than 6 clusters (*proposed*) read "insufficient data".
+Per-cluster results sit beside the pooled ones.
 
 ## Ground truth
 
@@ -130,8 +131,8 @@ pooled ones.
   independent of this package, and new bills appear daily, so some postdate the latest training
   cutoff of every model in the run. A slice of 12 or more such bills (about 40 pages) joins the
   main run (stage B3). Alignment coverage is reported per page and pages under 98% are dropped;
-  the annotators hand-check 100 aligned spans; GPO's typesetting slug, margin lines and line
-  numbers are page furniture.
+  the annotators hand-check 100 aligned spans; GPO's typesetting slug, margin lines, running foot
+  and line numbers are page furniture.
 - **G3 Handwritten strike-outs:** the HWG dataset
   ([Zenodo 21560739](https://zenodo.org/records/21560739), CC-BY 4.0): its `written` and
   `synthetic` parts and the ASAP and GoBo crops of `collected` (its IAM samples and the `SOW` part
@@ -219,13 +220,13 @@ Protocol:
   documents and a G0 dev seed. The pilot draws from dev only.
 - One ladder serves every provider. Provider settings are recorded inputs, not prompt edits.
 - **R-best is chosen per provider on dev** (*proposed*): of the rungs that ask for marks (R2–R6),
-  the one with the lowest leakage whose over-deletion, marked and absent, stays within 1 point of
-  R0's, ties going to the cheaper rung. It is chosen on one non-flagship model per provider
-  (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and checked on that provider's flagship,
-  which runs R-best and the runner-up, before the second pre-registration tag. If the runner-up
-  does better there, the non-flagship's choice stands and the gap is reported. Each open vision
-  model chooses for itself. The image condition, C2 or C2-tiled, is then chosen per provider at
-  that rung the same way.
+  the one leaving the fewest struck sub-tokens unmarked (live or absent) whose over-deletion, marked
+  and absent, stays within 1 point of R0's, ties going to the cheaper rung. It is chosen on one
+  non-flagship model per provider (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and checked
+  on that provider's flagship, which runs R-best and the runner-up, before the second
+  pre-registration tag. If the runner-up does better there, the non-flagship's choice stands and the
+  gap is reported. Each open vision model chooses for itself. The image condition, C2 or C2-tiled,
+  is then chosen per provider at that rung the same way.
 - The full test run carries R0, R1 and R-best for every model. The per-rung curve is exploratory;
   Q6 is answered on test by R0, R1 and R-best.
 - Three paraphrases each of R0, R1 and R-best give a paraphrase spread on dev; the R1 paraphrases
@@ -278,8 +279,9 @@ its code is hashed into the second pre-registration tag.
   batch turnaround is not latency.
 - **Properties, not contests:** determinism and native CER hold by construction. Word location
   counts only against an R4 variant that returns boxes (IoU ≥ 0.5).
-- **Statistics:** decisions by an exact paired sign-flip test over documents; intervals from a
-  paired bootstrap, 10,000 replicates with a fixed seed, pages nested in documents.
+- **Statistics:** decisions by an exact paired sign-flip test over clusters (documents, or G0
+  pages); intervals from a paired bootstrap, 10,000 replicates with a fixed seed, pages nested in
+  clusters.
 
 ## Checks and the audit
 
@@ -389,10 +391,10 @@ author sets. So each stage of `PREREG.md` is tagged and archived:
   documents, the G0 generator commit, seeds and test-file sha256s, the G2 bill list with its
   sha256s and cutoff date, the failure rule, the spending cap and the order in which arms are
   dropped if it is reached.
-- **`prereg-2`, before any arm touches a test page** (end of stage B2): the scorer's code hash,
-  the R-best and image-condition choices, the prompt texts with their paraphrases and few-shot
-  images, the M+P and text-only prompts, the per-model settings table, and the G2 alignment
-  rule, which the span check may change.
+- **`prereg-2`, before any arm touches a test page** (end of stage B2): the scorer's and the
+  statistics' code hashes, the R-best and image-condition choices, the prompt texts with their
+  paraphrases and few-shot images, the M+P and text-only prompts, the per-model settings table, and
+  the G2 alignment rule, which the span check may change.
 
 No arm, free or paid, touches a test page before `prereg-2`.
 
@@ -401,8 +403,8 @@ Each tag:
 2. Publish a GitHub Release on that commit:
    `gh release create prereg-1 --target <full commit sha> --title "Frontier benchmark pre-registration 1" --notes "PREREG.md sha256 <digest>" --latest=false`.
    The repository's releases are immutable, so the tag cannot move to another commit, and GitHub
-   records when the release was published. A tag that does not start with `v` runs no publish
-   job, and `--latest=false` keeps the package's release marked latest.
+   records when the release was published. A tag that does not start with `v` runs no publish job,
+   and `--latest=false` keeps the package's release marked latest.
 3. Zenodo archives the release, with a DOI. Its GitHub integration archives every release of the
    repository once switched on, so it is switched on before `prereg-1` is published.
 
@@ -422,7 +424,7 @@ a future model trained on the public pages can still be checked.
 - The pilot: 30 dev pages × 4 models × R2, about $6.
 - The prompt ladder on dev: about 20 pages × 7 rungs × 4 non-flagship models, plus paraphrases and
   C2-tiled, $20–30; the open vision models' own ladders add a few dollars.
-- The main run: about 150 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for the
+- The main run: about 165 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for the
   seven Anthropic, Google and OpenAI models together, with markdown-length answers. That is about
   $25 per prompt × input cell, so R0, R1 and R-best on C1 and C2 come to about $150, or $75
   batched. C1′ at R0 and R1, C2-tiled at R-best and the R1 paraphrases add about $90–115 batched.
@@ -472,5 +474,5 @@ a future model trained on the public pages can still be checked.
 - Scorer bugs: golden tests, the hash in `prereg-2`, and the audits.
 - Annotation: two annotators from outside the package's development do the labelling, with 25% of
   the audit and G1 items double-labelled for κ; the author only adjudicates.
-- Small samples: exact sign-flip tests and bootstrap intervals over documents, per-document
+- Small samples: exact sign-flip tests and bootstrap intervals over clusters, per-cluster
   results, and "insufficient data" cells.

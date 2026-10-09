@@ -104,8 +104,9 @@ pages. "Points" are percentage points.
    condition, per flagship, on G0-test and G2-test, against P-scan, which reads the same 200 dpi
    page. Either side wins when the difference lies on its side of 0. P-native's F1 is reported
    beside it.
-4. **Input route (Q3).** Leakage at R0, C1 minus C2, per flagship, on G0-test, G1-test and
-   G2-test: C1 leaks more when the difference lies above 0.
+4. **Input route (Q3).** Leakage at R0, C1 minus C2, per flagship, on G0-test and G2-test: C1
+   leaks more when the difference lies above 0. G1's numbers are reported with their intervals
+   and not tested, since seven documents cannot clear the Holm adjustment.
 
 **The decision rule.** Each claim above is one or more one-sided hypotheses about a paired
 difference, each with an exact p-value from a sign-flip test over clusters (see
@@ -116,7 +117,7 @@ own hypothesis), and a claim holds when its adjusted p-value is below 0.025, the
 of a 95% two-sided interval. Reported intervals are unadjusted 95% bootstrap intervals.
 
 **Insufficient data.** A cell with fewer than 200 struck sub-tokens, or fewer than 6 clusters
-(the fewest with which the sign-flip test can reach 0.025), reads "insufficient data" and
+(the fewest with which an unadjusted p-value can reach 0.025), reads "insufficient data" and
 leaves its family before the Holm adjustment.
 
 ## Ground truth
@@ -286,15 +287,18 @@ or PDF) comes before the instruction text, except in Gemini's image requests, wh
 guidance puts the text first.
 
 **R-best** is chosen per provider on dev, on its ladder model, from the rungs that ask for marks
-(R2–R6), since an unmarked transcription can lower its leakage by dropping struck text: the rung
-with the lowest leakage whose over-deletion, marked and absent, each stays within 1 point of
-R0's, ties going to the cheaper rung. The rung is chosen on C2 first, then the image condition
-(C2 or C2-tiled) at that rung, by the same rule. The provider's flagship runs R-best and the
-runner-up rung on the same dev pages; if the runner-up does better there, the ladder model's
-choice stands and the gap is reported. The choices are tagged in `prereg-2`: TBD (B2).
+(R2–R6), because an unmarked transcription can lower its leakage by dropping struck text. It is the
+rung that leaves the fewest struck sub-tokens unmarked (live or absent), which is what endpoint 3's
+F1 rewards, among those whose over-deletion, marked and absent, each stays within 1 point of R0's;
+ties go to the cheaper rung. The rung is chosen on C2 first, then the image condition (C2 or
+C2-tiled) at that rung, by the same rule. The provider's flagship runs R-best and the runner-up rung
+on the same dev pages; if the runner-up does better there, the ladder model's choice stands and the
+gap is reported. The choices are tagged in `prereg-2`: TBD (B2).
 
-**Dev pages:** the pilot's 30 and the ladder's 20 are drawn with seed `20261013`, half from G0-dev
-and half from G1-dev, and listed in `prereg-1`: TBD (B1).
+**Dev pages:** the pilot's 30 are drawn with seed `20261013`, half from G0-dev and half from G1-dev
+(either set fills the other's shortfall). The ladder's 20, the repeats' and the effort
+ablation's 20 and the canary's 10 are drawn from those 30 with the same seed, half from each set
+where it can. All are listed in `prereg-1`: TBD (B1).
 
 **Paraphrases:** three of every rung, written and hashed before the first dev call, since R-best
 is not known yet. Those of R0, R1 and R-best run on dev, and the R1 paraphrases also on test.
@@ -314,8 +318,8 @@ live value, the struck value, both, or neither.
 
 ## Scoring
 
-The scorer, `score.py`, is built and golden-tested before any paid call, and its code's hash is
-tagged in `prereg-2` (TBD (B2)).
+The scorer, `score.py`, and the statistics, `stats.py`, are built and golden-tested before any
+paid call, and their code's hashes are tagged in `prereg-2` (TBD (B2)).
 
 - **Sub-tokens.** Each ground-truth word is split at its struck/live character boundaries, so
   `~~semi-~~monthly` is the struck sub-token `semi-` and the live sub-token `monthly`.
@@ -331,7 +335,7 @@ tagged in `prereg-2` (TBD (B2)).
 - **Normalization,** for alignment only, through an offset map back to the original characters:
   NFKC, case-folding, typographic quotes and dashes to ASCII, U+0334–U+0338 removed, and leading
   and trailing punctuation stripped from each token. A ground-truth sub-token that normalizes to
-  nothing (a struck "—" or ";") is dropped from scoring and counted.
+  nothing (a struck dash, U+2014, or a semicolon) is dropped from scoring and counted.
 - **Alignment.** Output tokens are aligned to ground-truth words by a global edit-distance
   alignment over normalized tokens: gaps cost 1, and a substitution costs twice the pair's
   normalized edit distance (Levenshtein distance ÷ the longer token's length). An output token
@@ -342,9 +346,8 @@ tagged in `prereg-2` (TBD (B2)).
   *live* otherwise. A pair whose normalized edit distance exceeds 0.5 counts as absent plus an
   inserted token. A misread word (distance up to 0.5) is present.
 - **Masked and furniture words** are removed from the ground truth before scoring, and output
-  tokens aligned to them are ignored. Furniture is G0's running heads and page numbers, G2's margin
-  line numbers, heads and page numbers, and on G1 any word whose box centre lies within 6% of the
-  top or bottom edge.
+  tokens aligned to them are ignored. Furniture is G0's running heads and page numbers, G2's as
+  listed under G2, and on G1 any word whose box centre lies within 6% of the top or bottom edge.
 - **Leakage** = struck sub-tokens scored live ÷ struck sub-tokens. **Over-deletion,** twice: live
   sub-tokens scored marked ÷ live sub-tokens, and live sub-tokens scored absent ÷ live sub-tokens.
 - **F1,** at sub-token level: a struck sub-token scored marked is a hit; struck and scored live or
@@ -356,26 +359,31 @@ tagged in `prereg-2` (TBD (B2)).
   ground truth's live text.
 - **Calibration** (exploratory): the `confidence` of R4–R6 answers against `cnn_prob`, as
   reliability diagrams, over the same words: those on scanned pages the package scored.
-- **Failures.** A page with no usable output (a refusal, an output-limit stop, an answer that
-  fails to parse, a request error after three resubmissions) scores worst case: every struck
-  sub-token live and every live sub-token absent. A sensitivity table repeats the results without
-  such pages, and refusal and parse-failure rates are reported per arm.
+- **Failures.** A page with no usable output (a refusal, an output-limit stop, an answer that fails
+  to parse, a request error after three resubmissions) scores worst case: every struck sub-token
+  live and every live sub-token absent. A sensitivity table repeats the results without such pages,
+  dropping each from both sides of every comparison, and refusal and parse-failure rates are
+  reported per arm.
 
 ## Statistics
 
 - **Clusters:** a G0 page (the generator draws each page independently; its files are only
   containers), a G1 document, a G2 bill.
-- **Tests.** A leakage or over-deletion claim uses a sign-flip test. Each cluster's difference
-  (model minus package, or C1 minus C2) minus the claim's bound is weighted by the cluster's
-  struck sub-tokens (live ones for over-deletion), so their weighted mean is the pooled
-  difference; the test flips the signs of a subset of clusters and recomputes it. An F1 claim
-  instead swaps the two sides' outputs in the flipped clusters and recomputes pooled F1. The
-  p-value is the share of flips at least as favourable to the claim as the observed data, ties
-  included: all 2^n flips when n is 16 or fewer, otherwise 10,000 random ones with seed
-  `20261012`, as (1 + count) ÷ 10,001.
+- **Tests.** A leakage or over-deletion claim about sides A and B (model and package, or C1 and
+  C2) with bound b uses a sign-flip test on per-cluster counts. The statistic is the sum over
+  clusters of ±(E_A − E_B − b·S), where S is the cluster's struck sub-tokens (its live ones, for
+  over-deletion) and E_A, E_B count those each side gets wrong (struck scored live; live scored
+  marked). With every sign positive it is S's total times the pooled difference minus b.
+  Clusters with S = 0 carry no information and are left out of n. For a bound other than 0
+  (endpoint 2) the test assumes each cluster's difference is symmetric about the bound, and the
+  bootstrap interval is reported beside it. An F1 claim instead swaps the two sides' outputs in
+  the flipped clusters and recomputes pooled F1. The p-value is the share of sign patterns at
+  least as favourable to the claim as the observed one, ties included: all 2^n of them when n is
+  16 or fewer, otherwise 10,000 random ones from NumPy's PCG64 seeded with `20261012`, as
+  (1 + count) ÷ 10,001.
 - **Intervals:** a paired two-stage cluster bootstrap (clusters, then pages within them, with
-  replacement), 10,000 replicates with seed `20261012`, both sides scored on the same draw and
-  each metric pooled over the draw's sub-tokens; 95% percentile intervals.
+  replacement), 10,000 replicates from PCG64 seeded with `20261017`, both sides scored on the
+  same draw and each metric pooled over the draw's sub-tokens; 95% percentile intervals.
 - Per-cluster results sit beside the pooled ones, and per-stratum results for G0.
 
 ## The audit
@@ -406,10 +414,10 @@ tagged in `prereg-2` (TBD (B2)).
   them struck in the ground truth and 200 live words on lines carrying a strike, labelled from the
   page crop with question 1 only, without the ground truth. The error rate is reported separately
   for the struck words and for the live words on struck lines, where a missed strike would hide,
-  with Wilson intervals. After the test run, words on which at least three of the four flagships'
-  R-best arms disagree with the ground truth are labelled by both annotators the same way;
-  corrections apply to every arm.
-- **G2's span check:** 100 aligned spans, split between the annotators (see G2).
+  with Wilson intervals: TBD (B2). After the test run, words on which at least three of the four
+  flagships' R-best arms disagree with the ground truth are labelled by both annotators the same
+  way; corrections apply to every arm.
+- **G2's span check:** 100 aligned spans, split between the annotators (see G2): TBD (B2).
 
 ## Operations
 
@@ -448,10 +456,10 @@ tagged in `prereg-2` (TBD (B2)).
   their knowledge cutoffs and the G2 cutoff date; the G0 generator commit, the held-back seed's
   sha256 and every G0-test file's sha256; the G1 dev documents and page list; the pilot's and the
   ladder's dev pages; the G2 bill list and sha256s; the cap and the drop order.
-- **`prereg-2`** (end of stage B2): every TBD (B2) filled: the scorer's hash, the per-model settings
-  table, R-best and the image condition per provider, the prompt files' sha256s (paraphrases and
-  few-shot images included), the M+P and text-only prompts, the G2 alignment rule and its
-  coverage, and the G1 error-rate and G2 span-check results.
+- **`prereg-2`** (end of stage B2): every TBD (B2) filled: the scorer's and the statistics' hashes,
+  the per-model settings table, R-best and the image condition per provider, the prompt files'
+  sha256s (paraphrases and few-shot images included), the M+P and text-only prompts, the G2
+  alignment rule and its coverage, and the G1 error-rate and G2 span-check results.
 
 No arm, free or paid, touches a test page before `prereg-2`.
 
