@@ -67,18 +67,18 @@ Hypotheses, reported whichever way they come out.
 **Primary endpoints:** at most four, each with a win rule; everything else is exploratory.
 *Proposed:*
 1. Leakage at R0 (Q1), per flagship model, on G0-test, G1-test and G2-test, with its confidence
-   interval. On G0 and G2 the package wins if the paired 95% CI of model minus package leakage
-   lies above 0.
+   interval. On G0 and G2 the package (P-native) wins if model minus package leakage lies above 0
+   on both C1 and C2.
 2. Leakage at R1 (Q6), per flagship, on the C2 pages of G0-test and G2-test: a model matches the
-   package if the paired CI of model minus package leakage lies within ±1 point and the upper
-   bound of the difference in marked over-deletion is under 1 point.
+   package (P-native) if model minus package leakage lies within ±1 point and model minus
+   package marked over-deletion lies below 1 point.
 3. Struck-word F1 at R-best (Q2), on the image condition chosen per provider on dev and fixed in
-   `prereg-2`, model against package on G0-test and G2-test: the side whose paired CI excludes 0
-   wins.
-4. C1 against C2 leakage at R0 (Q3), per flagship, on G0-test and G2-test (G1's reported, not
-   tested): C1 leaks more if the paired CI of C1 minus C2 lies above 0.
+   `prereg-2`, model against P-scan on G0-test and G2-test: either side wins when the difference
+   lies on its side of 0.
+4. C1 against C2 leakage at R0 (Q3), per flagship, on G0-test and G2-test (G1 is reported, not
+   tested): C1 leaks more if C1 minus C2 lies above 0.
 
-`PREREG.md` decides each rule by an exact sign-flip test over clusters (documents, or G0 pages),
+`PREREG.md` decides each claim by an exact sign-flip test over clusters (documents, or G0 pages),
 Holm-adjusted within the endpoint, with the intervals reported beside it. Cells holding fewer
 than 200 struck sub-tokens or fewer than 6 clusters (*proposed*) read "insufficient data".
 Per-cluster results sit beside the pooled ones.
@@ -221,9 +221,9 @@ Protocol:
 - One ladder serves every provider. Provider settings are recorded inputs, not prompt edits.
 - **R-best is chosen per provider on dev** (*proposed*): of the rungs that ask for marks (R2–R6),
   the one leaving the fewest struck sub-tokens unmarked (live or absent) whose over-deletion, marked
-  and absent, stays within 1 point of R0's, ties going to the cheaper rung. It is chosen on one
-  non-flagship model per provider (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and checked
-  on that provider's flagship, which runs R-best and the runner-up, before the second
+  and absent, stays no more than 1 point above R0's, ties going to the cheaper rung. It is chosen on
+  one non-flagship model per provider (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and
+  checked on that provider's flagship, which runs R-best and the runner-up, before the second
   pre-registration tag. If the runner-up does better there, the non-flagship's choice stands and the
   gap is reported. Each open vision model chooses for itself. The image condition, C2 or C2-tiled,
   is then chosen per provider at that rung the same way.
@@ -280,8 +280,7 @@ its code is hashed into the second pre-registration tag.
 - **Properties, not contests:** determinism and native CER hold by construction. Word location
   counts only against an R4 variant that returns boxes (IoU ≥ 0.5).
 - **Statistics:** decisions by an exact paired sign-flip test over clusters (documents, or G0
-  pages); intervals from a paired bootstrap, 10,000 replicates with a fixed seed, pages nested in
-  clusters.
+  pages); intervals from a paired cluster bootstrap, 10,000 replicates with a fixed seed.
 
 ## Checks and the audit
 

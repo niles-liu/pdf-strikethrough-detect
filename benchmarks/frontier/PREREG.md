@@ -58,8 +58,8 @@ place once. So every response also records what the provider reports about the v
 - **Ladder models** choose R-best and the image condition for their provider (see
   [Prompts](#prompts)): Claude Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna and Grok 4.3. Each open
   vision model chooses for itself.
-- **Fable 5.1** runs on a ceiling subset of 50 test pages, stratified by set, at R0, R1 and
-  Anthropic's R-best, on C2.
+- **Fable 5.1** runs on a ceiling subset of 50 test pages, stratified by set and drawn with seed
+  `20261018`, at R0, R1 and Anthropic's R-best, on C2.
 
 **Settings.** One row per model, fixed in `prereg-2` (TBD (B2)) and recorded with every
 response:
@@ -117,7 +117,8 @@ own hypothesis), and a claim holds when its adjusted p-value is below 0.025, the
 of a 95% two-sided interval. Reported intervals are unadjusted 95% bootstrap intervals.
 
 **Insufficient data.** A cell with fewer than 200 struck sub-tokens, or fewer than 6 clusters
-(the fewest with which an unadjusted p-value can reach 0.025), reads "insufficient data" and
+counted in its test (see [Statistics](#statistics); the fewest with which an unadjusted p-value
+can reach 0.025), reads "insufficient data" and
 leaves its family before the Holm adjustment.
 
 ## Ground truth
@@ -197,8 +198,9 @@ A seeded generator, `g0.py`, grown from `examples/native_quickstart.py::build_re
   PDF's body words (PyMuPDF, extraction order, furniture removed) with the scorer's edit-distance
   alignment. A PDF word aligned to a struck XML word is struck. Coverage per page is the share of
   body words aligned; pages under 98% are dropped. The annotators check 100 aligned spans by eye
-  before `prereg-2`; a bad span fixes the rule and every G2 page is rebuilt, so the rule is
-  tagged in `prereg-2`: TBD (B2).
+  before `prereg-2` (a span is a run of consecutive PDF words aligned as struck, shown with a live
+  word either side; the 100 are drawn with seed `20261021`); a bad span fixes the rule and every G2
+  page is rebuilt, so the rule is tagged in `prereg-2`: TBD (B2).
 - **Furniture,** found by position and rotation: GPO's typesetting slug (`VerDate … Jkt …`), the
   rotated margin line, the running foot (such as `•HR 2670 RH`), margin line numbers, running
   heads and page numbers. Stage B1 checks the rule on one bill from each chamber.
@@ -287,26 +289,25 @@ or PDF) comes before the instruction text, except in Gemini's image requests, wh
 guidance puts the text first.
 
 **R-best** is chosen per provider on dev, on its ladder model, from the rungs that ask for marks
-(R2–R6), because an unmarked transcription can lower its leakage by dropping struck text. It is the
-rung that leaves the fewest struck sub-tokens unmarked (live or absent), which is what endpoint 3's
-F1 rewards, among those whose over-deletion, marked and absent, each stays within 1 point of R0's;
-ties go to the cheaper rung. The rung is chosen on C2 first, then the image condition (C2 or
-C2-tiled) at that rung, by the same rule. The provider's flagship runs R-best and the runner-up rung
-on the same dev pages; if the runner-up does better there, the ladder model's choice stands and the
-gap is reported. The choices are tagged in `prereg-2`: TBD (B2).
+(R2–R6). It is the rung that leaves the fewest struck sub-tokens unmarked (live or absent), which is
+what endpoint 3's F1 rewards, among those whose over-deletion, marked and absent, each stays no more
+than 1 point above R0's; ties go to the cheaper rung. The rung is chosen on C2 first, then the image
+condition (C2 or C2-tiled) at that rung, by the same rule. The provider's flagship runs R-best and
+the runner-up rung on the same dev pages; if the runner-up does better there, the ladder model's
+choice stands and the gap is reported. The choices are tagged in `prereg-2`: TBD (B2).
 
-**Dev pages:** the pilot's 30 are drawn with seed `20261013`, half from G0-dev and half from G1-dev
-(either set fills the other's shortfall). The ladder's 20, the repeats' and the effort
-ablation's 20 and the canary's 10 are drawn from those 30 with the same seed, half from each set
-where it can. All are listed in `prereg-1`: TBD (B1).
+**Dev pages:** one generator seeded with `20261013` draws, in this order, the pilot's 30 pages,
+half from G0-dev and half from G1-dev (either set fills the other's shortfall), and then, from
+those 30, the ladder's 20, the repeats' 20, the effort ablation's 20 and the canary's 10, each
+half from each set where it can. All are listed in `prereg-1`: TBD (B1).
 
 **Paraphrases:** three of every rung, written and hashed before the first dev call, since R-best
 is not known yet. Those of R0, R1 and R-best run on dev, and the R1 paraphrases also on test.
 
-**The QA probe** (exploratory): 40 questions from G0-test's S7 items, each with a live answer and a
-struck one ("what is the rate?" where 5% is struck and 3% written beside it), asked with R0's
-framing and again with R1's system line, on C2, to the flagships. An answer is scored as giving the
-live value, the struck value, both, or neither.
+**The QA probe** (exploratory): 40 questions drawn with seed `20261020` from G0-test's S7 items,
+each with a live answer and a struck one ("what is the rate?" where 5% is struck and 3% written
+beside it), asked with R0's framing and again with R1's system line, on C2, to the flagships. An
+answer is scored as giving the live value, the struck value, both, or neither.
 
 **Stage B4's prompts,** drafts fixed in `prereg-2` (TBD (B2)):
 - **M+P context:** R2's prompt and the page, plus the package's output for the page (its struck
@@ -369,20 +370,20 @@ paid call, and their code's hashes are tagged in `prereg-2` (TBD (B2)).
 
 - **Clusters:** a G0 page (the generator draws each page independently; its files are only
   containers), a G1 document, a G2 bill.
-- **Tests.** A leakage or over-deletion claim about sides A and B (model and package, or C1 and
-  C2) with bound b uses a sign-flip test on per-cluster counts. The statistic is the sum over
-  clusters of ±(E_A − E_B − b·S), where S is the cluster's struck sub-tokens (its live ones, for
-  over-deletion) and E_A, E_B count those each side gets wrong (struck scored live; live scored
-  marked). With every sign positive it is S's total times the pooled difference minus b.
-  Clusters with S = 0 carry no information and are left out of n. For a bound other than 0
-  (endpoint 2) the test assumes each cluster's difference is symmetric about the bound, and the
-  bootstrap interval is reported beside it. An F1 claim instead swaps the two sides' outputs in
-  the flipped clusters and recomputes pooled F1. The p-value is the share of sign patterns at
-  least as favourable to the claim as the observed one, ties included: all 2^n of them when n is
-  16 or fewer, otherwise 10,000 random ones from NumPy's PCG64 seeded with `20261012`, as
+- **Tests.** A leakage or over-deletion claim about sides A and B (model and package, or C1 and C2)
+  with bound b, a proportion (1 point is 0.01), uses a sign-flip test on per-cluster counts. The
+  statistic is the sum over clusters of ±(E_A − E_B − b·S), where S is the cluster's struck
+  sub-tokens (its live ones, for over-deletion) and E_A, E_B count those each side gets wrong
+  (struck scored live; live scored marked). With every sign positive it is S's total times the
+  pooled difference minus b. Clusters with S = 0 carry no information and are left out of n. For a
+  bound other than 0 (endpoint 2) the test assumes each cluster's difference is symmetric about the
+  bound, and the bootstrap interval is reported beside it. An F1 claim instead swaps the two sides'
+  outputs in the flipped clusters and recomputes pooled F1. The p-value is the share of sign
+  patterns at least as favourable to the claim as the observed one, ties included: all 2^n of them
+  when n is 16 or fewer, otherwise 10,000 random ones from NumPy's PCG64 seeded with `20261012`, as
   (1 + count) ÷ 10,001.
-- **Intervals:** a paired two-stage cluster bootstrap (clusters, then pages within them, with
-  replacement), 10,000 replicates from PCG64 seeded with `20261017`, both sides scored on the
+- **Intervals:** a paired cluster bootstrap (clusters resampled with replacement, the pages of each
+  kept whole), 10,000 replicates from PCG64 seeded with `20261017`, both sides scored on the
   same draw and each metric pooled over the draw's sub-tokens; 95% percentile intervals.
 - Per-cluster results sit beside the pooled ones, and per-stratum results for G0.
 
@@ -408,8 +409,9 @@ paid call, and their code's hashes are tagged in `prereg-2` (TBD (B2)).
   with their consent. Each first labels 10 practice items with known answers. They split the items,
   with a random 25% (seed `20261016`) labelled by both, the G1 sample's words included, and each
   checks every *no* the other gives on questions 2 and 3. Agreement on question 1 is Cohen's κ over
-  the shared items, with a bootstrap CI; below 0.7, the definitions are revised and the round
-  repeated. The author adjudicates disagreements, and the pre-adjudication labels are published.
+  the shared items, with a bootstrap CI (seed `20261022`); below 0.7, the definitions are revised
+  and the round repeated. The author adjudicates disagreements, and the pre-adjudication labels are
+  published.
 - **G1's error rate,** before any test call: 400 G1-test words drawn with seed `20261015`, 200 of
   them struck in the ground truth and 200 live words on lines carrying a strike, labelled from the
   page crop with question 1 only, without the ground truth. The error rate is reported separately
@@ -433,9 +435,10 @@ paid call, and their code's hashes are tagged in `prereg-2` (TBD (B2)).
   (`config/prices.toml`, each price with its date and source), thinking included, at batch prices
   where the request was batched. The package's cost is measured CPU-seconds per page on a named
   machine, OCR included, at a named on-demand price per vCPU-hour.
-- **Latency:** an interactive sample of 30 test pages per model at R0 and at R-best on C2, sent one
-  at a time, timed from request to last byte, retries and back-off excluded; the free arms are
-  timed on the same pages. Q5's seconds per page are reported for these arms.
+- **Latency:** an interactive sample of 30 test pages, drawn with seed `20261019`, per model at R0
+  and at R-best on C2, sent one at a time, timed from request to last byte, retries and back-off
+  excluded; the free arms are timed on the same pages. Q5's seconds per page are reported for these
+  arms.
 - **Repeats:** three runs of a 20-page dev subset at R0 and R-best on C2 per ladder model measure
   nondeterminism.
 - **The dry run** prices every stage before anything is spent. Input tokens come from Anthropic's
@@ -454,8 +457,9 @@ paid call, and their code's hashes are tagged in `prereg-2` (TBD (B2)).
 
 - **`prereg-1`** (end of stage B1): this file with every TBD (B1) filled: the pinned model IDs,
   their knowledge cutoffs and the G2 cutoff date; the G0 generator commit, the held-back seed's
-  sha256 and every G0-test file's sha256; the G1 dev documents and page list; the pilot's and the
-  ladder's dev pages; the G2 bill list and sha256s; the cap and the drop order.
+  sha256 and every G0-test file's sha256; the G1 dev documents and page list; the dev pages for the
+  pilot, the ladder, the repeats, the effort ablation and the canary; the G2 bill list and sha256s;
+  the cap and the drop order.
 - **`prereg-2`** (end of stage B2): every TBD (B2) filled: the scorer's and the statistics' hashes,
   the per-model settings table, R-best and the image condition per provider, the prompt files'
   sha256s (paraphrases and few-shot images included), the M+P and text-only prompts, the G2
@@ -527,8 +531,8 @@ Do these in order; each ends in a check.
    vector-flag agreement match `benchmarks/confirmation_rate.py` (55,171 vector detections, 99.85%
    confirmed); the page sample is reproducible from its seed; and B-naive's output aligns to at
    least 99% of the ground-truth words on every G1-dev page (it is the same text layer), so
-   extraction order is not breaking the alignment. Then draw the pilot's and the ladder's dev pages
-   and the G1 error-rate sample.
+   extraction order is not breaking the alignment. Then draw the dev pages (Part A, Prompts) and
+   the G1 error-rate sample.
 4. **G2.** Write `g2.py`: list reported bill versions after the cutoff date (GovInfo's API),
    fetch their XML and PDF, confirm the struck-text markup and the furniture rule on one bill from
    each chamber, align, apply the 98% rule. Check: at least 12 bills survive, with the strict
@@ -560,8 +564,8 @@ Do these in order; each ends in a check.
    condition, and run R-best and the runner-up on each flagship.
 3. **Labels:** the G1 error-rate sample and the G2 span check; then fix the G2 alignment rule.
 4. **Stage B4's prompts:** write the M+P and text-only prompts and hash them.
-5. **Freeze:** the scorer's hash, the prompts, the settings, then fill every TBD (B2) and publish
-   `prereg-2`.
+5. **Freeze:** the scorer's and the statistics' hashes, the prompts, the settings, then fill every
+   TBD (B2) and publish `prereg-2`.
 
 ## Stage B3: the test run
 
@@ -570,7 +574,7 @@ Do these in order; each ends in a check.
    sample.
 3. Collect, score and run the test audit. Fix at the source and rescore; never edit a number.
 4. Report: the results table, the leakage-against-cost scatter, the failure gallery, and the
-   per-stratum and per-document tables. Publish the responses, scores and labels.
+   per-stratum and per-cluster tables. Publish the responses, scores and labels.
 
 ## What the author provides
 
