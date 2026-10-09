@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **CI's copies of the dependency pins can no longer drift from `pyproject.toml`.** The lint job
+  reads ruff's version from the `dev` extra instead of keeping its own copy, and moves to
+  ruff-action v4.1.0 (Node 24; v4 has no floating major tag, which is why Dependabot never offered
+  it). The `lowest-bounds` job still copies the dependency floors, and
+  `tests/test_dependency_floors.py` now fails when its copy and `pyproject.toml` disagree. The
+  `pymupdf` floor may rise above `native.FLAG_MIN_PYMUPDF`, the oldest version the flag detector
+  does not crash on, but still not fall below it.
+
 ### Removed
 - **The TestPyPI rehearsal.** A manual run of `publish.yml` tried to publish to TestPyPI, where this
   repository had no trusted publisher, so it failed at the login each time. A manual run now builds

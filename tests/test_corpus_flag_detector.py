@@ -70,15 +70,14 @@ def test_installed_pymupdf_clears_the_flag_floor():
     assert native._PYMUPDF_VERSION >= native.FLAG_MIN_PYMUPDF
 
 
-def test_flag_floor_matches_the_declared_dependency_floor():
-    """`FLAG_MIN_PYMUPDF` and the `pymupdf>=` floor in pyproject.toml must not drift apart.
+def test_declared_floor_admits_no_crashing_pymupdf():
+    """The `pymupdf>=` floor in pyproject.toml must not admit a version the flag detector crashes on.
 
-    They are two statements of one fact in two files, and the failure is silent in both directions:
-    raise the pyproject floor alone and the runtime guard goes on permitting versions the package
-    forbids; raise the constant alone and a legal install starts refusing to run. Together with the
-    test above this also pins CI's `lowest-bounds` job, whose dependency floors are hand-mirrored
-    into the workflow and validated by nothing -- it installs an exact pymupdf and would fail here
-    if that pin ever fell below what pyproject declares.
+    `FLAG_MIN_PYMUPDF` records where the crash ends (1.26.3-1.26.5 segfault, 1.26.6 does not), and
+    the packaging floor may rise above it for unrelated reasons, so the invariant is
+    declared >= FLAG_MIN_PYMUPDF, not equality. Raise the constant past the floor and a legal install
+    starts refusing to run; this fails then too. tests/test_dependency_floors.py keeps CI's
+    `lowest-bounds` job installing the declared floor.
     """
     pyproject = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
     if not pyproject.is_file():
@@ -87,9 +86,10 @@ def test_flag_floor_matches_the_declared_dependency_floor():
     m = re.search(r'"pymupdf>=([0-9]+(?:\.[0-9]+)*)"', pyproject.read_text(encoding="utf-8"))
     assert m, "no pinned `pymupdf>=` floor found in pyproject.toml [project.dependencies]"
     declared = tuple(int(p) for p in m.group(1).split("."))
-    assert declared == native.FLAG_MIN_PYMUPDF, (
-        f"pyproject declares pymupdf>={m.group(1)} but native.FLAG_MIN_PYMUPDF is "
-        f"{'.'.join(map(str, native.FLAG_MIN_PYMUPDF))}")
+    assert declared >= native.FLAG_MIN_PYMUPDF, (
+        f"pyproject declares pymupdf>={m.group(1)}, which admits versions below "
+        f"native.FLAG_MIN_PYMUPDF ({'.'.join(map(str, native.FLAG_MIN_PYMUPDF))}), where the flag "
+        f"detector crashes")
 
 
 def test_flag_detector_refuses_a_crashing_pymupdf(monkeypatch):
