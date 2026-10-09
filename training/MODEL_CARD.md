@@ -30,12 +30,14 @@ vector strokes and annotations directly and never invokes this model.
   and inference preprocessing cannot drift.
 - **Output:** a single logit → sigmoid probability that the word is struck.
 - **Decision thresholds** (in the meta): `p_hi = 0.85`, `p_lo = 0.15`. A word scoring `≥ p_hi` is
-  struck, `≤ p_lo` is clean, and the `[p_lo, p_hi)` band is "unsure" and deferred to geometry. How
-  the shipped values were chosen is not recorded (see [Provenance](#provenance-and-training)); the
-  training script sets a retrained model's thresholds from data: `p_hi` as a split-conformal
-  threshold on held-out struck-word probabilities (a recall floor of `1 − alpha` for crops like the
-  validation set; see `training/README.md`), `p_lo` mirrored on the clean class. Override per-call
-  with `ScanConfig.recall_first(cnn_p_hi=…)` / `precision_first(cnn_p_lo=…)`.
+  struck, `≤ p_lo` is clean, and between them it is "unsure". Only `p_hi` decides what is
+  reported: a candidate the CNN does not confirm at `p_hi` is not reported (a geometry-confident one
+  whose crop is too small to score is kept), and `p_lo` only labels the rest clean or unsure. How the shipped values were
+  chosen is not recorded (see [Provenance](#provenance-and-training)); the training script sets a
+  retrained model's thresholds from data: `p_hi` as a split-conformal threshold on held-out
+  struck-word probabilities (a recall floor of `1 − alpha` for crops like the validation set; see
+  `training/README.md`), `p_lo` mirrored on the clean class. Override per call with
+  `ScanConfig.recall_first(cnn_p_hi=…)` / `precision_first(cnn_p_hi=…)`.
 
 ## How it fits the pipeline
 
