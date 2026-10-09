@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Only a release whose tag starts with `v` runs `publish.yml`'s jobs.** A GitHub Release with
+  another tag, such as the ones that will timestamp the benchmark's pre-registration, builds and
+  publishes nothing and asks for no approval. A version tag still has to match `__version__`.
+  Releases are now immutable (a repository setting): a published release's tag cannot be moved.
 - **CI's copies of the dependency pins can no longer drift from `pyproject.toml`.** The lint job
   reads ruff's version from the `dev` extra instead of keeping its own copy, and moves to
   ruff-action v4.1.0 (Node 24; v4 has no floating major tag, which is why Dependabot never offered
