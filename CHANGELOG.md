@@ -12,8 +12,8 @@ All notable changes to this project are documented here. The format follows
   ruff-action v4.1.0 (Node 24; v4 has no floating major tag, which is why Dependabot never offered
   it). The `lowest-bounds` job still copies the dependency floors, and
   `tests/test_dependency_floors.py` now fails when its copy and `pyproject.toml` disagree. The
-  `pymupdf` floor may rise above `native.FLAG_MIN_PYMUPDF`, the oldest version the flag detector
-  does not crash on, but still not fall below it.
+  `pymupdf` floor may rise above `native.FLAG_MIN_PYMUPDF` (1.26.6, where the flag detector's
+  1.26.3–1.26.5 crash ends), but still not fall below it.
 
 ### Removed
 - **The TestPyPI rehearsal.** A manual run of `publish.yml` tried to publish to TestPyPI, where this

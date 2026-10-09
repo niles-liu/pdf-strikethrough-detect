@@ -71,12 +71,12 @@ def test_installed_pymupdf_clears_the_flag_floor():
 
 
 def test_declared_floor_admits_no_crashing_pymupdf():
-    """The `pymupdf>=` floor in pyproject.toml must not admit a version the flag detector crashes on.
+    """pyproject.toml's `pymupdf>=` floor must admit no version the flag detector crashes on.
 
     `FLAG_MIN_PYMUPDF` records where the crash ends (1.26.3-1.26.5 segfault, 1.26.6 does not), and
     the packaging floor may rise above it for unrelated reasons, so the invariant is
-    declared >= FLAG_MIN_PYMUPDF, not equality. Raise the constant past the floor and a legal install
-    starts refusing to run; this fails then too. tests/test_dependency_floors.py keeps CI's
+    declared >= FLAG_MIN_PYMUPDF, not equality. Raise the constant past the floor and a legal
+    install starts refusing to run; this fails then too. tests/test_dependency_floors.py keeps CI's
     `lowest-bounds` job installing the declared floor.
     """
     pyproject = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -86,6 +86,7 @@ def test_declared_floor_admits_no_crashing_pymupdf():
     m = re.search(r'"pymupdf>=([0-9]+(?:\.[0-9]+)*)"', pyproject.read_text(encoding="utf-8"))
     assert m, "no pinned `pymupdf>=` floor found in pyproject.toml [project.dependencies]"
     declared = tuple(int(p) for p in m.group(1).split("."))
+    declared += (0,) * (len(native.FLAG_MIN_PYMUPDF) - len(declared))   # "1.27" means 1.27.0
     assert declared >= native.FLAG_MIN_PYMUPDF, (
         f"pyproject declares pymupdf>={m.group(1)}, which admits versions below "
         f"native.FLAG_MIN_PYMUPDF ({'.'.join(map(str, native.FLAG_MIN_PYMUPDF))}), where the flag "
