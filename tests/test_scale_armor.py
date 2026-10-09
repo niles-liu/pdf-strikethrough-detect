@@ -2,7 +2,7 @@
 
 Covers the pure-code groups of the release: high-DPI normalization + pixel-budget guard
 (R-highdpi / R-guard), dashed & flat-bezier native strikes (R-dash), the batch / directory CLI
-mode (R-batch), malformed-PDF robustness (R-hostile), and layout reading-order edge cases
+mode, malformed-PDF robustness (R-hostile), and layout reading-order edge cases
 (R-layout). All fixtures are synthesized in-process — no data files are checked in.
 """
 import json
@@ -116,7 +116,7 @@ def test_chain_short_merges_within_gap_only():
     assert chains[1][0] == 200 and chains[1][1] == 203     # isolated, still short
 
 
-# ===== R-batch ================================================================================
+# ===== batch mode =============================================================================
 def _strike_pdf_bytes(word):
     doc = _one_page(lambda p: (p.insert_text((50, 100), f"keep {word} text here", fontsize=12)))
     _solid_strike(doc[0], word)

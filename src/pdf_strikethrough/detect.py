@@ -36,8 +36,8 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
 
 class OcrRequiredError(ValueError):
-    """A scanned page or image frame was hit with no OCR words for it: no `ocr` backend, no
-    `di_result`, and no `words_by_page` entry."""
+    """A scanned page or image frame was hit with no OCR words for it: no `ocr` backend, and no
+    `di_result`, `words` or `words_by_page` that covers it."""
 
 
 class EncryptedPdfError(ValueError):

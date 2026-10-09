@@ -59,7 +59,7 @@ def _docx_bytes(body_xml):
     return buf.getvalue()
 
 
-# ------------------------------------------------------------------------- R-cloud adapters
+# ------------------------------------------------------------------------- cloud OCR adapters
 
 def test_words_from_textract_pages_and_confidence():
     resp = {"Blocks": [
@@ -116,7 +116,7 @@ def test_detect_pdf_words_by_page_routes_and_defaults_confidence_free(monkeypatc
     doc.close()
 
 
-# ------------------------------------------------------------------------- R-img image input
+# ------------------------------------------------------------------------- image input
 
 def test_detect_image_file_flags_struck_word():
     png, words = _redline_image_png()
@@ -165,7 +165,7 @@ def test_image_frames_reads_and_omits_dpi_metadata():
     assert D._image_frames(buf2.getvalue())[0][2] is None
 
 
-# ------------------------------------------------------------------------- R-docx
+# ------------------------------------------------------------------------- Word documents
 
 def test_docx_strike_and_tracked_deletion():
     body = ('<w:p><w:r><w:t>keep </w:t></w:r>'
@@ -195,7 +195,7 @@ def test_docx_bad_input_raises():
         pass
 
 
-# ------------------------------------------------------------------------- R-rag provenance
+# ------------------------------------------------------------------------- provenance text (RAG)
 
 def test_provenance_text_marks_and_merges_passages():
     doc = _synthetic_native_pdf()                         # strikes consecutive 'deleted text'

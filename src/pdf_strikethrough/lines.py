@@ -286,7 +286,7 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
     if n:
         # Endpoint arrays in start-x order. This is the pipeline's hottest loop (n runs to thousands
         # on a dense scan), so the pair tests are vectorized per fragment; native dtype is preserved
-        # so the comparisons are exact.
+        # so each comparison rounds as a per-pair float32 test would.
         pts = np.asarray(frags)                       # (n, 2, 2): [frag][start|end][x|y]
         order = np.argsort(pts[:, 0, 0], kind="stable")
         sx, sy = pts[order, 0, 0], pts[order, 0, 1]

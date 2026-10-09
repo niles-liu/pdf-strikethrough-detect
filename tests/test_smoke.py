@@ -814,7 +814,7 @@ def test_no_record_claims_struck_while_not_final():
 # --------------------------------------------------------------------- v0.6.0 surface
 
 def test_detect_pdf_method_alias_deprecated_but_honored():
-    """R-name: detect_pdf's native-page selector is now `method`; the old `native_method` still
+    """detect_pdf's native-page selector is now `method`; the old `native_method` still
     works but emits a DeprecationWarning, and passing both with different values raises."""
     import warnings
     doc = _synthetic_native_pdf()
@@ -835,7 +835,7 @@ def test_detect_pdf_method_alias_deprecated_but_honored():
 
 
 def test_vector_records_carry_stroke_color_and_width():
-    """R-forensics: native vector records report the dominant contributing stroke's color + width
+    """Native vector records report the dominant contributing stroke's color + width
     (RGB in [0,1], width in pt) — pen-color conventions are evidence in legal review."""
     import pymupdf as fitz
     doc = fitz.open()
@@ -866,7 +866,7 @@ def test_vector_filled_bar_reports_fill_color():
 
 
 def test_annot_pass_detects_with_forensics():
-    """R-annot: the explicit /StrikeOut annotation pass reports tier='annot' plus the annotation's
+    """The explicit /StrikeOut annotation pass reports tier='annot' plus the annotation's
     author/date/color forensics."""
     import pymupdf as fitz
     doc = fitz.open()

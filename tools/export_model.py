@@ -49,9 +49,10 @@ def main():
     crop_h = ckpt.get("crop_h", 32)
     crop_w = ckpt.get("crop_w", 160)
     meta = {"version": ckpt.get("version", "unknown"),
-            "p_hi": ckpt["p_hi"], "p_lo": ckpt["p_lo"],
-            "crop_h": crop_h, "crop_w": crop_w,
-            "pad_x": ckpt.get("pad_x", 5), "pad_y": ckpt.get("pad_y", 7)}
+            "p_hi": float(ckpt["p_hi"]), "p_lo": float(ckpt["p_lo"]),
+            "crop_h": int(crop_h), "crop_w": int(crop_w),
+            "pad_x": int(ckpt.get("pad_x", 5)), "pad_y": int(ckpt.get("pad_y", 7))}
+    meta_text = json.dumps(meta, indent=1)   # before anything is written, so a bad value stops here
 
     os.makedirs(args.out, exist_ok=True)
     onnx_path = os.path.join(args.out, "strike_verdict_cnn.onnx")
@@ -85,7 +86,7 @@ def main():
         os.remove(meta_path)                  # the new graph never sits beside an old meta
     os.replace(tmp, onnx_path)
     with open(meta_path, "w", encoding="utf-8", newline="\n") as f:   # LF, as git stores it
-        json.dump(meta, f, indent=1)
+        f.write(meta_text)
 
     print(f"exported {meta['version']}  p_hi={meta['p_hi']} p_lo={meta['p_lo']}  "
           f"onnx/torch max |dlogit| {max_abs:.2e}")       # ASCII: a cp1252 console can't print Δ

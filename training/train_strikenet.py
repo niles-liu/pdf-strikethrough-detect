@@ -80,6 +80,23 @@ def split(n, val_frac, seed):
     return idx[:n_val], idx[n_val:]
 
 
+def split_shortfall(y, val_frac, seed, alpha):
+    """Why :func:`split` cannot calibrate a model from labels `y`, or None if it can: the
+    validation split needs enough struck crops for `alpha`'s conformal threshold and a clean one,
+    and the training split needs a crop. Too few struck crops and conformal_threshold returns
+    0.0, a model that calls every candidate struck."""
+    val_idx, tr_idx = split(len(y), val_frac, seed)
+    n_struck = int(y[val_idx].sum())
+    n_clean = len(val_idx) - n_struck
+    need = int(np.ceil(1 / alpha)) - 1
+    if len(tr_idx) and n_struck >= need and n_clean:
+        return None
+    return (f"the validation split holds {n_struck} struck and {n_clean} clean crops and the "
+            f"training split {len(tr_idx)}; --alpha {alpha} needs at least {need} struck and 1 "
+            f"clean to set the thresholds, and training needs a crop (label more crops, or "
+            f"adjust --val-frac or --alpha)")
+
+
 def train(x, y, *, epochs=40, val_frac=0.2, batch=64, lr=1e-3, seed=0):
     """Train StrikeNet on standardized crops, holding out :func:`split`'s validation crops.
     Returns (net, val_probs, val_labels)."""
@@ -152,7 +169,7 @@ def export(net, out_dir, *, p_hi, p_lo, version, training=None):
         meta["training"] = training
     meta_path.unlink(missing_ok=True)               # the new graph never sits beside an old meta
     tmp.replace(onnx_path)
-    meta_path.write_text(json.dumps(meta, indent=2))
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8", newline="\n")
     return onnx_path, meta
 
 
@@ -178,17 +195,9 @@ def main(argv=None):
 
     x, y, digest = load_dataset(args.dataset_dir)
     print(f"loaded {len(x)} labeled crops ({int(y.sum())} struck, {int((1 - y).sum())} clean)")
-    # Checked on the split train() draws, before the epochs: too few struck validation crops and
-    # conformal_threshold returns 0.0, a model that calls every candidate struck.
-    val_idx, tr_idx = split(len(x), args.val_frac, args.seed)
-    n_struck_val = int(y[val_idx].sum())
-    n_clean_val = len(val_idx) - n_struck_val
-    need = int(np.ceil(1 / args.alpha)) - 1
-    if not len(tr_idx) or n_struck_val < need or not n_clean_val:
-        sys.exit(f"the validation split holds {n_struck_val} struck and {n_clean_val} clean crops "
-                 f"and the training split {len(tr_idx)}; --alpha {args.alpha} needs at least "
-                 f"{need} struck and 1 clean to set the thresholds, and training needs a crop "
-                 f"(label more crops, or adjust --val-frac or --alpha)")
+    problem = split_shortfall(y, args.val_frac, args.seed, args.alpha)   # before the epochs
+    if problem:
+        sys.exit(problem)
     hparams = {"epochs": args.epochs, "val_frac": args.val_frac, "batch": args.batch,
                "lr": args.lr, "seed": args.seed}
     net, val_probs, val_y = train(x, y, **hparams)
