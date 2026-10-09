@@ -1,9 +1,10 @@
 # Frontier-model benchmark: plan
 
 **Status: a working plan. Nothing here has run, and nothing is pre-registered yet.** The frozen
-protocol will be `PREREG.md` in this directory, committed and timestamped in two steps (see
-[Pre-registration](#pre-registration)) before any arm touches a test page. Where the two differ,
-`PREREG.md` governs. Values marked *proposed* are this plan's defaults until `PREREG.md` fixes them.
+protocol is [`PREREG.md`](PREREG.md), a draft until it is committed and timestamped in two steps
+(see [Pre-registration](#pre-registration)) before any arm touches a test page. Where the two
+differ, `PREREG.md` governs. Values marked *proposed* are this plan's defaults until `PREREG.md`
+fixes them.
 
 **Names used below.** Questions Q1–Q6; ground-truth sets G0–G4; arms B-* (baselines), P-* (this
 package), M (a model alone), M+P (a model with the package) and P→M (the package's text to a
@@ -13,10 +14,12 @@ on dev; stages B0–B6 (see [Order](#order)), always written "stage B1" outside 
 ## The question
 
 Can a frontier model do this package's job: find struck-through (deleted) text in a PDF or a scan,
-and keep it out of the live text? No published number answers it. No strikethrough evaluation of
-LLMs or VLMs turned up, and olmOCR-bench and OmniDocBench do not score it. The closest evidence is
-[arXiv 2603.08497](https://arxiv.org/abs/2603.08497) ("Reading ≠ Seeing"), where font-style
-detection is "universally poor" across 15 VLMs, with strikethrough not broken out.
+and keep it out of the live text? No published number answers it. ParseBench
+([arXiv 2604.08538](https://arxiv.org/abs/2604.08538)) scores strikethrough markup on real
+enterprise pages, but folds it into one semantic-formatting score with bold, superscripts and
+headings. In [arXiv 2603.08497](https://arxiv.org/abs/2603.08497) ("Reading ≠ Seeing"),
+font-style detection is "universally poor" across 15 VLMs, with strikethrough not broken out.
+olmOCR-bench and OmniDocBench do not score it.
 
 ## Ground rules
 
@@ -150,14 +153,13 @@ pooled ones.
 - **M, a model alone.** At least a flagship and a small tier per provider:
   - Anthropic: Claude Opus 5.5, Sonnet 5.5 and Haiku 4.5, plus Fable 5.1 on a subset as the
     ceiling.
-  - Google: Gemini Pro and Flash.
-  - OpenAI: the flagship and its mini.
-  - xAI: the Grok flagship and a smaller Grok.
-  - One or two open-weights vision models (for example Qwen's VL line or Kimi-VL), served through a
-    hosted API with the provider and the precision pinned: anyone can re-run them with the same
-    weights.
-  - One OCR-to-markdown model (olmOCR, Mistral OCR or PaddleOCR-VL), with its documented prompt,
-    once it is checked to emit `~~` at all.
+  - Google: Gemini 3.1 Pro, a preview (Google has no stable 3.x Pro), and Gemini 3.8 Flash.
+  - OpenAI: GPT-6 Astra and GPT-6 Luna, the family's smallest tier (GPT-6 has no mini).
+  - xAI: Grok 4.7 and Grok 4.3.
+  - Two open-weights vision models, Qwen3.8-27B and Kimi K3, each served through a hosted API at
+    its released precision with the provider pinned: anyone can re-run them with the same weights.
+  - One OCR-to-markdown model, Chandra OCR 2, whose documented prompt allows a strikethrough tag,
+    run as documented once it is checked to emit strike markup at all.
 
   `PREREG.md` pins exact model IDs and a per-model settings table: effort or thinking budget (set
   explicitly; provider defaults differ), output token limit, maximum image resolution or detail, and
@@ -172,9 +174,10 @@ pooled ones.
 ## Inputs
 
 - **C1 PDF upload,** each provider's native document input (Claude receives page images plus the
-  extracted text). xAI's, by its docs, gives the model a search tool over the file rather than the
-  page (stage B1 checks this with an image-only PDF); it is Grok's C1 all the same, since it is the
-  route a developer gets. The open vision models have no document input, so no C1.
+  extracted text). By xAI's docs, its document input treats a PDF as a text format and gives the
+  model a search tool over it, not the page (stage B1 checks this with an image-only PDF); it is
+  Grok's C1 all the same, since it is the route a developer gets. The open vision models have no
+  document input, so no C1.
 - **C1′ Image plus text:** the C2 image with the page's extracted text as a text block, the same for
   every provider. It isolates the text layer for Q3.
 - **C2 Page image:** 200 dpi, identical bytes for every model.
@@ -216,11 +219,11 @@ Protocol:
 - One ladder serves every provider. Provider settings are recorded inputs, not prompt edits.
 - **R-best is chosen per provider on dev** (*proposed*): the rung with the lowest leakage whose
   marked over-deletion stays within 1 point of R0's, ties going to the cheaper rung. It is chosen on
-  one non-flagship model per provider (Sonnet 5.5, Gemini Flash, the OpenAI mini, the smaller
-  Grok) and confirmed on that provider's flagship before the second pre-registration tag. If the
-  flagship's best rung differs, it keeps the non-flagship's choice and the gap is reported. Each
-  open vision model chooses for itself. The image condition, C2 or C2-tiled, is chosen per
-  provider on dev the same way.
+  one non-flagship model per provider (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and
+  confirmed on that provider's flagship before the second pre-registration tag. If the flagship's
+  best rung differs, it keeps the non-flagship's choice and the gap is reported. Each open vision
+  model chooses for itself. The image condition, C2 or C2-tiled, is chosen per provider on dev
+  the same way.
 - The full test run carries R0, R1 and R-best for every model. The per-rung curve is exploratory;
   Q6 is answered on test by R0, R1 and R-best.
 - Three paraphrases each of R0, R1 and R-best give a paraphrase spread on dev; the R1 paraphrases
@@ -351,11 +354,11 @@ its code is hashed into the second pre-registration tag.
   scored as failures.
 - `--dry-run` prices a run before anything is spent: input tokens exactly by the provider's token
   counting where it counts images, otherwise from the `usage` seen on dev for the same route and
-  image size; output and thinking tokens, and xAI's billed document searches, at the 95th
-  percentile seen on dev (the pilot and the ladder) per model and rung.
-- Requests go to each provider's own API, batched where it can be: about 50% off at Anthropic,
-  Google and OpenAI, 20% off the smaller Grok, and nothing for the Grok flagship, which has no
-  batch API. The open models go through a hosted API whose provider and precision are pinned and
+  image size; output and thinking tokens, and xAI's billed document searches with the input they
+  add, at the 95th percentile seen on dev (the pilot and the ladder) per model and rung.
+- Requests go to each provider's own API, batched where the provider allows: about 50% off at
+  Anthropic, Google and OpenAI, 20% off Grok 4.3, and nothing for Grok 4.7, which has no batch
+  API. The open models go through a hosted API whose provider and precision are pinned and
   recorded. API keys come from the environment or the repo's `.env` (git-ignored), never a
   committed file.
 - RapidOCR downloads its OCR models on first use: their sha256s are recorded and the files mirrored.
@@ -429,14 +432,15 @@ a future model trained on the public pages can still be checked.
 
 ## Order
 
-- **B0** Write `PREREG.md`: the questions, endpoints, win rules, arms, package calls and spending
-  cap, and the model list.
-- **B1** Build the G0 generator, the G1 page sampler, the scorer and its golden tests, and the
-  harness with its dry run; run the free arms (B-naive, B-pm4llm, P-native, P-scan) on dev only.
-  Freeze the data, and tag `prereg-1`.
+- **B0** Write `PREREG.md` (drafted): the questions, endpoints, win rules, arms, package calls and
+  spending cap, and the model list.
+- **B1** Pin the models and smoke-test each one, xAI's document input with an image-only PDF
+  among the checks. Build the G0 generator, the G1 page sampler, the scorer and its golden tests,
+  and the harness with its dry run; run the free arms (B-naive, B-pm4llm, P-native, P-scan) on
+  dev only. Freeze the data, and tag `prereg-1`.
 - **B2** The pilot on dev (about $6): hand-audit, fix the scorer. The prompt ladder and C2-tiled
-  on dev ($20–30): choose R-best and the image condition per provider and confirm them on the
-  flagships. The G1 error-rate sample. Tag `prereg-2`.
+  on dev ($20–30, and a few dollars for the open models): choose R-best and the image condition
+  per provider and confirm them on the flagships. The G1 error-rate sample. Tag `prereg-2`.
 - **B3** The test run, batched where the provider allows, with the G2 slice: every arm, the R1
   paraphrases, the Fable 5.1 subset, the QA probe, the interactive latency sample, the test-run
   audit, confidence intervals, the results table, a leakage-against-cost scatter ($ per 1,000
@@ -457,9 +461,9 @@ a future model trained on the public pages can still be checked.
   the checks.
 - Contamination: G0 and G2 are the controls, and a held-back G0 seed set covers future models.
 - Provider downscaling: effective pixels are recorded, and C2-tiled is the countermeasure.
-- Model drift: model IDs are pinned, dated where the provider offers it, and each response's
-  reported version is recorded; each model's test requests run within a week, and a canary
-  closes them.
+- Model drift: model IDs are pinned, dated where the provider offers it, and the model ID and
+  version each response reports are recorded; each model's test requests run within a week, and
+  a canary closes them.
 - Prompt sensitivity: a seven-rung ladder chosen on dev, plus the paraphrase spread.
 - Scorer bugs: golden tests, the hash in `prereg-2`, and the audits.
 - Annotation: two annotators from outside the package's development do the labelling, with 25% of

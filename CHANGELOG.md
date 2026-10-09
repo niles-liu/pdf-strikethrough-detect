@@ -12,6 +12,10 @@ All notable changes to this project are documented here. The format follows
   protocol is to be pre-registered first. Its environment (`benchmarks/frontier/requirements.txt`)
   pins the package to the 0.12.1 release and every dependency, so a later change to the package on
   `main` cannot reach the results.
+- **`benchmarks/frontier/PREREG.md` drafts that benchmark's pre-registration.** It names the
+  models (Anthropic, Google, OpenAI and xAI, with open-weights vision models), fixes the decision
+  rules, the ground truth, the scoring and the audit, and adds a build guide for the stages before
+  its first tag. It binds only once tagged.
 
 ### Changed
 - **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub
