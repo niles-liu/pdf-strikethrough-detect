@@ -1,0 +1,6 @@
+# The frontier benchmark's environment. The package under test comes from its PyPI release, not
+# from this checkout, so a later change to the package on main cannot reach the results;
+# requirements.txt pins every package. Provider SDKs join this list with the harness (stage B1 of
+# PLAN.md). Regenerate, only between runs, with:
+#   uv pip compile benchmarks/frontier/requirements.in -o benchmarks/frontier/requirements.txt --universal --python-version 3.12
+pdf-strikethrough-detect[markdown,rapidocr]==0.12.1

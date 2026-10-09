@@ -6,7 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`benchmarks/frontier/PLAN.md` plans a benchmark against frontier models.** Can they do this
+  package's job, finding struck text and keeping it out of the live text? Nothing runs yet; the
+  protocol is to be pre-registered first. Its environment (`benchmarks/frontier/requirements.txt`)
+  pins the package to the 0.12.1 release and every dependency, so a later change to the package on
+  `main` cannot reach the results.
+
 ### Changed
+- **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub
+  Release with another tag, such as the ones that will timestamp the benchmark's pre-registration,
+  builds and publishes nothing and asks for no approval. A version tag still has to match
+  `__version__`. Releases are now immutable (a repository setting): a published release's tag
+  cannot be moved.
 - **CI's copies of the dependency pins can no longer drift from `pyproject.toml`.** The lint job
   reads ruff's version from the `dev` extra instead of keeping its own copy, and moves to
   ruff-action v4.1.0 (Node 24; v4 has no floating major tag, which is why Dependabot never offered
