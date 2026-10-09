@@ -172,9 +172,9 @@ pooled ones.
 ## Inputs
 
 - **C1 PDF upload,** each provider's native document input (Claude receives page images plus the
-  extracted text). xAI's runs a search tool over the file's text and never shows the model the
-  page; it is Grok's C1 all the same, since it is the route a developer gets. The open vision
-  models have no document input, so no C1.
+  extracted text). xAI's, by its docs, gives the model a search tool over the file rather than the
+  page (stage B1 checks this with an image-only PDF); it is Grok's C1 all the same, since it is the
+  route a developer gets. The open vision models have no document input, so no C1.
 - **C1′ Image plus text:** the C2 image with the page's extracted text as a text block, the same for
   every provider. It isolates the text layer for Q3.
 - **C2 Page image:** 200 dpi, identical bytes for every model.
@@ -258,7 +258,7 @@ its code is hashed into the second pre-registration tag.
   share output absent. Page furniture (running heads, page and line numbers) is excluded by a
   fixed rule.
 - **Failures.** A page with no usable output (a refusal, an output-limit stop, an unparseable
-  answer, a batch error after three resubmissions) scores worst case on both errors, with a
+  answer, a request error after three resubmissions) scores worst case on both errors, with a
   sensitivity table without such pages. Refusal and parse-failure rates are reported, never
   dropped.
 - **Other metrics:** struck-word precision, recall and F1 at sub-token level; character spans (G0,
@@ -266,9 +266,9 @@ its code is hashed into the second pre-registration tag.
   hallucinated tokens, digits above all; verbalized confidence against the package's `cnn_prob` as
   reliability diagrams, both over the same words: those on scanned pages the package scored.
 - **Cost:** API spend from each response's `usage` (thinking included, at batch prices where the
-  model has them). The package: measured CPU-seconds per page on a named machine, OCR included,
-  at a named on-demand rate per vCPU-hour. The cost frontier's accuracy axis is both errors: an
-  arm dominates only if it is better on leakage and on marked over-deletion.
+  request can be batched). The package: measured CPU-seconds per page on a named machine, OCR
+  included, at a named on-demand rate per vCPU-hour. The cost frontier's accuracy axis is both
+  errors: an arm dominates only if it is better on leakage and on marked over-deletion.
 - **Latency:** from a separate interactive sample, 30 pages per arm, sequential, back-off excluded;
   batch turnaround is not latency.
 - **Properties, not contests:** determinism and native CER hold by construction. Word location
@@ -303,8 +303,9 @@ its code is hashed into the second pre-registration tag.
   the other gives on questions 2 and 3. Agreement on question 1 is reported as Cohen's κ with a
   CI; below 0.7 (*proposed*), the definitions are revised and the round repeated. The author
   adjudicates disagreements, and the pre-adjudication labels are published. A pilot audit of up
-  to 160 items (up to 20 per arm) takes each annotator about 2 to 3 hours, and the test-run audit
-  about as long again; `PREREG.md` sizes the G1 sample.
+  to 160 items (up to 20 per arm) takes each annotator about 2 to 3 hours, and the test-run audit,
+  160 items across the arms that enter a primary endpoint, about as long again. The G1 sample
+  (sized in `PREREG.md`) and the G2 spans add about an hour each.
 
 ## Package under test: frozen
 
@@ -345,13 +346,13 @@ its code is hashed into the second pre-registration tag.
 - Raw responses are cached as JSONL with the request parameters, the model ID the provider reports,
   timestamps and `usage`, so re-scoring never calls an API. The harness fails on a model-ID
   mismatch, and provider fallbacks to another model are off.
-- Each model's test batch runs within 7 days, with a 10-page canary at the end; a model released
-  meanwhile is an extra arm, never a replacement. Batch errors are resubmitted three times, then
+- Each model's test requests run within 7 days, with a 10-page canary at the end; a model released
+  meanwhile is an extra arm, never a replacement. Request errors are resubmitted three times, then
   scored as failures.
 - `--dry-run` prices a run before anything is spent: input tokens exactly by the provider's token
-  counting where it counts images, otherwise from the `usage` seen on dev for the same image size;
-  output and thinking tokens, and xAI's billed document searches, at the 95th percentile seen on
-  dev (the pilot and the ladder) per model and rung.
+  counting where it counts images, otherwise from the `usage` seen on dev for the same route and
+  image size; output and thinking tokens, and xAI's billed document searches, at the 95th
+  percentile seen on dev (the pilot and the ladder) per model and rung.
 - Requests go to each provider's own API, batched where it can be: about 50% off at Anthropic,
   Google and OpenAI, 20% off the smaller Grok, and nothing for the Grok flagship, which has no
   batch API. The open models go through a hosted API whose provider and precision are pinned and
@@ -413,16 +414,16 @@ a future model trained on the public pages can still be checked.
 
 - The pilot: 30 dev pages × 4 models × R2, about $6.
 - The prompt ladder on dev: about 20 pages × 7 rungs × 4 non-flagship models, plus paraphrases and
-  C2-tiled, $20–30.
+  C2-tiled, $20–30; the open vision models' own ladders add a few dollars.
 - The main run: about 150 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for the
   seven Anthropic, Google and OpenAI models together, with markdown-length answers. That is about
   $25 per prompt × input cell, so R0, R1 and R-best on C1 and C2 come to about $150, or $75
   batched. C1′ at R0 and R1, C2-tiled at R-best and the R1 paraphrases add about $90–115 batched.
   xAI's two models add about $60–80, nearly all unbatched, and the open vision models a few
   dollars.
-- The Fable 5.1 subset, the QA probe, the latency sample (unbatched) and C3: about $30–50.
+- The Fable 5.1 subset, the QA probe, the latency sample (unbatched) and C3: about $35–55.
 - The handwritten crops about $5; repeats and effort ablations $10–20.
-- All in for stages B2, B3 and B5: about $300–380, against a cap set in `PREREG.md`; the dry run
+- All in for stages B2, B3 and B5: about $300–390, against a cap set in `PREREG.md`; the dry run
   prices it first, and the drop order decides if it is reached. If R-best is a JSON rung (R4–R6),
   output tokens rise several-fold. Stage B4 is priced by the dry run when it comes.
 
@@ -436,10 +437,11 @@ a future model trained on the public pages can still be checked.
 - **B2** The pilot on dev (about $6): hand-audit, fix the scorer. The prompt ladder and C2-tiled
   on dev ($20–30): choose R-best and the image condition per provider and confirm them on the
   flagships. The G1 error-rate sample. Tag `prereg-2`.
-- **B3** The test run, batched, with the G2 slice: every arm, the R1 paraphrases, the Fable 5.1
-  subset, the QA probe, the interactive latency sample, the test-run audit, confidence
-  intervals, the results table, a leakage-against-cost scatter ($ per 1,000 pages on a log axis),
-  and a gallery of each arm's worst failures, such as a model quoting a deleted clause as in force.
+- **B3** The test run, batched where the provider allows, with the G2 slice: every arm, the R1
+  paraphrases, the Fable 5.1 subset, the QA probe, the interactive latency sample, the test-run
+  audit, confidence intervals, the results table, a leakage-against-cost scatter ($ per 1,000
+  pages on a log axis), and a gallery of each arm's worst failures, such as a model quoting a
+  deleted clause as in force.
 - **B4** The M+P context and text-only arms.
 - **B5** G3, the handwritten crops, and C3.
 - **B6** More of G2, G4's logbooks, and the M+P tool arm.
@@ -455,7 +457,9 @@ a future model trained on the public pages can still be checked.
   the checks.
 - Contamination: G0 and G2 are the controls, and a held-back G0 seed set covers future models.
 - Provider downscaling: effective pixels are recorded, and C2-tiled is the countermeasure.
-- Model drift: model IDs are dated, each test batch runs within a week, and a canary closes it.
+- Model drift: model IDs are pinned, dated where the provider offers it, and each response's
+  reported version is recorded; each model's test requests run within a week, and a canary
+  closes them.
 - Prompt sensitivity: a seven-rung ladder chosen on dev, plus the paraphrase spread.
 - Scorer bugs: golden tests, the hash in `prereg-2`, and the audits.
 - Annotation: two annotators from outside the package's development do the labelling, with 25% of
