@@ -11,7 +11,7 @@ therefore turns it off. These tests pin BOTH directions, so neither the default 
 ruled-forms suppression can be lost silently.
 
 Synthetic rasters (the originating corpus is private) — same construction as
-``test_correctness_0_9_1.py``.
+``test_one_sided_rules_and_confidence_veto.py``.
 """
 import numpy as np
 from pdf_strikethrough import cnn, detect
@@ -32,7 +32,7 @@ def _glyphs(gray, x0, x1, y0, y1, step=8, wide=3):
 
 def _saturated_cnn(monkeypatch):
     """StrikeNet pinned at prob 1.0 — the faint-scan failure mode the escape hands words to.
-    Same helper as ``test_correctness_0_9_1``."""
+    Same helper as ``test_one_sided_rules_and_confidence_veto``."""
     monkeypatch.setattr(cnn, "score_crops", lambda crops, **kw: np.ones(len(crops)))
 
 
