@@ -1,4 +1,4 @@
-"""Regression tests for the v0.9.1 correctness patch (GitHub issue #4).
+"""Regression guards for GitHub issue #4 (fixed in 0.9.1): one-sided rules and the confidence veto.
 
 Scanned, tightly-ruled tables and forms (via Azure DI) over-flagged clean text: a solid full-width
 table rule rode high spine-fill straight to tier 'auto', and StrikeNet saturates (prob -> 1.0) on
