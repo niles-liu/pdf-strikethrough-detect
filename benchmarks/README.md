@@ -37,6 +37,10 @@ script that produces every ruled-forms figure quoted in the README and CHANGELOG
 against a label set rather than counting detections, because **a struck-final count is not a
 false-positive count** — it includes the real strikes.
 
+[`frontier/`](frontier/) holds the plan for a benchmark against frontier models: can they do this
+package's job, finding struck text and keeping it out of the live text? Nothing there runs yet, and
+it has its own pinned environment; read [`frontier/PLAN.md`](frontier/PLAN.md).
+
 ## Manifest schema
 
 `manifest.json`:

@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`benchmarks/frontier/PLAN.md` plans a benchmark against frontier models.** Can they do this
+  package's job, finding struck text and keeping it out of the live text? Nothing runs yet; the
+  protocol is to be pre-registered first. Its environment (`benchmarks/frontier/requirements.txt`)
+  pins the package to the 0.12.1 release and every dependency, so a later change to the package on
+  `main` cannot reach the results.
+
 ### Changed
 - **Only a release whose tag starts with `v` runs `publish.yml`'s jobs.** A GitHub Release with
   another tag, such as the ones that will timestamp the benchmark's pre-registration, builds and
