@@ -10,7 +10,7 @@ a tag is a deviation: it is logged in `DEVIATIONS.md`, with the results shown bo
 two differ, this file governs. **Part A** is the protocol. **Part B** is the build guide for stages
 B1 to B3: what to build, in what order, and how to tell it works. Part B is guidance, so changing
 it is not a deviation unless the change alters a rule in Part A. The names (Q1–Q6, G0–G4, the
-arms, C1–C4, R0–R6, stages B0–B6) are PLAN.md's.
+arms, C1–C4, R0–R6, stages B0–B7) are PLAN.md's.
 
 # Part A: protocol
 
@@ -35,17 +35,25 @@ its place in a primary endpoint.
   only): Grok 4.7 `grok-4.7` and Grok 4.3 `grok-4.3`. If Grok 4.3 fails a stage B1 smoke
   test (images in a batch, or a PDF attachment), `grok-4.20-0309-reasoning` replaces it before
   `prereg-1`: the same price, images and a 20% batch discount, and a dated ID.
-- **Open weights,** each on a host that serves its released weights at their released precision,
-  with the provider pinned and routing fallbacks off: Qwen3.8-27B (`Qwen/Qwen3.8-27B`, Apache-2.0)
-  at BF16 on DeepInfra, and Kimi K3 (`moonshotai/Kimi-K3`) at its native MXFP4 on Moonshot's own
-  platform (`kimi-k3`). They may be reached directly or through OpenRouter with `provider.only`
-  and `allow_fallbacks: false`. If Kimi K3 fails a stage B1 smoke test, Qwen3.5-397B-A17B at its
-  official FP8 replaces it. DeepSeek is left out: its API resizes an image to about 1,300 × 1,300
-  px, well below a 200 dpi page, and its earlier vision model's name now points at another model.
-- **OCR-to-markdown:** Chandra OCR 2 (`datalab-to/chandra-ocr-2`), whose documented prompt allows a
-  strikethrough tag (`<del>`), unlike the other OCR models checked, run as documented through
-  Datalab's API or from its released checkpoint. It joins only if it emits strike markup on dev at
-  all (stage B2), and then runs one cell, its own prompt on C2, reported beside the free arms.
+- **Deferred to stage B7: the open-weights models.** The frontier models above come first. These
+  arms are not fixed by `prereg-1` or `prereg-2` and never enter a primary endpoint. Before they
+  run, an addendum, logged like a deviation, fixes their IDs, hosts, settings and cells. Each
+  chooses its R-best and image condition on the dev pages by the rule under [Prompts](#prompts),
+  and then runs the test cells the other models ran. Each model's knowledge cutoff is set against
+  G2's cutoff date, and its G2 results say whether the bills postdate it. Released weights do not
+  change, so the delay does not change the model under test. The plan as it stands:
+  - **Open weights,** each on a host that serves its released weights at their released
+    precision, with the provider pinned and routing fallbacks off: Qwen3.8-27B
+    (`Qwen/Qwen3.8-27B`, Apache-2.0) at BF16 on DeepInfra, and Kimi K3 (`moonshotai/Kimi-K3`) at
+    its native MXFP4 on Moonshot's own platform (`kimi-k3`). They may be reached directly or
+    through OpenRouter with `provider.only` and `allow_fallbacks: false`. If Kimi K3 fails a smoke
+    test, Qwen3.5-397B-A17B at its official FP8 replaces it. DeepSeek is left out: its API resizes
+    an image to about 1,300 × 1,300 px, well below a 200 dpi page, and its earlier vision model's
+    name now points at another model.
+  - **OCR-to-markdown:** Chandra OCR 2 (`datalab-to/chandra-ocr-2`), whose documented prompt allows
+    a strikethrough tag (`<del>`), unlike the other OCR models checked, run as documented through
+    Datalab's API or from its released checkpoint. It joins only if it emits strike markup on dev
+    at all, and then runs one cell, its own prompt on C2, reported beside the free arms.
 
 The GPT-6 and Grok IDs, and Gemini 3.1 Pro's preview ID, name a model that its provider can update
 in place: none has a dated snapshot, and OpenAI has already changed GPT-6 models' image handling in
@@ -56,8 +64,7 @@ place once. So every response also records what the provider reports about the v
 - **Flagships,** the models the primary endpoints test: Claude Opus 5.5, Gemini 3.1 Pro, GPT-6 Astra
   and Grok 4.7. The other models are reported in the same tables, as exploratory results.
 - **Ladder models** choose R-best and the image condition for their provider (see
-  [Prompts](#prompts)): Claude Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna and Grok 4.3. Each open
-  vision model chooses for itself.
+  [Prompts](#prompts)): Claude Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna and Grok 4.3.
 - **Fable 5.1** runs on a ceiling subset of 50 test pages, stratified by set and drawn with seed
   `20261018`, at R0, R1 and Anthropic's R-best, on C2.
 
@@ -71,7 +78,6 @@ response:
 | GPT-6 Astra, GPT-6 Luna | `reasoning.effort: high` | `detail: original` | Batch API |
 | Grok 4.7 | `reasoning_effort: high` | `detail: high` | none: sequential |
 | Grok 4.3 | `reasoning_effort: high` | `detail: high` | Batch API |
-| Qwen3.8-27B, Kimi K3 | thinking on, if the host can | as sent; host limit recorded | sequential |
 
 - Images: Claude takes up to 2,576 px or 4,784 image tokens, so a full page arrives at about 99%
   and a band unscaled. Gemini's image parts take `media_resolution: ultra_high` (2,240 tokens an
@@ -238,7 +244,7 @@ stops.
   (`media_resolution: high`, again the most a PDF allows). xAI's document input, by its docs, gives
   the model a search tool over the file rather than the page; stage B1 checks this with an
   image-only PDF. It is Grok's C1 all the same, since it is the route a developer gets. The open
-  vision models have no document input, so no C1.
+  vision models (stage B7) have no document input, so no C1.
 - **C1′ image plus text:** the C2 image, then a text block holding the page's `page.get_text()`.
 - **C2 page image:** `page.get_pixmap(dpi=200)`, RGB PNG, annotations rendered: about
   1700 × 2200 px for US Letter. The same bytes for every model; each provider downscales by its own
@@ -444,9 +450,9 @@ paid call, and their code's hashes are tagged in `prereg-2` (TBD (B2)).
 - **Repeats:** three runs of a 20-page dev subset at R0 and R-best on C2 per ladder model measure
   nondeterminism.
 - **The dry run** prices every stage before anything is spent. Input tokens come from Anthropic's
-  and OpenAI's exact token counting; for Gemini, whose image counts are estimates, for xAI, which
-  counts text only, and for the open models' host, they come from the `usage` seen on dev for the
-  same route and image size. Output and thinking tokens, and xAI's document searches, are taken at
+  and OpenAI's exact token counting; for Gemini, whose image counts are estimates, and for xAI,
+  which counts text only, they come from the `usage` seen on dev for the same route and image
+  size. Output and thinking tokens, and xAI's document searches, are taken at
   the 95th percentile seen on dev, per model and rung. The first dry run, for stage B2, has no dev
   runs yet, so it prices from the stage B1 smoke tests, with output and thinking tokens doubled.
 - **The cap** is TBD (B1), set by the author. If the dry run's total passes the cap, cells are
@@ -561,8 +567,8 @@ Do these in order; each ends in a check.
 
 1. **The pilot:** 30 dev pages, the four ladder models at R2 on C2, plus the free arms. Score,
    run the pilot audit, fix what it finds, rescore.
-2. **The ladder:** R0–R6 on about 20 dev pages, on C2 and C2-tiled, on each ladder model and each
-   open vision model; the paraphrases; the repeats; the effort ablation. Choose R-best and the image
+2. **The ladder:** R0–R6 on about 20 dev pages, on C2 and C2-tiled, on each ladder model; the
+   paraphrases; the repeats; the effort ablation. Choose R-best and the image
    condition, and run R-best and the runner-up on each flagship.
 3. **Labels:** the G1 error-rate sample and the G2 span check; then fix the G2 alignment rule.
 4. **Stage B4's prompts:** write the M+P and text-only prompts and hash them.
@@ -582,9 +588,9 @@ Do these in order; each ends in a check.
 
 - API access for each provider in [Models](#models), each with a spend limit, the keys in the
   repo's git-ignored `.env`: `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`,
+  and a free api.data.gov key for GovInfo's API, `GOVINFO_API_KEY`. Stage B7 adds
   `DEEPINFRA_API_KEY` and `MOONSHOT_API_KEY` (or one `OPENROUTER_API_KEY` for both open models),
-  `DATALAB_API_KEY` unless Chandra runs from its checkpoint, and a free api.data.gov key for
-  GovInfo's API, `GOVINFO_API_KEY`.
+  and `DATALAB_API_KEY` unless Chandra runs from its checkpoint.
 - The spending cap, and a final word on the drop order, before `prereg-1`.
 - Zenodo's GitHub integration switched on before `prereg-1` is published.
 - Two annotators, with their consent to be named, each giving about 2 to 3 hours at the pilot

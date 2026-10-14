@@ -9,7 +9,7 @@ fixes them.
 **Names used below.** Questions Q1–Q6; ground-truth sets G0–G4; arms B-* (baselines), P-* (this
 package), M (a model alone), M+P (a model with the package) and P→M (the package's text to a
 model); inputs C1, C1′, C2, C2-tiled, C3 and C4; prompt rungs R0–R6, with R-best the rung picked
-on dev; stages B0–B6 (see [Order](#order)), always written "stage B1" outside that list.
+on dev; stages B0–B7 (see [Order](#order)), always written "stage B1" outside that list.
 
 ## The question
 
@@ -158,14 +158,17 @@ Per-cluster results sit beside the pooled ones.
   - Google: Gemini 3.1 Pro, a preview (Google has no stable 3.x Pro), and Gemini 3.8 Flash.
   - OpenAI: GPT-6 Astra and GPT-6 Luna, the family's smallest tier (GPT-6 has no mini).
   - xAI: Grok 4.7 and Grok 4.3.
-  - Two open-weights vision models, Qwen3.8-27B and Kimi K3, each served through a hosted API at
-    its released precision with the provider pinned: anyone can re-run them with the same weights.
-  - One OCR-to-markdown model, Chandra OCR 2, whose documented prompt allows a strikethrough tag,
-    run as documented once it is checked to emit strike markup at all.
 
   `PREREG.md` pins exact model IDs and a per-model settings table: effort or thinking budget (set
   explicitly; provider defaults differ), output token limit, maximum image resolution or detail, and
   region. Each result records the model ID the provider reports and the run date.
+- **Deferred: the open-weights models** (stage B7). The frontier models come first. Planned: two
+  open-weights vision models, Qwen3.8-27B and Kimi K3, each served through a hosted API at its
+  released precision with the provider pinned, so anyone can re-run them with the same weights;
+  and one OCR-to-markdown model, Chandra OCR 2, whose documented prompt allows a strikethrough tag,
+  run as documented once it is checked to emit strike markup at all. None of them enters a primary
+  endpoint, and released weights do not change, so running them later tests the same model. An
+  addendum to `PREREG.md` fixes them before they run.
 - **M+P context:** the package's struck spans and clean text in the prompt, with the page. It needs
   no tool loop, so it is cheap, and it runs before the tool arm.
 - **P→M text-only:** `clean_text` / `provenance_text` to a text-only model, with no image. Does the
@@ -178,8 +181,8 @@ Per-cluster results sit beside the pooled ones.
 - **C1 PDF upload,** each provider's native document input (Claude receives page images plus the
   extracted text). By xAI's docs, its document input treats a PDF as a text format and gives the
   model a search tool over it, not the page (stage B1 checks this with an image-only PDF); it is
-  Grok's C1 all the same, since it is the route a developer gets. The open vision models have no
-  document input, so no C1.
+  Grok's C1 all the same, since it is the route a developer gets. The open vision models (stage
+  B7) have no document input, so no C1.
 - **C1′ Image plus text:** the C2 image with the page's extracted text as a text block, the same for
   every provider. It isolates the text layer for Q3.
 - **C2 Page image:** 200 dpi, identical bytes for every model.
@@ -225,8 +228,8 @@ Protocol:
   one non-flagship model per provider (Sonnet 5.5, Gemini 3.8 Flash, GPT-6 Luna, Grok 4.3) and
   checked on that provider's flagship, which runs R-best and the runner-up, before the second
   pre-registration tag. If the runner-up does better there, the non-flagship's choice stands and the
-  gap is reported. Each open vision model chooses for itself. The image condition, C2 or C2-tiled,
-  is then chosen per provider at that rung the same way.
+  gap is reported. At stage B7, each open vision model chooses for itself, on the same dev pages.
+  The image condition, C2 or C2-tiled, is then chosen per provider at that rung the same way.
 - The full test run carries R0, R1 and R-best for every model. The per-rung curve is exploratory;
   Q6 is answered on test by R0, R1 and R-best.
 - Three paraphrases each of R0, R1 and R-best give a paraphrase spread on dev; the R1 paraphrases
@@ -362,9 +365,9 @@ its code is hashed into the second pre-registration tag.
   add, at the 95th percentile seen on dev (the pilot and the ladder) per model and rung.
 - Requests go to each provider's own API, batched where the provider allows: about 50% off at
   Anthropic, Google and OpenAI, 20% off Grok 4.3, and nothing for Grok 4.7, which has no batch
-  API. The open models go through a hosted API whose provider and precision are pinned and
-  recorded. API keys come from the environment or the repo's `.env` (git-ignored), never a
-  committed file.
+  API. At stage B7, the open models go through a hosted API whose provider and precision are
+  pinned and recorded. API keys come from the environment or the repo's `.env` (git-ignored),
+  never a committed file.
 - RapidOCR downloads its OCR models on first use: their sha256s are recorded and the files mirrored.
 - Cached responses go to the Hugging Face dataset
   [`niles-liu/strikethrough-benchmark`](https://huggingface.co/datasets/niles-liu/strikethrough-benchmark)
@@ -373,7 +376,7 @@ its code is hashed into the second pre-registration tag.
 The environment, from the repo root:
 
 ```bash
-uv venv benchmarks/frontier/.venv --python 3.12     # git-ignored
+uv venv benchmarks/frontier/.venv --python 3.14     # git-ignored
 uv pip sync --python benchmarks/frontier/.venv benchmarks/frontier/requirements.txt
 ```
 
@@ -422,18 +425,17 @@ a future model trained on the public pages can still be checked.
 
 - The pilot: 30 dev pages × 4 models × R2, about $6.
 - The prompt ladder on dev: about 20 pages × 7 rungs × 4 non-flagship models, plus paraphrases and
-  C2-tiled, $20–30; the open vision models' own ladders add a few dollars.
+  C2-tiled, $20–30.
 - The main run: about 165 test pages (G0, G1 and the G2 slice) at roughly $0.15 per page for the
   seven Anthropic, Google and OpenAI models together, with markdown-length answers. That is about
   $25 per prompt × input cell, so R0, R1 and R-best on C1 and C2 come to about $150, or $75
   batched. C1′ at R0 and R1, C2-tiled at R-best and the R1 paraphrases add about $90–115 batched.
-  xAI's two models add about $60–80, nearly all unbatched, and the open vision models a few
-  dollars.
+  xAI's two models add about $60–80, nearly all unbatched.
 - The Fable 5.1 subset, the QA probe, the latency sample (unbatched) and C3: about $35–55.
 - The handwritten crops about $5; repeats and effort ablations $10–20.
 - All in for stages B2, B3 and B5: about $300–390, against a cap set in `PREREG.md`; the dry run
   prices it first, and the drop order decides if it is reached. If R-best is a JSON rung (R4–R6),
-  output tokens rise several-fold. Stage B4 is priced by the dry run when it comes.
+  output tokens rise several-fold. Stages B4 and B7 are priced by the dry run when they come.
 
 ## Order
 
@@ -444,8 +446,8 @@ a future model trained on the public pages can still be checked.
   and the harness with its dry run; run the free arms (B-naive, B-pm4llm, P-native, P-scan) on
   dev only. Freeze the data, and tag `prereg-1`.
 - **B2** The pilot on dev (about $6): hand-audit, fix the scorer. The prompt ladder and C2-tiled
-  on dev ($20–30, and a few dollars for the open models): choose R-best and the image condition
-  per provider and confirm them on the flagships. The G1 error-rate sample. Tag `prereg-2`.
+  on dev ($20–30): choose R-best and the image condition per provider and confirm them on the
+  flagships. The G1 error-rate sample. Tag `prereg-2`.
 - **B3** The test run, batched where the provider allows, with the G2 slice: every arm, the R1
   paraphrases, the Fable 5.1 subset, the QA probe, the interactive latency sample, the test-run
   audit, confidence intervals, the results table, a leakage-against-cost scatter ($ per 1,000
@@ -454,6 +456,8 @@ a future model trained on the public pages can still be checked.
 - **B4** The M+P context and text-only arms.
 - **B5** G3, the handwritten crops, and C3.
 - **B6** More of G2, G4's logbooks, and the M+P tool arm.
+- **B7** The open-weights models, at any point after stage B3: an addendum fixes their hosts,
+  settings and cells first, then their own ladder on dev and the test cells the other models ran.
 
 ## Threats to validity, stated in the write-up
 
