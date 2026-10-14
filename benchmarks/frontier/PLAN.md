@@ -376,7 +376,7 @@ its code is hashed into the second pre-registration tag.
 The environment, from the repo root:
 
 ```bash
-uv venv benchmarks/frontier/.venv --python 3.12     # git-ignored
+uv venv benchmarks/frontier/.venv --python 3.14     # git-ignored
 uv pip sync --python benchmarks/frontier/.venv benchmarks/frontier/requirements.txt
 ```
 
