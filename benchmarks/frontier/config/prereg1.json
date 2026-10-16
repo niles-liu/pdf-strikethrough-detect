@@ -1,0 +1,1252 @@
+{
+  "commit": "01d345f3ad6f04b1137dd5618e2d32f216496054",
+  "prereg_sha256": "af555b03619ec659f369fcdae53e3ecdad31f141fddb3b66fea1606773107b68",
+  "models": {
+    "opus-5-5": {
+      "id": "claude-opus-5-5",
+      "expect": "claude-opus-5-5",
+      "cutoff": "2026-06",
+      "source": "platform.claude.com/docs/en/models/opus-5-5/overview: Training data cutoff Jun 2026",
+      "c1_route": "image+text"
+    },
+    "sonnet-5-5": {
+      "id": "claude-sonnet-5-5",
+      "expect": "claude-sonnet-5-5",
+      "cutoff": "2026-06",
+      "source": "platform.claude.com/docs/en/models/sonnet-5-5/overview: Training data cutoff Jun 2026",
+      "c1_route": "image+text"
+    },
+    "haiku-5-5": {
+      "id": "claude-haiku-5-5",
+      "expect": "claude-haiku-5-5",
+      "cutoff": "2026-06",
+      "source": "platform.claude.com/docs/en/models/haiku-5-5/overview: Training data cutoff Jun 2026",
+      "c1_route": "image+text"
+    },
+    "fable-5-1": {
+      "id": "claude-fable-5-1",
+      "expect": "claude-fable-5-1",
+      "cutoff": "2026-06",
+      "source": "platform.claude.com/docs/en/models/fable-5-1/overview: Training data cutoff Jun 2026",
+      "c1_route": "image+text"
+    },
+    "gemini-4-argon": {
+      "id": "gemini-4-argon",
+      "expect": "gemini-4-argon",
+      "cutoff": "2026-03",
+      "source": "deepmind.google/models/model-cards/gemini-4-argon: knowledge cutoff March 2026",
+      "c1_route": "image+text"
+    },
+    "gemini-3-8-flash": {
+      "id": "gemini-3.8-flash",
+      "expect": "gemini-3.8-flash",
+      "cutoff": "2026-03",
+      "source": "deepmind.google/models/model-cards/gemini-3-8-flash: knowledge cutoff March 2026",
+      "c1_route": "image"
+    },
+    "gpt-6-astra": {
+      "id": "gpt-6-astra-2026-09-03",
+      "expect": "gpt-6-astra-2026-09-03",
+      "cutoff": "2026-04-30",
+      "source": "developers.openai.com/api/docs/models/gpt-6-astra: Apr 30, 2026 knowledge cutoff",
+      "c1_route": "image+text"
+    },
+    "gpt-6-sol": {
+      "id": "gpt-6-sol-2026-09-22",
+      "expect": "gpt-6-sol-2026-09-22",
+      "cutoff": "2026-04-20",
+      "source": "developers.openai.com/api/docs/models/gpt-6-sol: Apr 20, 2026 knowledge cutoff",
+      "c1_route": "image+text"
+    },
+    "grok-4-7": {
+      "id": "grok-4.7",
+      "expect": "grok-4.7",
+      "cutoff": "2026-05",
+      "source": "docs.x.ai/developers/grok-4-7: Knowledge cutoff May 2026",
+      "c1_route": "image"
+    },
+    "grok-4-3": {
+      "id": "grok-4.3",
+      "expect": "grok-4.3",
+      "cutoff": "2026-06-17",
+      "source": "not stated; latest possible release date (x.ai/news/grok-amazon-bedrock, 2026-06-17)",
+      "c1_route": "image"
+    }
+  },
+  "g2_cutoff": "2026-06-30",
+  "g0_test": {
+    "data/g0/test/test-000.pdf": "5ee8fcca263fec006ce73d891f1c52fe88a07fb3f2c2bda9b6c2297cda387a9f",
+    "data/g0/test/test-001.pdf": "75e42da3896153736c0a2cb3d35966c54796cbf940a15278c9acba5bab9b3ab0",
+    "data/g0/test/test-002.pdf": "1325a6ae2a40cabe04bbd91554894e29059ee740799d982eae5af4d6c97e080f",
+    "data/g0/test/test-003.pdf": "a12889bcf59cf3bdbcd7a467e1ff7e83b7b2765479ed3c7f567c071bc46e0c81",
+    "data/g0/test/test-004.pdf": "657c80320903dbb03e7d526b7eec0feaad9764dc3d166003504a389cbb04b165",
+    "data/g0/test/test-005.pdf": "b84b95bd75542090f7c90f3f956c6025ae989ce6e77d5a2d959a664c1d50b461",
+    "data/g0/test/test-006.pdf": "b55187edc2805fdcbf556c6d7bb34c737105d9ffebd083b9493fba244db432cb",
+    "data/g0/test/test-007.pdf": "cd98cc69302cad1d598f9a19e6ef6c924545fa14e942493f56f6bb54c3227ea2",
+    "data/g0/test/test-008.pdf": "db73cbc99d9a2676fbc7352365097d793b45e59ae59b8735130e10d136319f90",
+    "data/g0/test/test-009.pdf": "863fe76bae843a77ce5758dc047a70950df26e83b5eb631cf2dfdba71ddc366c",
+    "data/g0/test/test-010.pdf": "7c6a0a98aa415b699aa4c7eec143325118d6a38f1c62f74841ead1eb1d281066",
+    "data/g0/test/test-011.pdf": "d6331eb4d602e4e6a955cc8b36a5f96fb0d8cd799d0b0d4808ea8a943f4383e4",
+    "data/g0/test/test-012.pdf": "8ec1fe7c0d6ffdafd36a9b66600f0e8677dc3c22f979ebc95adcd0e18543adef",
+    "data/g0/test/test-013.pdf": "195e0de11a360e29f908745343b32aed3d7f4f69a6a3b99314bc4457b6c31ec6",
+    "data/g0/test/test-014.pdf": "fd2504632510b340f2709d5fd1080d80ec654fa8f9a1732e11354ef87df0b77c",
+    "data/g0/test/test-015.pdf": "d9d96c72f5650ddd1bfb15eb3f7113d0e17f2bd15237a44bc1e3c7b8c760cc64",
+    "data/g0/test/test-016.pdf": "d1d2506d8be89cd75c6a01efd64c044db00266bff52c24e2d45a8d3938f7fb7d",
+    "data/g0/test/test-017.pdf": "023f7752b7f5dbd01f09f3eb0b86139f2896196f8f5c29df685d07f58b5c1dfb",
+    "data/g0/test/test-018.pdf": "2ff6f90f47925a1c38317526c0c81004c14d18e3b415d9cb94ee89f5df1b99b0",
+    "data/g0/test/test-019.pdf": "4b1fdc9749d76ead0340c2c672240fbaab5317dcbcfad3bb639d8cbeadb1ce9a",
+    "data/g0/test/test-020.pdf": "dcda0b5b1cc205c9e3c3a31541da9835996db29266dc74397787df1128febf78",
+    "data/g0/test/test-021.pdf": "3941939a8cb532cf5b94c186d5952659393c05a2fc841015abf05154ce91e1d5",
+    "data/g0/test/test-022.pdf": "844a675f5a5c75c6d8082cf9ce083d12d24fa1de2c255395185784e181603f96",
+    "data/g0/test/test-023.pdf": "fcfc1650439742f7d3d17b88c71709b93bc07ffb5d075399ab251a92c0a97904",
+    "data/g0/test/test-024.pdf": "6c449ddea0651bb6770f28eca299ca26fd699ffabc0650c433263a8c8647810e",
+    "data/g0/test/test-025.pdf": "ea62df3e35222f21def1200bb9bd87cc45308e4a07572087c7c25acb8465f2d7",
+    "data/g0/test/test-026.pdf": "adb7e5d8c632bea203e61aabe2b047960e57f2f1724758223b9bd97ffaa4a92b",
+    "data/g0/test/test-027.pdf": "d940760c65295358d5a1e1754fe724042c9075d4a4a5b4e36f0cba622c29b2a3",
+    "data/g0/test/test-028.pdf": "86528cc14a670bb6e4f32abc0b0224569548db0b7f3af2f8e602877939b2ebc3",
+    "data/g0/test/test-029.pdf": "921b722864f68b99612cbf22d68eefb63258f2071b7605ab5de6fdc0c0905588",
+    "data/g0/test/test-030.pdf": "ffff5ae8d6a069006f0d02e407236caf9e41e7c739f24ff369f8413dc0f0644a",
+    "data/g0/test/test-031.pdf": "4ec8c61b70603544dddf1c299c772fd7bf14f6df826aa1ecdafd92b96b7f822a",
+    "data/g0/test/test-032.pdf": "0be3591f8cf4520c2fc780a4768cd448c56e97e18645f3973dd5c8553d95710c",
+    "data/g0/test/test-033.pdf": "05f2fefc81a282eb6e95f9d4bb7dd17456712be1125e6ace5d0bee4f8ec3bc50",
+    "data/g0/test/test-034.pdf": "ca58db800ade7a8425b331bb827c7e44e533320ef9afa8689110f58797b564dd",
+    "data/g0/test/test-035.pdf": "04282cad80e6a7bcdd86375874023351b863ff71afd926c857416fe3d0dcb80e",
+    "data/g0/test/test-036.pdf": "da95f02a21ecd090e4ff723c0682b9e880feb703e5b7537272375c85ef9cf64b",
+    "data/g0/test/test-037.pdf": "1a9c4a154d975f065f119d12ae5f718411842c0fbbc1d3ee17f9642064ffa2cf",
+    "data/g0/test/test-038.pdf": "06ffb1002c0d4d268fc7fe559bd7fd090caa575722c05d78c28176fe4b3bc955",
+    "data/g0/test/test-039.pdf": "8d721cbf461425e90d7cee6a0583b87dcb95bfad91a99c350d367b6e3efbda3d",
+    "data/g0/test/test-040.pdf": "3058a0a41404dd1fd585e952d5d50901a948981801ad316420e2b15556c92787",
+    "data/g0/test/test-041.pdf": "d42e1841a68b62dba44e9203e7d8138625ca5fec6b42d37944c6549f388934e0",
+    "data/g0/test/test-042.pdf": "3a0d822893cd1b808f62745c3eaddecbb7fcdb57f8df74e5bc82d2a8e0b35f37",
+    "data/g0/test/test-043.pdf": "408255d90dc3cf266427aac6c79aad325360898ce4427abc99654ad7ddec1138",
+    "data/g0/test/test-044.pdf": "3a8dd2232cd3e66968f759d23f913f7d26bbb305d8fed974a0b2aaf154d9c508",
+    "data/g0/test/test-045.pdf": "6a620a775668dd0e50910d6f7bc5d9ca4d50d569c48e99b9af928c20da285324",
+    "data/g0/test/test-046.pdf": "166584651dbfb4b39dcf776f837fda4cbb1322b0975a830904418757cdc6e7eb",
+    "data/g0/test/test-047.pdf": "749aea966f58ae8a506bf8ff4a57291e12df7e4ae64ed45bc9d7b33f350d2c49",
+    "data/g0/test/test-048.pdf": "91f989286c26922a92d05292b5d328ce97e96c3f4b988fca56c9f3b42cef39c5",
+    "data/g0/test/test-049.pdf": "2816354c713b07afb4e409997d558300ba053b927a8b39693913597987da627f",
+    "data/g0/test/test-050.pdf": "fae5c425686989b4d22c830ed83be16cd2fca37e8ae148ad6a732ec9a4f1b626",
+    "data/g0/test/test-051.pdf": "acc5a03fa707cde9c42cd5a5369e7ad8efe3b0ee5b6f081e7bbb6d5840f1f8a8",
+    "data/g0/test/test-052.pdf": "6189764fe19ded76920fff3710f55be05e629f41685e2c78648e24301258983f"
+  },
+  "g0_heldback_seed_sha256": "031ad201d07a0c38a4d01b3563a2e19a0d198cd823da3162cd72ddef4a0d0e38",
+  "g1_dev_documents": [
+    "cppa-ccpa-revisions-2023",
+    "epa-hd2027-nprm-reg-redline"
+  ],
+  "g1_documents": {
+    "fdic-fair-lending-redline": "1ae8de143bf38d43bcce8fdf2aa5a178ffe0d6bf13b3e16d1d9d22e40d2ea2db",
+    "gretna-udo-edits": "fa42105c31a3814b5d52564e0adfaf874e697a34790659eddf727f624c70faa9",
+    "ccpa-mod-redline-2020": "edc9a55907879cfdb41de94922822e91569318489a4bd8ea22fca4e70b6768bc",
+    "ceq-nepa-regs-redline": "b96bd715f1b8b24c3b761756d173fa84b8e6d6a90bf6df4645b563c8d1adf407",
+    "ceq-nepa-regs-redline-proposed": "e008d15ce4c50b07c3977009a5aaca15db2714b739f7430168e2ecc2c8b3cd5d",
+    "epa-lmdv-multipollutant-nprm-redline": "b890c66fedbe7ad2eff1e6675d174b52c2ceef9a536cbf33d4862dbec7e7c839",
+    "epa-hd2027-nprm-reg-redline": "2fc4082c3b7b6f57b83bbdcbfdddc6e532c3a8a50fb8476fe6fcd4e8d42ad87e",
+    "epa-40cfr63-subparteee-redline": "e4d3d2199c3d118f9028fb9df761bc95f818d1c2b6a7f7c6841a13fd28454df0",
+    "cppa-ccpa-revisions-2023": "660cfd6645504c2d50a2093c6269345c225fc88b1a068cdd3251bbb8a1dec610"
+  },
+  "g1_test_pages": [
+    "G1.fdic-fair-lending-redline.p5",
+    "G1.fdic-fair-lending-redline.p19",
+    "G1.fdic-fair-lending-redline.p55",
+    "G1.gretna-udo-edits.p0",
+    "G1.gretna-udo-edits.p1",
+    "G1.gretna-udo-edits.p4",
+    "G1.gretna-udo-edits.p5",
+    "G1.gretna-udo-edits.p6",
+    "G1.gretna-udo-edits.p7",
+    "G1.gretna-udo-edits.p8",
+    "G1.gretna-udo-edits.p9",
+    "G1.gretna-udo-edits.p10",
+    "G1.gretna-udo-edits.p12",
+    "G1.gretna-udo-edits.p13",
+    "G1.gretna-udo-edits.p16",
+    "G1.gretna-udo-edits.p17",
+    "G1.ccpa-mod-redline-2020.p2",
+    "G1.ccpa-mod-redline-2020.p4",
+    "G1.ccpa-mod-redline-2020.p6",
+    "G1.ccpa-mod-redline-2020.p8",
+    "G1.ccpa-mod-redline-2020.p9",
+    "G1.ccpa-mod-redline-2020.p10",
+    "G1.ccpa-mod-redline-2020.p19",
+    "G1.ccpa-mod-redline-2020.p25",
+    "G1.ccpa-mod-redline-2020.p28",
+    "G1.ccpa-mod-redline-2020.p29",
+    "G1.ceq-nepa-regs-redline.p11",
+    "G1.ceq-nepa-regs-redline.p13",
+    "G1.ceq-nepa-regs-redline.p26",
+    "G1.ceq-nepa-regs-redline.p30",
+    "G1.ceq-nepa-regs-redline.p35",
+    "G1.ceq-nepa-regs-redline.p36",
+    "G1.ceq-nepa-regs-redline.p38",
+    "G1.ceq-nepa-regs-redline.p39",
+    "G1.ceq-nepa-regs-redline.p40",
+    "G1.ceq-nepa-regs-redline.p52",
+    "G1.ceq-nepa-regs-redline.p64",
+    "G1.ceq-nepa-regs-redline-proposed.p1",
+    "G1.ceq-nepa-regs-redline-proposed.p6",
+    "G1.ceq-nepa-regs-redline-proposed.p7",
+    "G1.ceq-nepa-regs-redline-proposed.p27",
+    "G1.ceq-nepa-regs-redline-proposed.p30",
+    "G1.ceq-nepa-regs-redline-proposed.p32",
+    "G1.ceq-nepa-regs-redline-proposed.p38",
+    "G1.ceq-nepa-regs-redline-proposed.p46",
+    "G1.ceq-nepa-regs-redline-proposed.p50",
+    "G1.ceq-nepa-regs-redline-proposed.p52",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p27",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p40",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p41",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p51",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p62",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p68",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p80",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p83",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p98",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p99",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p104",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p121",
+    "G1.epa-lmdv-multipollutant-nprm-redline.p125",
+    "G1.epa-40cfr63-subparteee-redline.p1",
+    "G1.epa-40cfr63-subparteee-redline.p65",
+    "G1.epa-40cfr63-subparteee-redline.p86",
+    "G1.epa-40cfr63-subparteee-redline.p158",
+    "G1.epa-40cfr63-subparteee-redline.p174",
+    "G1.epa-40cfr63-subparteee-redline.p186",
+    "G1.epa-40cfr63-subparteee-redline.p188",
+    "G1.epa-40cfr63-subparteee-redline.p215",
+    "G1.epa-40cfr63-subparteee-redline.p217",
+    "G1.epa-40cfr63-subparteee-redline.p220",
+    "G1.epa-40cfr63-subparteee-redline.p236",
+    "G1.epa-40cfr63-subparteee-redline.p249",
+    "G1.epa-40cfr63-subparteee-redline.p273"
+  ],
+  "g2_bills": {
+    "BILLS-119s5249rs": [
+      "2661e9351bb670838dd87761653e0ab0d12d6f5f8de895c09f7a7ddba864d36a",
+      "6a27d9dedd3c1ae7e8cba06899c620c45a2bc3de74aeb9d976ff54d1de1d040e"
+    ],
+    "BILLS-119s5163rs": [
+      "fea52ee06f4b0ef723b3bcf8201498cb5246be20a9dbf8eec4f3c2111e9be41f",
+      "9b784a75330f3e5f5a6e5aaa9bc789133d1cb038232df13b91161c088de99935"
+    ],
+    "BILLS-119s5026rs": [
+      "1ef60c54ecc282229a4e42d350cfd16a537cae476828b7537f3859af4e53c821",
+      "8a3ed41a410febbf42d49c5542975886f530dbb1430d211a152184677deaafb8"
+    ],
+    "BILLS-119s4974rs": [
+      "1708ed5f44bef7d2c3d2f1143734171388eea77a65ef68528bac4a78b99c17b3",
+      "1075a2d760e3f720bebc91b5d13c7c8e5179196ae60233e6121056f7b4825866"
+    ],
+    "BILLS-119s4965rs": [
+      "90b5bf7d27cb6a16d4242d45d5efcdca1ae037f7e8eb073e0baa9b0dce23fd4d",
+      "d42606bda768235b99789ea0e681d919e959413ab2f6ab98fc2b54fc08ac4fde"
+    ],
+    "BILLS-119s4949rs": [
+      "0632f0b7780955cf2ff4f6dad5809e114a8ae59a4ab718c97defef091c33c8fe",
+      "3ec76ce87d7fff8ed1491091f129b5f5422276e4d21f5e15d46c2530fde378a2"
+    ],
+    "BILLS-119s4723rs": [
+      "8494619472aa58fa85822e3122cd6ae2929326a75554d0a1876189fd6c1e66a5",
+      "c2e2bbd0a89a3e50cf4f68bffd05687384c78be7c9a95aee3546bc9567b2e988"
+    ],
+    "BILLS-119s4689rs": [
+      "06720beec6e635068b37a7dc9250073f51b009a7944ddaff5349c686243b0d27",
+      "7db4e9d05b6793160102551fec79de77c31a5b49c2d53e3cccdf74c271789371"
+    ],
+    "BILLS-119s4665rs": [
+      "2ff317838c7d921948a8420b6edc11d8c6e9ed559e90c81e5750f2d2b82747b2",
+      "060cbfe256d71db8269ab19d4c7b7bb837076a975223a67c01bad8f5352cb5bf"
+    ],
+    "BILLS-119s4577rs": [
+      "b54b474f99267cedda429ee736901e1906d9a613d9823116c85f4f5d6f8de633",
+      "ec8b89d2d4e42453ed8301768d3ea1dbe3d849ec190182782ff3c08e53682789"
+    ],
+    "BILLS-119s4570rs": [
+      "112f10fcacc8a03424c75e3a110f7bb0ca55ad40cd7e026305c6bd51ec415bc4",
+      "872f81687e9e6dc126cf6bcfd78f46d23f7bdd2b783b3ea70afef288586a76b5"
+    ],
+    "BILLS-119s4472rs": [
+      "3db720f88c68bcf581d66444034af6269dbf4195970f11d54453b41fa438c0ec",
+      "96fe22e314345780bb26885151fa278ec8410b5579f701177a02270ee62b987a"
+    ],
+    "BILLS-119s4443rs": [
+      "a7bb2306bdaa0094c939cb9b189d50e6f6a40b80f5b7e9adc1cbb30c9f60ca72",
+      "d92a9259db3e466fb0131f695dcd994f53d65a3973c2998d1cb17e6c0a7a28a3"
+    ],
+    "BILLS-119s4429rs": [
+      "c176785392d0e61c48a50c97047ebf68d5281fe2e7c84f5ab3cdb6d64dc2da8a",
+      "65784328426565b2091bf37de353010586d589c2722f65bc59521d3e4a06ec48"
+    ],
+    "BILLS-119s4392rs": [
+      "32bba421b69817fef8e47a7d759e1607d18f127d45f4bca418490f6addc5e581",
+      "2e24f3cb4b8d756bb24079ab94d006d56b5077752daaada87b1188f2b327d26b"
+    ],
+    "BILLS-119s4259rs": [
+      "3429c65daf280e3aa7d80715d4adf39543aa9a50909e8b461d226d056b3c0939",
+      "d45eaee0635be1b32b001db98c19adfa642e3ab35888d481de0bd579484eb2f6"
+    ],
+    "BILLS-119s4189rs": [
+      "100a96434bf7123b2d9e14b7acd6f886ec7b7841c7aeb8f6b1947592e88dac4b",
+      "7d27613bb806dd96fc7e10be953fe6dfded30e117acfccb0bde12bb3ad35c88e"
+    ],
+    "BILLS-119s4110rs": [
+      "f1074c6adfd722f89b77b718535c58411621e168e48d8c8a27015a8f5690eb26",
+      "194804db549438942454f8601ef97203e2f95c875a5f3dbd4bf91cab0231ca67"
+    ],
+    "BILLS-119s4097rs": [
+      "6b177a564645f4e73584fe961016a38a19e35dd694ae6aba11440492bd6c679c",
+      "bd3df0d6a8b350b5b0d824367b6678d60044405c7c53892c10f280551b1c0783"
+    ],
+    "BILLS-119s4041rs": [
+      "da151af7e2358de6cdf9453219b092106e68a4e0a3549a12bb1900f56dbe2d36",
+      "b13917c25b7e39cb1006063944e88eea554a95d3dc9cfa756ed38c02b4d0ce6c"
+    ],
+    "BILLS-119s4009rs": [
+      "99abb30690dfb435831973bf2118e8da0c06acb732cfd76f8eba5345f9cba40a",
+      "a1a22ae12086391c2b73c86a8eb4f34e55be7c0036ca4721d78173d2df79f904"
+    ],
+    "BILLS-119s3984rs": [
+      "989cfa40c98043b7f7f8189c8d2b8dfd93d41cbdbf8c1f86e169bc17c6a2d0e0",
+      "cc01e45195c679d49d97407d489474684b511cc676691a2e3dab2f6f172bd7d7"
+    ],
+    "BILLS-119s3923rs": [
+      "322205b1082a5c099835bf7839ae6b6f8974289e8ce7ad142f9d4787745a556f",
+      "6839351149686ad4e6853f256be60edbe43d21faba0430ef823a7990b569ca80"
+    ],
+    "BILLS-119s3900rs": [
+      "c65c2073d71579dddbe155c8a353f505058f7a44ee3ce4b103ae8cb5e3f22ae2",
+      "5ce68394a82f4e80791cd93f4facdd21e45891d9854c8913317e302824c04936"
+    ],
+    "BILLS-119s3794rs": [
+      "fafcab067b8edda1c1728bfd5d17cacfe0a2442f5631098dbaaab08647a1595d",
+      "6a1d6ce3908d2a6774e575789c57a913b7b24806a45f0a76c492c69a01f38760"
+    ],
+    "BILLS-119s3792rs": [
+      "372bcad2eca930bfea1c783ad74017da4d5583a54a7e4f2263bb53d857a21fcd",
+      "56f85c82e862520972415e93e34e1caa56321d62dcbe31676e2513d340a58f30"
+    ],
+    "BILLS-119s3791rs": [
+      "2f95477a0750005bb49fe6ec78f552c2ca3986054624e9937beb4151b5d06cd2",
+      "0f2bb72cd14bfbee6943ccaf573ff90042c5b63433cb701890463ed51513ff9b"
+    ],
+    "BILLS-119s3788rs": [
+      "3687e3fb33a53eeac31dc2b8556cd268550cb8a2035739eb2875a79916f9d7e9",
+      "b609ba9cfee982d3e375226beb453a749d4188bdfde77332117b812ed297a59a"
+    ],
+    "BILLS-119s3743rs": [
+      "ccde6cf3692698e06cd7acd6460fdbef719042d7988b91c814fa8642fc1e753b",
+      "9adc36d389d4e24cf0dff9a82fdecfe8133ba7e6fded5d81308187706642f348"
+    ],
+    "BILLS-119s3738rs": [
+      "55c7a6343328c350abcbdf96a73ac2cd3fe7c9ce3d5702cf81d40982bcb53c30",
+      "d37c77207e186a957f3ec83a364ebdd4fe2c4dc3229022a79beac0658a04d223"
+    ],
+    "BILLS-119s3736rs": [
+      "2757fd23280ad76188f98936526f182b9479ff95d5a2f89f4f2a59ccef6b0e6f",
+      "ebcb90ae31225aa3d0509bab7efa18e5bbc878575aaf98565f39db58443f2492"
+    ],
+    "BILLS-119s3732rs": [
+      "8685c6438910dd0c9f883ccb586f367e9ff3e5b3d4a17b0eeb5e55111e88588c",
+      "a9b90b31d63114851a054f18000016e7f2c75dd3458a100be170d0a57529bd67"
+    ],
+    "BILLS-119s3725rs": [
+      "0530207cfdd35a768df44a2b7120c40887ff4b1ee4c9b3602551297ee7e9f19e",
+      "3bc77de95d200b4f747e319785d626d6cbcea7178ebeed44295314644ea42d2a"
+    ],
+    "BILLS-119s3723rs": [
+      "9ef1aee783ade39f86e339fa59aad434de05c6cd1a014e24ff6e2c15f781ede8",
+      "64df26d143688184321a9f12f4c22e8daf80d070995c9c14ce14ff63a817a24f"
+    ],
+    "BILLS-119s3720rs": [
+      "76ca3aea04963d525b6a24156db5ec021b9b14b7ae7ba0e757eff628781c25dc",
+      "ad1d93c5169b906a2232a1855e2f2ee2516b8f12b578d6947e1007508af901d6"
+    ],
+    "BILLS-119s3700rs": [
+      "27a35a290e9424b7ebea30383160efec24cac5b844a22efa9c1ead5cc749a9cf",
+      "a5c1635e62cd46aa4bf34ade9c99f44c7594cd0d8f2bbed72c55e6576d98841b"
+    ],
+    "BILLS-119s3693rs": [
+      "54b1ef7cadee7a7257b046fd22b8d601e039051c79f09567816a600597c64558",
+      "2ce3dd7dfdf0c99584a767c9ae6a83b92bb264e498ecd93229607eaee831af59"
+    ],
+    "BILLS-119s3676rs": [
+      "a8ff3ce54827566bed4d9b422d702c024010b94e20b959b9592a8a493ac142ff",
+      "8f0e7327a083c8b618c7e97074ad3048c62add8b58de911762c46b5a5ae4c352"
+    ],
+    "BILLS-119s3618rs": [
+      "0457de44dcb7bb10a96d497f89aa43d609b9e1f371dea143fc1daa4f0305e663",
+      "a05c5f3bf306abd560e552005a5406d8ccf40c1aefc1b22c655cb6c5bc621c16"
+    ],
+    "BILLS-119s3589rs": [
+      "288b7973fec66ec4102992ed305c3c603a3104e5f511564913b529e9c21c9391",
+      "bc51b62679587ed9734723f57d1e0cb496ad15386ac0a5ebf7ab2a403329f8bf"
+    ],
+    "BILLS-119s3493rs": [
+      "e931ffb0208aeb89cb6da839a6a9aede2a74bba998e4f9b7c55bbb008e13d9c4",
+      "953acb1344df9de4fb463b9a5ccdaf32ebfa0debb66c3b65dbe67c4c3be8447f"
+    ],
+    "BILLS-119s3468rs": [
+      "0704433f0f51b89ca97ce6031d9fc71f1df8de6949da88d2445df63d38b4d4f8",
+      "0d7dc20702c39012e92816035a2e4410af83dce8b565d17df093a2bf5f999afa"
+    ],
+    "BILLS-119s3404rs": [
+      "e0cee21e728e9c5ccb7acc907f663c85ef05f46ba302aea4550d9d1741ff4490",
+      "26b26d90b27dd3ceab1b50e48eb83b274ef510efe909eb2b89b00fb9002fc8a1"
+    ],
+    "BILLS-119s3313rs": [
+      "f5a7b57b45bfe10520b7894f059785843f80e38e3529efd9bfa6641401f81389",
+      "8d1eed250d9db8980d8e8c41ef3d1ba89e8c0148e19bcf846f5b81ca689c61f9"
+    ],
+    "BILLS-119s3258rs": [
+      "f3504fe0996b235f85a1e13b747845f3dd9e7ff99dddc22eb5402e23e23d614c",
+      "76b62d8a24b7da281dae4caa040b2a5a99af777fa9417ca5237f8b4fa1bce23a"
+    ]
+  },
+  "g2_pages": [
+    "G2.BILLS-119s5249rs.p0",
+    "G2.BILLS-119s5249rs.p5",
+    "G2.BILLS-119s5163rs.p0",
+    "G2.BILLS-119s5163rs.p2",
+    "G2.BILLS-119s5026rs.p0",
+    "G2.BILLS-119s5026rs.p18",
+    "G2.BILLS-119s4974rs.p0",
+    "G2.BILLS-119s4974rs.p9",
+    "G2.BILLS-119s4965rs.p0",
+    "G2.BILLS-119s4965rs.p10",
+    "G2.BILLS-119s4949rs.p0",
+    "G2.BILLS-119s4949rs.p251",
+    "G2.BILLS-119s4723rs.p6",
+    "G2.BILLS-119s4689rs.p21",
+    "G2.BILLS-119s4665rs.p0",
+    "G2.BILLS-119s4577rs.p0",
+    "G2.BILLS-119s4570rs.p0",
+    "G2.BILLS-119s4472rs.p5",
+    "G2.BILLS-119s4443rs.p0",
+    "G2.BILLS-119s4429rs.p1",
+    "G2.BILLS-119s4392rs.p0",
+    "G2.BILLS-119s4259rs.p7",
+    "G2.BILLS-119s4189rs.p44",
+    "G2.BILLS-119s4110rs.p0",
+    "G2.BILLS-119s4097rs.p0",
+    "G2.BILLS-119s4041rs.p0",
+    "G2.BILLS-119s4009rs.p0",
+    "G2.BILLS-119s3984rs.p0",
+    "G2.BILLS-119s3923rs.p1",
+    "G2.BILLS-119s3900rs.p0",
+    "G2.BILLS-119s3794rs.p0",
+    "G2.BILLS-119s3792rs.p1",
+    "G2.BILLS-119s3791rs.p2",
+    "G2.BILLS-119s3788rs.p0",
+    "G2.BILLS-119s3743rs.p2",
+    "G2.BILLS-119s3738rs.p0",
+    "G2.BILLS-119s3736rs.p2",
+    "G2.BILLS-119s3732rs.p0",
+    "G2.BILLS-119s3725rs.p1",
+    "G2.BILLS-119s3723rs.p1",
+    "G2.BILLS-119s3720rs.p3",
+    "G2.BILLS-119s3700rs.p12",
+    "G2.BILLS-119s3693rs.p0",
+    "G2.BILLS-119s3676rs.p7",
+    "G2.BILLS-119s3618rs.p1",
+    "G2.BILLS-119s3589rs.p5",
+    "G2.BILLS-119s3493rs.p0",
+    "G2.BILLS-119s3468rs.p1",
+    "G2.BILLS-119s3404rs.p12",
+    "G2.BILLS-119s3313rs.p2",
+    "G2.BILLS-119s3258rs.p1"
+  ],
+  "g2_dev_bills": {
+    "BILLS-119s3257rs": [
+      "daf9edafcb1ede8e1f50063fb0bd8173b88611351fa4908a521f5ec09c51b48f",
+      "a2f60ff628fd2b3135d0fc16de7f9ae4cad94c384e4b443981351a9776e892b8"
+    ],
+    "BILLS-119s3219rs": [
+      "6e062df2d4fc65705fccd565568f6a1e2aa0554439b314d9b94883785891ab47",
+      "02b119cc4852810e2189ed8e80a0a2d95258a3a811500b5f3409d3d6ea76e1c0"
+    ],
+    "BILLS-119s3211rs": [
+      "9e5b78e1ddb1f3abbd2a2636ac8866cad19d3f4832539a34bf693b4d8c41c2da",
+      "5f1b3aa0151be82cffd2463ae39c7575949cb13721a2a4858bb0a9db4afc39a1"
+    ]
+  },
+  "g2_dev_pages": [
+    "G2.BILLS-119s3257rs.p0",
+    "G2.BILLS-119s3257rs.p1",
+    "G2.BILLS-119s3219rs.p0",
+    "G2.BILLS-119s3219rs.p6",
+    "G2.BILLS-119s3211rs.p0",
+    "G2.BILLS-119s3211rs.p4"
+  ],
+  "g5_pages": {
+    "G5.0230-022.p0": [
+      "b0701140fe3fddf5deee309166f3f3bab32858a0f4ce25ae47725ab3b5c9605e",
+      "52070ad3ed75f690a2c3926487f5dbe028ade8b48fd1cb69ec498bc1ea6b1c10"
+    ],
+    "G5.0248-040.p0": [
+      "0fba10d02232b6e3db164b0326fcc3299bc53095fb6baad9fbf198dca0016fa7",
+      "32e76708661ccaf05ce76f48a668bd62d5679e6bef9b2a5d5286a0487b9c70d0"
+    ],
+    "G5.0522-022.p0": [
+      "5bf35eeeed4b9a46732caaaefc2e135dc899c42876cca69cee8f839e2e53754e",
+      "4e1a37d42981f894b84d4555036956d2f693aca5579e5bcf08a8d811879e954a"
+    ],
+    "G5.0558-005.p0": [
+      "1083a0f1b1a7e8add46bbc65d695d1b76f672ec60f395160197e636ab339eb1e",
+      "b51accc4fe14d0188bf42cc1ea45018764774c3432c67f14861703f061f469f3"
+    ],
+    "G5.0562-009.p0": [
+      "39d6fd152b307db5435c6207d6b7c5ca6ef4968d8bdcab00110ac998dfff0ea8",
+      "fe1fb24f75f3c0ebf7f0d07cef09e08395f32a95f54eca949d39ec39595534c3"
+    ],
+    "G5.0635-026.p0": [
+      "03c3a7cbc3d52d15d7fe6a0a5066dea38b37a16339a93fb54a7da877fc2da71c",
+      "1a3f4f9a41a4a57b1a1afef64e0f4f81194267ad966a1a889c2080a9ae547e6c"
+    ],
+    "G5.0643-034.p0": [
+      "b21cee2b23f4ee0df47797127f1ef03870cda97649cedfebe6464f564ea3e8fb",
+      "79c9cf7aff59d8d5ada563a0c2711ef9b1fe09398a9479bfaaee4e68e9be8bbf"
+    ],
+    "G5.0661-052.p0": [
+      "7d56a3e8fc9ab25e75204aad147506aeb5af9bfb92267ac4d43aa31157dcedfb",
+      "95ddd4125ff5f905cf886a7985c57fe50c78ba9649aa076b01536fc56a3d0b35"
+    ],
+    "G5.0689-080.p0": [
+      "322f157c8aea56048fadc7933856d20f63c81a02f34b0c7f756546b429f4478a",
+      "b583b404fb44964014595b17d0050485c6db3756c2141e18f012e5fc3ffcc97f"
+    ],
+    "G5.0691-082.p0": [
+      "90ce770f1199d48342d88404a84650df9b25c6f15e5ca5a9b583b72196f07268",
+      "01433a521c9ac9289ff6e722383655612622e10c7206ad890b3240e6a9c2b722"
+    ],
+    "G5.0757-018.p0": [
+      "f19125874d94608f0f2cba869dc3dd02be96e88155b0865c153924cdb8768c2b",
+      "4d2a524eb2b1b41f0a7d235b69365849973e775599d4cb56e6f136d7d7713efa"
+    ],
+    "G5.0771-032.p0": [
+      "2787fa68f7dc5a1b0cac548b4526dac883e1fbd2484ed4a93276ff56c639d9d0",
+      "190d80e5ca6f2a8fcc74b6e36115ed2e9da245f25efde5ef7c1076269b2bfd68"
+    ],
+    "G5.0773-034.p0": [
+      "125683ed97ab43a29851ca74dff65cca404c461b471ecb6b9abd7a61e1446352",
+      "48abd8486442d7bff8fa06b6e2df538fbfb9bef64f842e5ca3d50c8955a6cc6c"
+    ],
+    "G5.0951-036.p0": [
+      "d8ce1f78459acb5965a2647204991f2c8caaefd8bd8c5add82f167f8f4e2c039",
+      "5ad785075552f5be2e845b8da5ba5e2e9299685d09c081d00bea01789fb67559"
+    ],
+    "G5.0954-039.p0": [
+      "67bd8f5124ecd6fc312bba353b48ff71ced7cd6972394729bc36ccb435639b06",
+      "7c3b4e107578258aaf8e32356b9ca4f3f812ff67f8e98074be72d397c035e05a"
+    ],
+    "G5.0956-041.p0": [
+      "c3e0521c99aab3120520b896b464ce85a434a94687e7d07ed85f24b1448d91d1",
+      "115824689cb472b596de0658f8fd2bcdef36604d134b9855f9c7ff8768329a96"
+    ],
+    "G5.0957-042.p0": [
+      "3437aa6ae54e3ff31bef27d4ef78607905d1c0ca38bae1dc3a6e45f13af40389",
+      "2c9c69d608df2cb8722cbbde8fadbdb923f575bbe18e7c99ea8ca868bdfafaba"
+    ],
+    "G5.0959-044.p0": [
+      "dbe20df3780b9d7bd129d4285b373a1a0ce76e577242bcf9e59b9c3f98cdd509",
+      "efc618b867333adfc8fb6e6638845862e6319fa8a00bc90853b860a083ef00a1"
+    ],
+    "G5.0992-018.p0": [
+      "39b21cc52e03b53372dc03c48da571581bc20ecbea1381270faaca4ffe14ac29",
+      "e5e3c8525b10e78154a93980b467f43b31e29aed6aaaaaa6cf74ab0200b7fe13"
+    ],
+    "G5.1125-020.p0": [
+      "b8a3de0e1104e915731839d3b56dbb375f81ba9ed652f585b70632bedfe011fc",
+      "017b236a6ceb313350bdb2d6d79871e724c9b862f5b20017a88b763c3128419d"
+    ],
+    "G5.1131-026.p0": [
+      "c233b1856e50ea113af044a986e7c22589dab3d33cc7d113343867d046047937",
+      "be0ef8128ce6c082fc893be9234cd60346289761a12811e812c209160c804cec"
+    ],
+    "G5.1435-039.p0": [
+      "c42036eb354186e74485421d24d29be53418e0c392ecaf9f33f52685b7a525ab",
+      "2afa7e461daefd55a575b3425ff09884fdd2cde996f499f05655b72ab20d6de7"
+    ],
+    "G5.1436-040.p0": [
+      "e5d5fbf0635779b66dfa5fe185c1cad6bbb1965c746f8c072ae472bdb68d8153",
+      "62c73f561530a701337efdc8b0afc0d64ccbc7c30de3ba9a6b025c8c21f8a846"
+    ],
+    "G5.1439-043.p0": [
+      "33cfd2c51fcfbf5d4a059a196c1dbbb8a4cb06fc1a285d45693c3f9b596dd3b1",
+      "2aaacc0ea77b818c7f7a60ac813c72a1f59045f6058c6743082a6005708612dd"
+    ],
+    "G5.1475-020.p0": [
+      "88f5ca627ef7885369ce85f245f7c9f63c79bf8f831709af8fdb1b5269f0e596",
+      "008e2eca1259345bf98701466e55762b0cdab0c6f27832315a683973d8b8431e"
+    ],
+    "G5.1491-036.p0": [
+      "354ad0895257fd94c369c985f120ddd12cb3f349cf7a6a378fb316cbf2e2837d",
+      "d90a4e39ff58818d34aeb78a9f43ba0fab307b1d3368d849404fa08581b7261d"
+    ],
+    "G5.1494-039.p0": [
+      "5a3d8730bf5696e975eebf39ec4b57adc9999174b8e9a9afc76a3f751b42c9a1",
+      "baeb0c152123c6b8d9792dc153b3a998f88e16cbc0d3a7c5dc6b9ac9b4b6ea62"
+    ],
+    "G5.1623-012.p0": [
+      "2582a4db4c11a7a94c67d71b25c47a4f48a8234e7f1d51f9aa65cc76b4fd1edc",
+      "74c81ee0eae3a7d2be69f8ac452ff578740e5d965b98d94b1c61d4b029bdc175"
+    ],
+    "G5.1631-020.p0": [
+      "8b414fb067672fba5741c174be1fb12230c77abaa73f0d4f2264214b7d2e2151",
+      "51bb18da15f1c144b5d8785e61f3ea13e7eba210f473bd506cc6bc27af4568cc"
+    ],
+    "G5.1635-024.p0": [
+      "bc15782630a01e309e3b7e3a798457d95092f3326b6fa0f90944257041a13ee4",
+      "33368c8840c688af417842fbb233ec88710e7f5810ca0cc0e850461139157100"
+    ],
+    "G5.1639-028.p0": [
+      "a6623b7334149c93d06f0a51fa3a922a0c18d51d0202daeeb71656d4ab2e738c",
+      "90ac4d86f794819de6ffccd4186a1985e32e0ef39ab0f65abb9d71818c4f9381"
+    ],
+    "G5.1648-037.p0": [
+      "c492bee39571b6e4dc6cb89f95847df068c192ddae128b492331c7299425295f",
+      "dfd829394974447095e7a4666192f5405f1bd463064ce2b993adee9481f229de"
+    ],
+    "G5.1655-044.p0": [
+      "084447963e127bf24a1113359bbc9dac2d6123b3f827787e938f341284ef585e",
+      "70dd81fdf2029a4c7be17f3cb2c4a6784c5f8fd377fff05937daf0e5758a70e4"
+    ],
+    "G5.1664-053.p0": [
+      "2446693263d45dd0689c749ca825ff2a0f2db59f2a29866c40150d5fcd778ca1",
+      "5a3fdb1c6d6c85dee9f29904fd2465fc6d76d3c754ac21cfef2e348e4113071f"
+    ],
+    "G5.1667-056.p0": [
+      "7c14482c4e15662f25619ca70cca70e585973ed0190929b480db669dd3a1035a",
+      "f2580d9d58a9c4d6e5a10c8cba2ec7949bc0515970a08bd4b92efeff823697a9"
+    ],
+    "G5.1672-061.p0": [
+      "f09c3645282bd2430a43c07ac0adfca470f7d5c473b4c73f56d6a334625db767",
+      "db1c762f1aa53fdd27bd88769537b8e8f55d490a1756c30682c8e4ab36bfe252"
+    ],
+    "G5.1675-064.p0": [
+      "c12042f8e1bb5c71a1aa6357c34ee4523d1319e96ad92b101a34c0c7d2c62936",
+      "a01eaed75a5444a1191f6c5359699b890ecf934045cdcdc72090fe8c4c9dc36b"
+    ],
+    "G5.1678-067.p0": [
+      "b2f0f02cda253fa741a4bddc88687719f8a010920db41f99a9028864d5ad358a",
+      "73dec6ebf0da5b832883c30df016e9ce6cbe6fe1626bcc1e2ba5f910edabad86"
+    ],
+    "G5.1679-068.p0": [
+      "cb33ebe10f0ad3a8d904ed0d19bf38d32977505059c253380eee3caf5ef4888c",
+      "304338981f3e226f894102f8089585340f40aa1c628823bf1e05b991175c1ddb"
+    ],
+    "G5.1727-016.p0": [
+      "d547e086a97decd3185b886585e5fd7e6fbe33f9daca1f2be1747d52f928f363",
+      "f127d1098b0d06c990aaa63f489f9d8458e6146320838b6a042ed68be4a024c3"
+    ],
+    "G5.1756-020.p0": [
+      "d1dc2284349617a81300fe7ea35f97ae271405117ec77fd2d055237f6d59c9fc",
+      "cbb21f4a5acd26f49a82d049b8f2b746e4f0c39b6eebc1237d7595ef12afe587"
+    ],
+    "G5.1765-029.p0": [
+      "48017fb74c20ec2247db3845d2b7a7fbb61712fb23d2eb9614147f1c24413cf3",
+      "27ebefceadbc901bd68d4592ca0c2250f5fa11d713b17e966ef9605ec150e122"
+    ],
+    "G5.2105-055.p0": [
+      "98f527669f5a6bfe3e8401b3411b9408d69b02bb62d3e858da52ee4064ddcdf4",
+      "52de888f95182cfa193075519c0b0fb8b7b64462e10fcea365641ec9aba62103"
+    ],
+    "G5.2107-057.p0": [
+      "67ffde77d6586c4c7b506843e2fe71886089a9fe231939a74c616f21db3b9610",
+      "3ecd3e8b60a36141d1384372a7c9ec73e8727d01360d3a30a4e30ebc8ccc728d"
+    ],
+    "G5.2122-072.p0": [
+      "fed423f85ee018ba770fabb35de71e466d4c2809927f9db43cc6f9ae078dee5a",
+      "9d40148e2edb737dd661eefc7dcf0567831bd76e15ebc397b9036fa534038aac"
+    ],
+    "G5.2187-044.p0": [
+      "54a104913c495b5fe8d4cb4b6e1e145c3801c85cbd55c557af5b321cc73a089b",
+      "082ca79180296fa9486b0d4fcf1f723727216128e2dd31b2d45e4f100012db73"
+    ],
+    "G5.2188-045.p0": [
+      "1da71c9961bb137be1f7354a4cb835df43bf714ecfcc3031438908a7e4930096",
+      "1092374e255d6f37f1e119fa020ef096c050e209e4b0d22dea68b992cf6303d6"
+    ],
+    "G5.2247-047.p0": [
+      "a4d6be691517215c1167a02ddbfca2663dca3a3455c1813e585d048380d2fd89",
+      "2f80f12d1fbf82bcb5aa5b087b11c1a617f54dbc11ae3161928ecc80a43f2b55"
+    ],
+    "G5.2493-036.p0": [
+      "cca3c841666bd9cc603f6534a22f0f7ed6213867a0c0d6aa789c32e96f771792",
+      "f0c47edc79407b195ee40ff5271dd84bff7309cd02327836108d21761d919c8a"
+    ],
+    "G5.2608-025.p0": [
+      "b13c7c79137d6e1a8b9a58dfe558cd1371e2569bfd9ca45823a277869c53e543",
+      "b1f5b6a0828f062655b16cafb70e16552f63b14d3610683c1c0beec0971b95af"
+    ],
+    "G5.2609-026.p0": [
+      "9363a36c7638363226e9034ad13bc7cb8c892d4635cc9b3a219ad1b983ee976d",
+      "9ba0b9a10fbdc540dc6ae9eceed9b9edbc1c3929cea10ef1278808a4220dca0e"
+    ],
+    "G5.2636-022.p0": [
+      "60a20e875fcadb1d0059e1c562c1add295f1d31205248cf3776cd10dafb696fe",
+      "2366b2afdec99918a3e4c33fd38062d7919e5c46a828d360ab30cadd93cf6029"
+    ],
+    "G5.2671-028.p0": [
+      "1bcc1b8e9a247b6a89806e2764a7d08164f89a6f6632093eb02adf3103bc6c80",
+      "1ef285a419f00792e82fa6742970815e90b9d2c94e689657dfd15a0043633736"
+    ],
+    "G5.2740-052.p0": [
+      "e006523180041705e000a3516e6437bbc953a90975adfcf381d2b7bbe32a6bab",
+      "d5a3e27fc6ddcf97241fc949c147648e72c7f0a692a9dbd019b2eed4a299ad05"
+    ],
+    "G5.2973-016.p0": [
+      "8155b2f54f4e7ff25055a663544c8764d3bcb1c75da92ead8a318475fa631f08",
+      "db4d51a8149a21fd631591b38653e9485ec5208c2e4f052a9e6035a3549b4a19"
+    ],
+    "G5.2976-019.p0": [
+      "aa5c888f87c0f2f359703d30a552ad6d10c1c2c4e99fa05cbeebe21c8fe7f95b",
+      "8cd82c0f32fd403b137e505942d223af57c3be91a61b90031b7e0c620760b70d"
+    ],
+    "G5.2978-021.p0": [
+      "58db7d3d18e7fc561a68751fe15af693e5f676f337bb8d5c0dfc343c91b1a3c6",
+      "9dcedfb66884e0e65808f89380824d0b9c6e3881e2392cedc6c2c568c0b44735"
+    ],
+    "G5.3197-007.p0": [
+      "4c4fa8cfa224a6e51248c334782a8fea7a3acb4946d0182c0171ada48cb86e16",
+      "d0418f20bfde7b63bfeb7a9ae94cb846a3ce47a9ad257743d1f7b34407ca1e0a"
+    ],
+    "G5.3513-017.p0": [
+      "3b787760c1b6609dafa595f779a01095e2fc09738c1754ef2edd2e8800801d38",
+      "7d8ba644899b60379576fe45e3241e5013a4dcda5f70435eff1063b78659f867"
+    ],
+    "G5.3515-019.p0": [
+      "a78192cf54fd402aeda81882de3d3786989f56fcf9ce74cbc5adc0053e57ca1a",
+      "3eace9be3619dbf619406bdac7a96441bc8b975c8e1d7449a1e64a7578bf9481"
+    ],
+    "G5.3942-017.p0": [
+      "f7f0fcdef3896b193a5e31cd1ad93bdf2eb4ad017f6047ff149d824ef6377f92",
+      "cee9908b932956882d6fad1cfe40f16d2d6abb02658e7e14565a07a3011c9ba9"
+    ],
+    "G5.3943-018.p0": [
+      "7a8682d2393d8f7ea867ab6cd68d56807ea12c30d3f951c1343a857960c00a35",
+      "22d274002fbd814cd01bef0b77368bdc0a3c76fc2811cc61bad16c48947704be"
+    ],
+    "G5.4100-018.p0": [
+      "72d5196c99cbfb892dc99dbb6a3809035a83da5fd48467db6daf35175f354cf6",
+      "687ee29bd8d3d7d03fdb64a422039285b26b3c6aef8dfcc35f41870030994409"
+    ],
+    "G5.4103-021.p0": [
+      "ed3c92a1134b856b16c9e5274d1aec39eadfc6fc91ed15277767a0a966e561f7",
+      "029d3c20313ec0f1ad19aefe3a0399fe53470d15060911442f2d470aceb6e814"
+    ],
+    "G5.4106-024.p0": [
+      "5bcb3193c12eabbd9cc27f90c5f5fcf9dcaef42535412f824604d4c21e589c0d",
+      "24ecf2995cc3c65b491be7c5995f6c3f4cdd0cbe6d2a798d3dae1ae978c2589d"
+    ],
+    "G5.4109-027.p0": [
+      "0ac5ac843e2868aa20f0057690d7704a2a61573531ad4696d201477081441725",
+      "7959e39cb022fe2b169042e404ec22fad34cc6b54edb687657ca3f8b67299f69"
+    ],
+    "G5.4114-032.p0": [
+      "e24f332be4db0ea51f269647b14dd0a4d64104c52d15adc2706b845ca89b47cb",
+      "aea8b6eb04f24699f41369c0145e50698017b18499aeae61492d12725b0a1669"
+    ],
+    "G5.4116-034.p0": [
+      "0f584ebf75fb4a8225159008ccadc62237efefa53dd2609177ceaa452373dc39",
+      "ed368afd6a00f2a8a7f67b87d51c493aefc8a20c222b81b9cb8fb7e7329a8ce1"
+    ],
+    "G5.4117-035.p0": [
+      "734066aba16baec7ccf0d2f7a63a7b23aab47d260c2828c129efd0e3603ccdef",
+      "cd249802872b42a804ae0a39c92ab31e49b87158b5be270142a44301c105f0ec"
+    ],
+    "G5.4120-038.p0": [
+      "5c0a9cf5cea25dcbc93f896ea551bc40c3213d78fd07f1c0ef57c5bf19061f2b",
+      "4a67a05c47eef1dd2c20268e7f586abfca5ca2fc53d07fa4d8bfd2f7be8f77b4"
+    ],
+    "G5.4121-039.p0": [
+      "80d095e1910f54128608ae4b1dd063063d14bf39d22891faa578591bd66c734e",
+      "96acf9fa17cb17d923632c5ececf554b40d72fb8dccd195681992d18915304ad"
+    ],
+    "G5.4122-040.p0": [
+      "d0c67873c16563bb8d6e9848c570a72fc0b27a69b4c3dec56448e9d8f76bc456",
+      "c137cbfbee9af78239648dc3024a7d39f8c335392c1a4166ef4689dbf44e2544"
+    ],
+    "G5.4291-004.p0": [
+      "fde9d6bdd6057cf71b3888c0d3582e7fa2dade398a50e5119fb55d352df8ee6f",
+      "2263873c1b30137a32351fd498512900b10466d2224d2b2eadf8fc9b8ff94d68"
+    ],
+    "G5.4491-054.p0": [
+      "9434db08498fc1f3fdf9506651642fa5e40e025c308960b62f756c3360a2e16a",
+      "b62c08bc14f99055d8d77d2508b5faa2045655471304c7cf691efa0547a9998a"
+    ],
+    "G5.4497-060.p0": [
+      "87f97344d5d8496ef27e8a11889de03cdd58cb840ee2fe3d06739565978c33fb",
+      "ae9ab6435774f02a18ed5104740d7ab76d9e129a0e6020ec04fcbd80f344e1c3"
+    ],
+    "G5.4560-123.p0": [
+      "2a7d6a94fd32a516708472a95837fe9192d79a5bbc7d6115ce5887db7f42b073",
+      "696913d54b4bc5445ae5d1f840195a3cbc9d153b1add72f487ab1e07b12f63ef"
+    ],
+    "G5.4592-155.p0": [
+      "4cab70d95bf4def79b5e1ac91d5bcc7ad7b60e479f9cbe541c9bfdf26dc8c5c6",
+      "6e145f738a7c6478e87dc2092097d8973129e100661bbf8f120282eeff1b16dc"
+    ],
+    "G5.4666-229.p0": [
+      "555e616dc4d38f53a125ddc1613f3d9117323d569579b60b7a11c6a2b0c05f7d",
+      "55d8cc28f86d5f28a8bcaf7f7617560434094ca4e9cd759e82876db4d287388b"
+    ],
+    "G5.4670-233.p0": [
+      "0675758b1d6ce77504066274817e54e3feaf2ea2f810881e72035a81b6a8596c",
+      "d7f60174b0663de207a3cb3ca86fe2032d663bdbcd5869dc7b15d760f34ab46d"
+    ],
+    "G5.4744-307.p0": [
+      "47c87720b0ae4319e576d3e2953b6e504d16040fe481c863bacb7dc63e9b4e89",
+      "b088f063cb3308482bd4edc8421976eca60df293cc6b9ff75183309b2d58cd8d"
+    ],
+    "G5.4777-022.p0": [
+      "f9287b6b78516f28607baa9e0a3f90f0e8b639ae1a809dbb8f9d72febb0a5250",
+      "5f565b2e8ec4d256b0b01d4ef894e5e6c641d09d514eb260a463965132f101f5"
+    ],
+    "G5.4843-008.p0": [
+      "e3fd180d4fe1cec34a4c61921a40ebf5f6d7d4d07760db8113e843446dc52e80",
+      "6069afd66ccc76e9797a8e2105f79cc6406125ebaf3caa43b4fe4d2815d2d616"
+    ],
+    "G5.4917-082.p0": [
+      "2f38a0c0d0cfe1b1cfc971d5920dd59eb8072d802e63dfbc0e38c3119534ad56",
+      "40adfd951833193f3416ed3992b5c9fdeb7588676d62de6194c22870cdfaabe3"
+    ],
+    "G5.4937-011.p0": [
+      "b54acc3f03308e04a34b19dbe7898a6c0a51225c2e98b48e78371967dcfd53cd",
+      "b891e15acf5a57233b95c6eabdd2d830ae14f73eba823dd9c986863f32d605a9"
+    ],
+    "G5.4981-037.p0": [
+      "703ee4ca252fd78e00ef96853aedb12df6d35e3c5f5dab8889f03fcacf6fbb41",
+      "2eb362b2b4073b9f1f48fcdd803d6bacc866ef2c78804697af0f7d3a252a586b"
+    ],
+    "G5.4989-045.p0": [
+      "a84dc2d2ec3b5a38f1d0a88894b3559e8034a3dffc78b3e2a8aa06e34c9bcbdf",
+      "49d05114db689d0664d5049721d9b1d81ce7bb88a07ef9b6f719f6738bcf9111"
+    ],
+    "G5.6114-022.p0": [
+      "e8c496c919241def9cb97d7c83a7924e54c24d1ad5d1c22689a3bb5be670d7e1",
+      "d97eb08decc236c1ce044982685f04a64086194eb535a49054ad68137197cdca"
+    ],
+    "G5.6147-018.p0": [
+      "a366bda9c360062a7c42050e9576743d11c54f3ac3397593613a7e4adc20c3b3",
+      "6f01344430a97db603eceea1702fb32a1b116167520df8b88b935cbca361e6bf"
+    ],
+    "G5.6692-042.p0": [
+      "46893f8351a66de261a6df306017ac90b9e6322b95ee05d23b9bd6eb20900927",
+      "f7c5552ddb09ff8bede1fa224709a652bc3e4d1693e95adceb36f801b8eb387d"
+    ],
+    "G5.6904-011.p0": [
+      "effecba754b5852fe667186d41cde6d44422525d2facb72823bf11f12d0567d9",
+      "97699cb619e3899b913024a662c5d03b9d938266d7e3c5a1c8ad741adf5b396d"
+    ],
+    "G5.6910-017.p0": [
+      "8e016d7288bdb7615863c7ebb0816473f074acde2aebb1488787ecfb2cd2946f",
+      "692ab733c729a7399166ccdb3c48368035afc0fe95fcd4716f0b1a7a22d3d21e"
+    ],
+    "G5.6944-026.p0": [
+      "84d4061c4bdbe460362bd1111bfb308ea0144f42f344eb3585b6d777650c2f1d",
+      "10d5f1fe9a9e941f709c12cc8e31cc197087f9057d7bd7202fc7b5ed2e1eaf19"
+    ],
+    "G5.7058-021.p0": [
+      "790b001bdea5e7261626c6fce2138f7d9d6d2bacfe8bc6f9689e5ea925542af7",
+      "1265dd33f9e6f6de49d7946a23002b28ceb4c29195e1eab6911cccee2184edb4"
+    ],
+    "G5.7128-069.p0": [
+      "91d21048710e5549cc5a79ba1653b22bd25a059bb970e4711d5acf15643ead4e",
+      "6b369ab0f6d551bc3c6152770635f242f20b258f19cde562f7927f73bd551320"
+    ],
+    "G5.7130-071.p0": [
+      "572c7408cb93594112eed0fa77a43f5aae8f5b7641676646d4a9c78bdf1cad66",
+      "a8a8f06477537d96ece11787e90f002ef20701d53f35a0ef4ba0e2c642b33608"
+    ],
+    "G5.7146-087.p0": [
+      "41f6e3a000d957b95b39ffcddecd2442f759a5a60416ed45ea9ba53dcede9e30",
+      "e43920e0be8f6ce7fa448e51feb5511775ddb2192b0f201c99e541fde96e502b"
+    ],
+    "G5.7147-088.p0": [
+      "f2b455247c44bf40612da6d02334100eea1521d754e77ab9baeee3330cfafbd9",
+      "42a46877a361753e047122288cbf62fd927ab0d261acf2510b1f94647a1053f1"
+    ],
+    "G5.7149-090.p0": [
+      "bee079d90ad71a431bc28476b6d7dd3fc1dd0bd215bd8d34274cc0da840a3a7c",
+      "bb277a3ec64748859ba80864fb0aee4d1fab6db34b1a06ec9fc4a1686c5b7c18"
+    ],
+    "G5.7274-076.p0": [
+      "1d1393e347e1e91f522965c03faf8ce4c39c82138ff98a36848a5917d8b8cd9d",
+      "44a767a106c91951de5e56cd7938d8d2a4c2f517b34f85102bf9caae3f733247"
+    ],
+    "G5.7280-082.p0": [
+      "e8b7da412c10200ca66ea7267a1daebef50744d9b7ed66f35f392ccd6031849b",
+      "5bbddc6cf3fa9e4fa19f64d62621ffa0181a119439b2ffdb0d668be4290ee4fa"
+    ],
+    "G5.7281-083.p0": [
+      "c5e648a30e20def31c93b6b3096f2e6b373690a6f888294b96e70d85e5b932d0",
+      "23b210b3fc7f114a6fc550e04d2e83c49e96d502190f0375b2757d6d027b4fd3"
+    ],
+    "G5.7292-094.p0": [
+      "2980aa5db099fffe30d6e45b186b0963fb15bdbc0cfd597331a0e306ea6f5db4",
+      "3212b068b744942acebef919a486583e5711f103f0cd0151d4041eeec91f27a3"
+    ],
+    "G5.7294-096.p0": [
+      "3eb649ef2a7d212067bef526ab0ef88ee998ab4f906ebf8f48f9c740c019ffca",
+      "0a6ec250b4df70eb2ec500867c31de8fb65d65ed0170ea579417bbfddb83b166"
+    ],
+    "G5.7335-037.p0": [
+      "7e6bdae8662fdc438cdc48e681c33161e6b18b29c180e0708b48586b0bbaa8cb",
+      "9e591112c07171e7086afda3ab477996055e7c7fec1fb053caca61215dd3ea58"
+    ],
+    "G5.7345-047.p0": [
+      "98004e4eeae3d9632791c7724b2819871b013f4c506e8b12f2db45ad368204f5",
+      "17e1a206e3eb4b50bff0379b0159c3b5e6098a994c7797f5b223605d21bd10e6"
+    ],
+    "G5.7558-014.p0": [
+      "2c06e3c6545535b2f00b30e300dcc89a4e8b0a78052390f156014e31ad634dbf",
+      "904b8837cede4d8bfceb1ea50e8dac9a82523111ebc60ed4c0a14ec28e2f4568"
+    ],
+    "G5.7560-016.p0": [
+      "95736bc0c91e63ae1fbaa118b0df7d50b4433537945c12a4e981cdfcf54f1c2b",
+      "6ca1e182bc78821a253e79f577f9a84f8c6fdf1acade07799921aeb5b9965f52"
+    ],
+    "G5.7562-018.p0": [
+      "dde880096fe43b65f249641f7a26a67e7d1745c1075b74113006d4c11e1994d8",
+      "ce98bf552f229d38b7a4193f116d97d7deceeaf52c6660309485425b2dec85be"
+    ],
+    "G5.7566-022.p0": [
+      "7561f5153e256cbfa85d089b3dd29a133a848afcbb8bf7d1f600f3064cff3ba3",
+      "ab118ad9539a4549ab1867e2d30863271b2796962573e60df998839fc73b2cbe"
+    ],
+    "G5.7572-028.p0": [
+      "88852f0b6d4e63b67d75eac9b350442b58911016782fb8935cd2b420edadff68",
+      "0b5e8641f878a94312fa09c242e0139bb37e2878d6440bd0c9353b9f4f668d51"
+    ],
+    "G5.7574-030.p0": [
+      "e073c3120b1238729b57ac90813e415330055bc9d30b45bfc6e00b5d72f1f45c",
+      "9616dbd25893009662e9d062e0dbbe239af6a16a0b65fe0278c0e700f1c611c9"
+    ],
+    "G5.7578-034.p0": [
+      "21ef66e0def360461c3e1e444c3783d597e000573a4253e73d3d715487bdd75b",
+      "b10561f12741b8531126ddbaaf9bb809c0bf4c52cbf77f8a6deb53aab37f79ac"
+    ],
+    "G5.7593-049.p0": [
+      "8d27f289d5f72ba623750ee6543eac39b0b7803083a01cf588cdd9374f3b2bf7",
+      "2f355f5df8668a803a91190906785940375859b75dd63591b6b1524f22dfd792"
+    ],
+    "G5.7595-051.p0": [
+      "b4ec0c7b061137e2eafc0222f28e32500c5c9c69a2ddba82204ce49182ca0d31",
+      "b88bd03628084be6c29fa053bc3e7faf099406da5f97e8349fbed97ed7a113c6"
+    ],
+    "G5.7603-059.p0": [
+      "c9d5810ce918024c2ba81325080a3c4743f174db8499d3854a12192e406cb224",
+      "e0a7d6793a6b478cde3bec4d0b2356ab7884330ce07c1b3aedd484cfcee77462"
+    ],
+    "G5.7605-061.p0": [
+      "ecbee8401c54e2e3386ef7951612b6cea4965caf2e176c2932462d337c3d87c2",
+      "eb60415298264f90d4ba12c1be1b32043812b0eaf96d23b268f43eeb6d0f3592"
+    ],
+    "G5.7607-063.p0": [
+      "583580c211fab0b73b4381228bbd3c61a59f27cc6ba6b6e13f9a3d48f05d7e69",
+      "70d764814be0a447e1066188f06cce7c26012c5f9409559763efcb097bb76075"
+    ],
+    "G5.7698-064.p0": [
+      "7d970b271e6c94ff7161d0487b8d9fa424b977689c3997689c76d2698f8515cb",
+      "8c1b071371a6f6ad0c29193619a7edaac01e25d4f6d6333bc715b5d44d3c0a9e"
+    ],
+    "G5.7802-034.p0": [
+      "ad7adea5518659901881e02b4d0868d913b96ce286822983c58dddae78fdcb45",
+      "0633a10698af4d827b1fad8e19de927bed992cc598f9e306b234995a1f9af512"
+    ],
+    "G5.7865-041.p0": [
+      "e115a62fdec1bfafea7cb31a8635f1aea2cad686e110be0b9e81aa0dcdc82823",
+      "efafbc472397240a736cb08e63f2a896ad55524148451363976acd64a3c3c95e"
+    ],
+    "G5.7870-046.p0": [
+      "cf56e5156f8a16e30ea25c6494cebebe796386bc3266d0a9d087467858a91bcb",
+      "1599a55a8f84b0f46f99201bb51be11b58895321fb55a257e62c62b4f7275068"
+    ],
+    "G5.7999-053.p0": [
+      "a147ec73756a6d4b463aa23b1c8d672a266c360e03bb7ef711c8adaac25c0cce",
+      "d5c4dc1386ec3389abca3ab95a05ee490137bdeddbab6a168c39256c2a49d2a4"
+    ],
+    "G5.8119-021.p0": [
+      "d4f1768c63615d4638f5c6fd44d8f6970bff0d0d62dc91480c8b5b8608095afb",
+      "b0539db7296f17addf4ffb1a02fb211733263ec4963d7c6e2c46a85af6fd9fc9"
+    ],
+    "G5.8123-025.p0": [
+      "6ef544523f78f99b715b45f5e881bf967cc6106f76edf74b1f7593329e3246a8",
+      "08304c2b3d28ce2873feafddfafdbcea5ed5cd594d5874ff96c46c8cd83c09e2"
+    ],
+    "G5.8125-027.p0": [
+      "dfbb9e8ef85b2ea18816c5ebfa9ebe13c724b4fb86040d80aa2b68504ae4cc49",
+      "0a7be931bf2dea7fed1e6e0d7834c258c2c213d850233352ab8e4a0700b4282f"
+    ],
+    "G5.8126-028.p0": [
+      "824c6d8bf5b7f9571694c49025ea1b136ba945f0dcf75e78442335161c146c0d",
+      "c2b423165d1b322d8580a2f380b01e43e984802b2bbd505d91273d002c4cee72"
+    ],
+    "G5.8129-031.p0": [
+      "e802ed7f782975ce053fd5bfb4cc2ce45bfeee86a000c4d99f5c23fa047b2228",
+      "bbecc72b4256756038f26e510c2954548369eb7fe7e7d0871e71f025615cf259"
+    ],
+    "G5.8130-032.p0": [
+      "eb2b8cc3a19445f5cdf0d48ec9ffb16cb0a780079e65f13fd2459f00c94f76d7",
+      "bd7d859a8414340a6e4b5a8f66a77892df5d8498d933f790872f9ef2aa8808e2"
+    ],
+    "G5.8132-034.p0": [
+      "8ddf5fb0a17ef56840439339d642cb1b369623f648f5ad8d3406daf7b30cb80e",
+      "efb15322b16e0f3c9c744928c8660fbd9eec3b062bc05a46ccf516be7d7f96e4"
+    ],
+    "G5.8133-035.p0": [
+      "6456900c9c3b8c9ad5ec3fdd3268b1dec35707dfc7085aacd1478906d7cc91ad",
+      "c5d4095d663d1be0497b2b89defa1847f64c001eaad2ca9bcf409fc7a2170662"
+    ],
+    "G5.8135-037.p0": [
+      "d2cbb5f7823a1114c7badc69f9ac23371078e9ca1db59b654df6df683df11637",
+      "f811554c75467c1e3aed6ea97f9700bd1b8cc318d1ee796b43e6c24193f0ba2c"
+    ],
+    "G5.8455-049.p0": [
+      "fbadfde8a7525fdb1258430b919520bc95f13df9f0607a414876678a6bdcc189",
+      "3699808bc42be2d51a8e033d0248240357f0bb42ec766d275762ac556fb423b8"
+    ],
+    "G5.8475-069.p0": [
+      "5ce07f16173f57dd9a67c045a5b021696e162b64d2b87f1b2bbaf1e5eaf24b15",
+      "a9e45a5168ff20088454d2ce274cbc78d3cd20652f4797e4a5fd97010cb9dc14"
+    ],
+    "G5.8520-014.p0": [
+      "c68a49721a3290b3c21c9208fef5f6c3400c815533d1c16420d41b1cbb624edf",
+      "f90b9a9c6d78b591d5949dff9af70239b2ae85c41af383a5f64a32c232637776"
+    ],
+    "G5.8626-074.p0": [
+      "aff8dae03c2bc2e5a7358bd52104a711cd0301ecd37fdb60b7f5464a0d998e0c",
+      "22b86aadc1e8da25bde65992f8deb37ff1848fe5e75a68c934e3bec4d6920a8f"
+    ],
+    "G5.8755-043.p0": [
+      "08ccf4a16137918ee4aaf684bffc0b29d7936c98b1a036fb6adb8130bdf503e5",
+      "f2714860c9477ad60c38303a001412187a606a288d901baa4c74729b70d4952d"
+    ],
+    "G5.9003-017.p0": [
+      "0e8a22beb1ebaab9f1703f9059f52f07c4dfbd21e0da6205cdcf400cb6545db9",
+      "9a01729136e0d9646be6d5326833ffc939acfe16c577cec87906bf11231cd4e9"
+    ],
+    "G5.9144-028.p0": [
+      "6ae6490d58301f9bce720139d520cd72ebd521e9a4989da82c774f82e02a5f69",
+      "2da1656c358b553a54e6f76e1c7c7a5a39688201a5a07df43fdbf7e67df43d6f"
+    ],
+    "G5.9193-026.p0": [
+      "639ff1bf8a38f15b7fd2028f156734f1bd3be898c13d27208d3829f45ace8c8b",
+      "418322d4746b6a07f38115cc6eb4a366d4d508f9b2ee2cd5026c2a043b8f8d12"
+    ],
+    "G5.9285-030.p0": [
+      "ade5cd9bff59acf1d171c742765dd56ea815d35db0e421228a03666c3aa0212e",
+      "2399d96402b174a29743beb128b4de8c644e0c901a088cb230d7db4ce30d861f"
+    ],
+    "G5.9288-033.p0": [
+      "3021d64a7b219858a0db5298a8d8d9ef5b26ec8f8f8e1a9ca721219216e7e337",
+      "333a26f22bc927bffa916063319c9d81c347265f981f51254b294bbe088cd4ef"
+    ],
+    "G5.9309-012.p0": [
+      "f819c9dff56cf74e384349ee6867f16f9e4dc4d9307d6b407e7f46b7293b2ce9",
+      "76956cbbe7716b30a94d693567fcf5c83f8fde1b3dec8294cbfa496225a350b1"
+    ],
+    "G5.9428-009.p0": [
+      "f78d8db473c8e070bdae2de154c6e4112ba955d080e84f4f9ea9c6b7cc89bac9",
+      "4d12f014aefe1f087d533811571813e659230b6f2023e867d9a6cdb4d66de9de"
+    ]
+  },
+  "g5_core": [
+    "G5.0522-022.p0",
+    "G5.0635-026.p0",
+    "G5.0643-034.p0",
+    "G5.0691-082.p0",
+    "G5.0757-018.p0",
+    "G5.0771-032.p0",
+    "G5.1131-026.p0",
+    "G5.1623-012.p0",
+    "G5.1631-020.p0",
+    "G5.1639-028.p0",
+    "G5.1655-044.p0",
+    "G5.1678-067.p0",
+    "G5.1679-068.p0",
+    "G5.1765-029.p0",
+    "G5.2105-055.p0",
+    "G5.2122-072.p0",
+    "G5.2608-025.p0",
+    "G5.2609-026.p0",
+    "G5.2671-028.p0",
+    "G5.2740-052.p0",
+    "G5.2973-016.p0",
+    "G5.2978-021.p0",
+    "G5.3513-017.p0",
+    "G5.3515-019.p0",
+    "G5.4109-027.p0",
+    "G5.4117-035.p0",
+    "G5.4120-038.p0",
+    "G5.4291-004.p0",
+    "G5.4560-123.p0",
+    "G5.4777-022.p0",
+    "G5.4843-008.p0",
+    "G5.4937-011.p0",
+    "G5.4981-037.p0",
+    "G5.6910-017.p0",
+    "G5.7280-082.p0",
+    "G5.7294-096.p0",
+    "G5.7335-037.p0",
+    "G5.7574-030.p0",
+    "G5.7595-051.p0",
+    "G5.7607-063.p0",
+    "G5.7870-046.p0",
+    "G5.8123-025.p0",
+    "G5.8125-027.p0",
+    "G5.8126-028.p0",
+    "G5.8130-032.p0",
+    "G5.8475-069.p0",
+    "G5.8520-014.p0",
+    "G5.8755-043.p0",
+    "G5.9003-017.p0",
+    "G5.9288-033.p0"
+  ],
+  "dev_pages": {
+    "pilot": [
+      "G0.dev-000.p0",
+      "G0.dev-001.p0",
+      "G0.dev-003.p0",
+      "G0.dev-004.p0",
+      "G0.dev-007.p0",
+      "G0.dev-008.p0",
+      "G0.dev-009.p0",
+      "G0.dev-010.p0",
+      "G0.dev-011.p0",
+      "G0.dev-013.p0",
+      "G0.dev-015.p0",
+      "G0.dev-016.p0",
+      "G0.dev-017.p0",
+      "G0.dev-019.p0",
+      "G0.dev-020.p0",
+      "G1.cppa-ccpa-revisions-2023.p11",
+      "G1.cppa-ccpa-revisions-2023.p18",
+      "G1.cppa-ccpa-revisions-2023.p35",
+      "G1.cppa-ccpa-revisions-2023.p38",
+      "G1.cppa-ccpa-revisions-2023.p4",
+      "G1.cppa-ccpa-revisions-2023.p5",
+      "G1.cppa-ccpa-revisions-2023.p55",
+      "G1.cppa-ccpa-revisions-2023.p60",
+      "G1.epa-hd2027-nprm-reg-redline.p142",
+      "G1.epa-hd2027-nprm-reg-redline.p161",
+      "G1.epa-hd2027-nprm-reg-redline.p173",
+      "G1.epa-hd2027-nprm-reg-redline.p214",
+      "G1.epa-hd2027-nprm-reg-redline.p300",
+      "G1.epa-hd2027-nprm-reg-redline.p32",
+      "G1.epa-hd2027-nprm-reg-redline.p348",
+      "G2.BILLS-119s3211rs.p0",
+      "G2.BILLS-119s3211rs.p4",
+      "G2.BILLS-119s3219rs.p0",
+      "G2.BILLS-119s3257rs.p1"
+    ],
+    "ladder": [
+      "G0.dev-000.p0",
+      "G0.dev-009.p0",
+      "G0.dev-010.p0",
+      "G0.dev-011.p0",
+      "G0.dev-013.p0",
+      "G0.dev-015.p0",
+      "G0.dev-016.p0",
+      "G0.dev-017.p0",
+      "G0.dev-019.p0",
+      "G0.dev-020.p0",
+      "G1.cppa-ccpa-revisions-2023.p18",
+      "G1.cppa-ccpa-revisions-2023.p4",
+      "G1.cppa-ccpa-revisions-2023.p5",
+      "G1.cppa-ccpa-revisions-2023.p55",
+      "G1.cppa-ccpa-revisions-2023.p60",
+      "G1.epa-hd2027-nprm-reg-redline.p142",
+      "G1.epa-hd2027-nprm-reg-redline.p173",
+      "G1.epa-hd2027-nprm-reg-redline.p214",
+      "G1.epa-hd2027-nprm-reg-redline.p300",
+      "G1.epa-hd2027-nprm-reg-redline.p348",
+      "G2.BILLS-119s3211rs.p0",
+      "G2.BILLS-119s3211rs.p4",
+      "G2.BILLS-119s3219rs.p0",
+      "G2.BILLS-119s3257rs.p1"
+    ],
+    "repeats": [
+      "G0.dev-000.p0",
+      "G0.dev-001.p0",
+      "G0.dev-003.p0",
+      "G0.dev-004.p0",
+      "G0.dev-008.p0",
+      "G0.dev-011.p0",
+      "G0.dev-013.p0",
+      "G0.dev-016.p0",
+      "G0.dev-017.p0",
+      "G0.dev-020.p0",
+      "G1.cppa-ccpa-revisions-2023.p18",
+      "G1.cppa-ccpa-revisions-2023.p35",
+      "G1.cppa-ccpa-revisions-2023.p38",
+      "G1.cppa-ccpa-revisions-2023.p4",
+      "G1.cppa-ccpa-revisions-2023.p55",
+      "G1.epa-hd2027-nprm-reg-redline.p142",
+      "G1.epa-hd2027-nprm-reg-redline.p161",
+      "G1.epa-hd2027-nprm-reg-redline.p214",
+      "G1.epa-hd2027-nprm-reg-redline.p300",
+      "G1.epa-hd2027-nprm-reg-redline.p348"
+    ],
+    "canary": [
+      "G0.dev-004.p0",
+      "G0.dev-007.p0",
+      "G0.dev-008.p0",
+      "G0.dev-011.p0",
+      "G0.dev-013.p0",
+      "G1.cppa-ccpa-revisions-2023.p35",
+      "G1.cppa-ccpa-revisions-2023.p5",
+      "G1.cppa-ccpa-revisions-2023.p55",
+      "G1.epa-hd2027-nprm-reg-redline.p173",
+      "G1.epa-hd2027-nprm-reg-redline.p300"
+    ]
+  },
+  "prompts": {
+    "R0.p0": "3f6d3eec0ae8c785c56832959febd658e5011b07690c01b7290d8c4a4c5d9e96",
+    "R0.p1": "29577b663f49c8c7b44992447afd7716d9db4cc30fb4a953a5611c5475fb2035",
+    "R0.p2": "3072fcd002db1e6da0a4fdfad50fa7da81114365e8636ca4a3dbab6f22f67dc2",
+    "R0.p3": "42e98c00fc8c0b948e04a17b2379abcd8fd72f380e32003bb85cee798cfe9120",
+    "R1.p0": "5f0d1bcafebd2679c9c4652adfa7dcf947f2b53b01e6d770ca67b975c12f2e43",
+    "R1.p1": "255a26094c0658d04e4066edbdf7e8d7c24ba41fafb0b144374d16a58f1b7b7d",
+    "R1.p2": "1e19d7a3db24ad85bf97a89f5d938a8a765ec9089acc2b9dfbfe24b57ee5e2cb",
+    "R1.p3": "d1e609f3c795a97c188c5c3ee182f3df93dac6e45201100beb84da1a18c6f41b",
+    "R2.p0": "93985046a4eea9ad12ddd73467bf960245e39bfad3e06db94acd406c2d0b607f",
+    "R2.p1": "d0c92e663f6861ba615a6b88fd3c48e5af1388753e779f20c3fc4c54ad0555fb",
+    "R2.p2": "cbdca1119fd10f8b866eda98716d1e9cfac94c70682a7f4373a75cc955bf009d",
+    "R2.p3": "5fd77c663d3572ac122ac1ccac6dfc80678be6064ddf154a129eabedeb39479b",
+    "R3.p0": "74c3cf340dd056eebf3d54b9feb5d2f76cec304b0bbadeeac905ba643ed16180",
+    "R3.p1": "dba63425ecb39259e15a8131b6c4a4efa3568185be328d49bccc95c257789ac0",
+    "R3.p2": "4f9a9f05abd00d5c44360423508894e8f676c5ea58d39cb42d9ec0229d56576a",
+    "R3.p3": "bac106da9fabaaf6fc44a54d80c84470216b17f3f2770ea6fb6bfbb1febfc133",
+    "R4.p0": "f8433736f41f32f70ba6ef210cfac7913cded56742a349e76b70d4d902abe0f6",
+    "R4.p1": "3f62a2f877ffaa52db6eabf2c9fce989700bf7c0bbec1a1b998f9e067948fd4c",
+    "R4.p2": "ace7840b9e9952564fecef9ad4048e316aa861cf7050443ba3ce60e8fc39d211",
+    "R4.p3": "c796e579976f08a5124f6b42a1fed1b2340ad94e685cfb9e497f03430c2836c1",
+    "R5.p0": "9245e338fe31e229f8590d21d68b4713bca68c182ce5406e548cab50927ff868",
+    "R5.p1": "6b82783e3b639c523b0a0c479d5f26ceee813888f29c04b17512d0d2d68b0d38",
+    "R5.p2": "6e8a3b5b1d97f24e8853cd2e2d66a37e6067bde99f66851083ddab644bb69f68",
+    "R5.p3": "882184dd1ceb9f2f391fe5f56de22e51eb84fa498d6c2825c52a44e47d9a67d8",
+    "R6.p0": "9245e338fe31e229f8590d21d68b4713bca68c182ce5406e548cab50927ff868",
+    "R6.p1": "6b82783e3b639c523b0a0c479d5f26ceee813888f29c04b17512d0d2d68b0d38",
+    "R6.p2": "6e8a3b5b1d97f24e8853cd2e2d66a37e6067bde99f66851083ddab644bb69f68",
+    "R6.p3": "882184dd1ceb9f2f391fe5f56de22e51eb84fa498d6c2825c52a44e47d9a67d8",
+    "ladder.toml": "8bf751799c395d955696ffe5086889e1d111f2b16359822fe212cf9fac29c976",
+    "probes.toml": "138505c10add4250db4595b1d50f044e046de6c9cb55b4fbb4a055304430603d",
+    "fewshot/examples.json": "4a4cbd369ef4d477fde984301a1771cf416ef80553b7dfdaa40ff71a7ed1f46a",
+    "fewshot/struck.png": "4b39deb0f36f64d1737b825db29fc7b9f25d59828667430dbcba2e767430c1f2",
+    "fewshot/table-rule.png": "84ce5ec9faa444d45a09e179bb3b1020c2efcb5af9001beb609c851d04d002bb",
+    "fewshot/underline.png": "90bc68e87ffff922b4b53bca32bc6239f09a32883c626c9f9867002359db9df1"
+  },
+  "budget": {
+    "cap_b2_usd": 250,
+    "cap_b3_usd": "TBD (B2)",
+    "reserve_usd": 150,
+    "drop_order": [
+      "test:C1 marks",
+      "test:C1prime",
+      "fable",
+      "qa"
+    ],
+    "dropped": []
+  }
+}
