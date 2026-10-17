@@ -52,20 +52,23 @@ Operations says what happens when a version changes mid-run.
 - **Fable 5.1** runs on a ceiling subset of 50 test pages of G0–G2, stratified by set and drawn
   with seed `20261018`, at R0, R1 and Anthropic's R-best, on C2.
 
-**Settings.** One row per model, fixed in `prereg-2` (TBD (B2)) and recorded with every
-response:
+**Settings.** One row per model, fixed in `prereg-2` and recorded with every response:
 
 | Model | Effort | Image | Discounted route |
 |---|---|---|---|
 | Opus, Sonnet and Haiku 5.5; Fable 5.1 | `effort: high` | as sent | Message Batches |
-| Gemini 4 Argon and 3.8 Flash | `thinking_level: high` | `ultra_high` (see below) | Vertex batch |
-| GPT-6 Astra and Sol | `reasoning.effort: high` | `detail: original` | Azure's Flex tier |
+| Gemini 4 Argon and 3.8 Flash | `thinking_level: high` | `ultra_high` | Vertex batch |
+| GPT-6 Astra and Sol | `reasoning.effort: high` | `detail: original` | Azure's Flex tier, prompt cache off |
 | Grok 4.7 | `reasoning_effort: high` | `detail: high` | none: sequential |
 | Grok 4.3 | `reasoning_effort: high` | `detail: high` | Batch API |
 
 - Images: a Gemini model's image parts take `media_resolution: ultra_high` if stage B1 shows
   Vertex batch prediction accepts it for that model, else `high` (on Gemini 3, 2,240 and 1,120
   tokens an image). GPT-6 Sol takes `detail: high` if stage B1 shows it refuses `original`.
+  Stage B1 took `ultra_high` for both Gemini models, and Sol took `original`.
+- GPT-6's prompt cache is off from stage B3 on (`prompt_cache_options` in `explicit` mode with
+  no breakpoint): Azure bills a cache write at 1.25 times input, and a probe of one dev page per
+  model showed nothing written. The stages before kept Azure's default.
 - Effort is set explicitly at each model's documented `high` level, or its nearest equivalent. The
   effort ablation runs R-best at the `low` value of the same setting on the repeats' 20 dev pages,
   each page's request sent with the repeats' three at `high`. It is read per ladder model as its
@@ -150,17 +153,28 @@ a logged reason.
 
 - **Page kinds:** born-digital pages are G0 and G2 on C1 or C1′, with P-native; images of print
   are G0 and G2 on C2 or C2-tiled, with P-scan; handwriting is G5; logbooks are G4.
-- **Misses:** leakage on born-digital pages and images of print; on handwriting and logbooks, the
-  unmarked share (struck sub-tokens left live or absent), since a system that cannot read a struck
-  word leaves it absent rather than live.
-- **Routes:** the free default is the free system with the fewest misses. The paid option is the
-  cheapest system not shown to be more than 1 point worse than the one with the fewest misses (its
-  difference's paired cluster-bootstrap 95% interval reaching below +1 point) on misses and on
-  marked over-deletion, ties going to the faster.
-- **Cascades:** a cascade (P-scan, then a model on the words P-scan leaves uncertain; see
-  [Scoring](#scoring)) replaces a route when it passes the same test at no more than half the
-  route's cost.
+- **Systems:** on each kind, its free arms, and each cell on one of its inputs (a model at one
+  rung and input, so no paraphrase, effort or repeat) that scored every one of its test pages. A
+  paid system's failed page scores as the free default's output on that page; the free
+  default's own failures score worst case.
+- **Misses:** on every kind, the unmarked share (struck sub-tokens left live or absent; deviation 3,
+  `DEVIATIONS.md`).
+- **Routes:** a system is *not shown to be more than 1 point worse* than another on a rate when
+  their difference's paired cluster-bootstrap 95% interval reaches below +1 point.
+  - The free default is the free system with the fewest misses.
+  - The reference is the system with the fewest misses among those not shown to be more than 1
+    point worse than the free default on marked over-deletion or on absent over-deletion.
+  - The paid option is the cheapest paid system at list price not shown to be more than 1 point
+    worse than the reference on misses, on leakage, on marked over-deletion and on absent
+    over-deletion, ties going to the faster.
+- **Cascades:** a cascade (P-scan, then a model on the words P-scan leaves uncertain in the model
+  meta's band; see [Scoring](#scoring)), scored on whole pages, replaces the paid option when it
+  passes the same test at no more than half its cost.
 - **Reporting:** a route's accuracy is reported "as selected": it was chosen on the same pages.
+  Beside each route: its failure rate and inserted tokens per 1,000, those holding a digit apart.
+  `report routes` computes the routes and every guard (`routes.csv`, `route_guards.csv`).
+- **Limitation:** a loss confined to three clusters or fewer can never be shown, at this level,
+  to pass the margin, whatever the sample's size; the override above covers it.
 
 ## Ground truth
 
@@ -266,11 +280,12 @@ A seeded generator, `bench/g0.py`.
   live word just before or after it in reading order where there is one (words that normalize to
   nothing carry no label and are passed over); every span at such a boundary is drawn (up to 100),
   and the rest at random with seed `20261021`. A bad span fixes the rule and every G2 page is
-  rebuilt, so the rule is tagged in `prereg-2`: TBD (B2).
+  rebuilt, so the rule is tagged in `prereg-2`: all 100 spans passed, so it stands as above.
 - **Furniture,** found by position and rotation: GPO's typesetting slug (`VerDate … Jkt …`), the
   rotated margin line, the running foot (such as `•S 3923 RS`), margin line numbers (a number alone
-  on its line, left of the text), running heads and page numbers. Stage B1 checks the rule on two
-  bills.
+  on its line, left of the text), running heads and page numbers, and the five words of GPO's
+  authentication seal on a bill's first page, drawn rather than text (deviation 1). Stage B1
+  checks the rule on two bills.
 
 ### G3 and G4
 
@@ -328,13 +343,18 @@ Exploratory, in the test run.
 - **B-naive:** PyMuPDF `page.get_text()` on the born-digital page. Every word is output live.
 - **B-pm4llm:** `pymupdf4llm.to_markdown(doc, pages=[p], use_ocr=False)` at the pinned version.
 - **P-native:** `detect_pdf(path, method="vector")` on the single-page born-digital PDF.
-- **P-scan:** `detect_pdf(scan, ocr=rapidocr_backend(), scan_config=ScanConfig.confidence_free(),
-  dpi=200)`, where `scan` is C2's pixels as an image-only PDF (`scan.pdf`, built by `render.py`).
+- **P-scan:** `detect_pdf(scan, ocr=rapidocr_backend(params={"Global.use_cls": False}),
+  scan_config=ScanConfig.confidence_free(), dpi=200)`, where `scan` is C2's pixels as an
+  image-only PDF (`scan.pdf`, built by `render.py`). RapidOCR's text-line orientation classifier
+  is off (deviation 2,
+  `DEVIATIONS.md`); a page the call refuses (a word box past the page's edge) is a failed page.
+  **P-scan-shipped,** the same call with `rapidocr_backend()` as released, is reported beside it
+  and enters no endpoint.
 
 The package is scored from its word records, never its `~~` markdown. P-native's output is the
 page's PyMuPDF words in extraction order, with the `char_span` of every `final` record marked.
 P-scan's is the words the OCR backend returned, captured by a pass-through wrapper around
-`rapidocr_backend()` that hands them on unchanged, put in the package's own reading order
+its `rapidocr_backend(...)` that hands them on unchanged, put in the package's own reading order
 (`markdown.ordered_rows`) and marked the same way. On every page the unmarked words must equal
 the call's own `clean_text` as a multiset of tokens (the orders differ), or the harness stops.
 
@@ -385,7 +405,7 @@ provider's chosen image condition, C2 or C2-tiled.
 ## Prompts
 
 The texts live in `prompts/ladder.toml`, as parts each rung joins; every assembled rung and
-paraphrase is hashed, as drafted in `prereg-1` and as tuned in `prereg-2` (TBD (B2)). Each rung
+paraphrase is hashed, as drafted in `prereg-1` and as tuned in `prereg-2` (unchanged). Each rung
 adds one thing to the rung before. Drafts, tuned on dev until `prereg-2`:
 
 - **R0** (user turn): "Transcribe this page to markdown. Output only the transcription."
@@ -425,7 +445,9 @@ and there is no runner-up. The rung is chosen on C2; the image condition is then
 by the same rule, against R0 on C2, C2 being the cheaper. Each flagship runs R-best and the
 runner-up on the ladder's pages and keeps whichever the same rule chooses, with R-best in R0's
 place: that rung is the flagship's R-best everywhere in this file. The choices are tagged in
-`prereg-2`: TBD (B2).
+`prereg-2`: R-best is R2 for every provider; the runner-up is R5 for Anthropic and Google, and
+none for OpenAI and xAI; the image condition is C2 for Anthropic and xAI, C2-tiled for Google
+and OpenAI; the flagships run R2, but Gemini 4 Argon R5.
 
 **Dev pages:** one generator seeded with `20261013` draws the pilot's 34 pages, then from those the
 ladder's 24, the repeats' 20 (the effort ablation's too) and the canary's 10, each on its own, so
@@ -445,29 +467,34 @@ each with a live answer and a struck one ("what is the rate?" where 5% is struck
 beside it), asked with R0's framing and again with R1's system line, on C2, to the flagships. An
 answer is scored as giving the live value, the struck value, both, or neither.
 
-**Stage B4's prompt,** a draft fixed in `prereg-2` (TBD (B2)): **M+P context**, R2's prompt and
-the page's image (C2), plus P-scan's reading of the page's scan, the app's second look: its struck
-words with their struck characters, and the live characters of its words in its reading order,
-introduced as "A strikethrough detector reports the following for this page. Use it, but trust the
-page where they disagree." It runs for the flagships on G0's and G2's test pages. P→M, the
-package's `provenance_text` to a model with no image, waits for an addendum.
+**Stage B4's prompt,** fixed in `prereg-2`: **M+P context**, R2's prompt and the page's image
+(C2), plus P-scan's reading of the page's scan, the app's second look: its struck words with
+their struck characters, and the live characters of its words in its reading order, introduced
+as "A strikethrough detector reports the following for this page. Use it, but trust the page
+where they disagree." On a page P-scan failed, its reading's place says "A strikethrough
+detector was run on this page but produced no reading." It runs for the flagships on G0's and
+G2's test pages. P→M, the package's `provenance_text` to a model with no image, waits for an
+addendum.
 
 ## Scoring
 
 The scorer, `score.py`, and the statistics, `stats.py`, are built and golden-tested before any
 paid call, and the sha256 of every code file, theirs and the endpoints' (`report.py`) among them,
-is tagged in `prereg-2` (TBD (B2)).
+is tagged in `prereg-2` (`config/prereg2.json`).
 
 - **Sub-tokens.** Each ground-truth word is split at its struck/live character boundaries, so
   `~~semi-~~monthly` is the struck sub-token `semi-` and the live sub-token `monthly`.
 - **Parsing an output.** Characters inside a marker on the fixed list (`~~…~~`; GitHub's single
   `~…~`, opened before a non-space and closed after one on the same line, never part of a `~~`;
-  `<del>`, `<s>`, `<strike>`; `[deleted: …]`) are marked, as is any character carrying
-  U+0334–U+0338; strike tags pair up by nesting, so all of an outer pair's inside is marked. Then
-  the markers and other markup are removed (heading `#`s, emphasis runs of `*` or `_`, list
-  markers, table rule rows, code fences, backslash escapes), other HTML tags and table pipes
-  become word breaks, HTML entities are decoded, and the rest is split on whitespace into tokens.
-  Each kept character carries its mark. A JSON answer (R4–R6) is flattened word by word: a
+  `<del>`, `<s>`, `<strike>`; `[deleted: …]`, `[red strikethrough: …]`, `[blue strikethrough: …]`)
+  are marked, as is any character carrying U+0334–U+0338; strike tags pair up by nesting, so all
+  of an outer pair's inside is marked. Then the markers and other markup are removed (heading
+  `#`s, emphasis runs of `*` or `_`, list markers, table rule rows, code fences, backslash
+  escapes), other HTML tags, table pipes and braces become word breaks, HTML entities are decoded, LaTeX written for a printed symbol reads as the
+  symbol (`\cdot` as `·`, `\Delta` as `Δ`; font, sizing and fraction commands such as `\mathrm`,
+  `\left` and `\frac`, and environments such as `\begin{aligned}`, are markup, an operator such as `\max` reads as its name, and any other command stays text; the
+  lists are in `score.py`), and the rest is split on whitespace into tokens. Each kept character
+  carries its mark. A JSON answer (R4–R6) is flattened word by word, its LaTeX read the same way: a
   `struck` verdict marks the first occurrence of `chars` in `text`, or the whole word where
   `chars` is empty or not found; `clean` counts as live, and so does a stray `unsure` (the prompts
   offer `struck` and `clean` alone). The last JSON object in the output is the answer; an item
@@ -487,17 +514,30 @@ is tagged in `prereg-2` (TBD (B2)).
   normalized edit distance (Levenshtein distance ÷ the longer token's length). An output token
   that equals two adjacent ground-truth words joined (a hyphen split at a line end) may align to
   both, and two adjacent output tokens that equal one ground-truth word joined may align to it,
-  hyphens ignored either way. Within each aligned pair, characters are aligned the same way,
-  through the offset maps.
+  hyphens ignored either way. Furniture words align in a pass of their own, after the page's
+  other words, leaving out a token equal to a word left over and to no furniture word. Then a
+  token the alignment left over that equals a word it left over, both normalized, pairs with that
+  word whatever the order, each in page order, scored words before unscored ones (deviation 1,
+  `DEVIATIONS.md`). Within each aligned pair, characters are aligned the same way, through the
+  offset maps.
 - **Outcomes.** A ground-truth sub-token is *marked* when at least half of its characters align to
   marked output characters, *absent* when fewer than half align to any output character, and
   *live* otherwise. A pair whose normalized edit distance exceeds 0.5 counts as absent plus an
   inserted token. A misread word (distance up to 0.5) is present.
 - **Masked and furniture words** are removed from the ground truth before scoring, and output
-  tokens aligned to them are ignored. Furniture is G0's running heads and page numbers, and G1's
-  and G2's as defined under each. A masked word no one could read (G5) aligns to any one output
-  token at a cost of 1.5: less than leaving both unaligned, more than any pair close enough to
-  count as present.
+  tokens aligned to them are ignored. So is an output token left unaligned that equals, once
+  normalized, a furniture word no equal token aligned to, each such word taking one token in page
+  order (deviation 1). Furniture is G0's running heads and page numbers, and G1's and G2's as
+  defined under each. A masked word no one could read (G5) aligns to
+  any one output token at a cost of 1.5: less than leaving both unaligned, more than any pair close
+  enough to count as present.
+- **Garbled lines.** A printed line whose text layer is garbled is not scored either: one holding
+  a word with an unassigned code point or a character of the Ethiopic or an Indic script, which
+  is what a math font mapped to the wrong Unicode gives (`⋅ሺ0.955ሻെ` for `·(0.955) −`). An output
+  token left unaligned is taken as such a line's reading, not as inserted, when no scored word
+  lies between the words its nearest aligned tokens align to (the page's edge standing in for a
+  side without one), and a garbled line's word does, or both those tokens align to one
+  (deviation 1).
 - **Leakage** = struck sub-tokens scored live ÷ struck sub-tokens. **Over-deletion,** twice: live
   sub-tokens scored marked ÷ live sub-tokens, and live sub-tokens scored absent ÷ live sub-tokens.
   The **unmarked share** = struck sub-tokens scored live or absent ÷ struck sub-tokens, and **read
@@ -507,6 +547,11 @@ is tagged in `prereg-2` (TBD (B2)).
 - **F1,** at sub-token level: a struck sub-token scored marked is a hit; struck and scored live or
   absent is a miss; live and scored marked is a false alarm. Live sub-tokens scored absent count in
   over-deletion, not in F1.
+- **Strike columns** (exploratory, deviation 3): strikes found (struck sub-tokens scored marked ÷
+  struck sub-tokens), strikes read (scored marked or live ÷ struck), strikes found of those read
+  (marked ÷ marked or live), and mark precision (struck sub-tokens marked ÷ all sub-tokens marked).
+  A failed page's struck sub-tokens count as unread in strikes read, and as read but missed in
+  strikes found of those read: each column's worst.
 - **Hallucinated tokens:** inserted output tokens, reported per 1,000 ground-truth tokens, with
   those holding a digit counted separately.
 - **Live-text error rates:** CER and WER of the output with marked text removed, against the
@@ -526,7 +571,8 @@ is tagged in `prereg-2` (TBD (B2)).
 - **The cascade** (exploratory): each model's outcomes on the words P-scan leaves uncertain (a
   P-scan token aligned to the word with `cnn_prob` strictly inside a band, where the package has
   decided neither way), against P-scan's own on the same words; and the whole pages' leakage,
-  marked over-deletion and F1 with the model answering those words and P-scan the rest, against
+  unmarked share, both over-deletions and F1 with the model answering those words and P-scan the
+  rest, against
   P-scan's alone. Each is read in the model meta's band (`p_lo`, `p_hi`) and in three fixed ones,
   (0.05, 0.95), (0.3, 0.7) and (0.4, 0.6), each with the share of sub-tokens and of pages handed
   off and its $ per 1,000 pages: P-scan on every page, and the model on the pages handed off. From
@@ -594,7 +640,8 @@ is tagged in `prereg-2` (TBD (B2)).
   corrections go to `data/gt/G1-corrections.jsonl` and apply to every arm: they change labels on
   the pages drawn, never the draw or the error-rate sample.
 - **G2's span check:** before `prereg-2`, the author's check of 100 aligned spans of G2-test (see
-  G2), each asking whether every word boxed as struck is struck and no live neighbour is: TBD (B2).
+  G2), each asking whether every word boxed as struck is struck and no live neighbour is: all
+  100 passed (2026-10-17).
 
 ## Operations
 
@@ -665,7 +712,8 @@ is tagged in `prereg-2` (TBD (B2)).
 - **The caps,** each on everything spent so far, the smoke tests included, plus what is in flight:
   stages B1–B2's, set by the author from the stage B2 dry run once the smoke tests have run,
   $250; and stages B1–B3's, set from the stage B3 dry run, no lower than the price of the cells
-  never dropped, TBD (B2). A reserve of $150 above the second is kept for G3's and G4's addenda and
+  never dropped, $1,150 (its dry run of 2026-10-17: $910.27, $669.82 never dropped, beside
+  $67.84 spent). A reserve of $150 above the second is kept for G3's and G4's addenda and
   stage B4: no request of stages B1–B3 is sent into it, though answers costing more than their
   price can run into it. A stage whose price, with what is spent and in flight, passes its cap is
   not sent, and a model sent request by request stops once its next request's price no longer
