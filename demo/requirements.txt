@@ -2,5 +2,5 @@
 # requirements.txt. The package itself is lean; this adds the demo UI and a scanned-page OCR
 # backend so the demo can handle scans as well as born-digital PDFs. OCR comes through the
 # package's own `rapidocr` extra rather than a separate line, so the two cannot drift apart.
-gradio>=6.29.1
-pdf-strikethrough-detect[markdown,rapidocr]>=0.12
+gradio>=6.30.0
+pdf-strikethrough-detect[markdown,rapidocr]>=0.12.1
