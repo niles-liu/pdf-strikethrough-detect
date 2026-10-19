@@ -196,23 +196,78 @@ def _hand_out(n: int, order: list, share: dict, room: dict) -> int:
 BLUE, ORANGE = (0, 90, 255), (240, 130, 0)
 
 
-def _crop(page_id: str, boxes: list, colors: list | None = None, pad: float = 2.0) -> str:
-    """A crop of the page around `boxes`, each boxed (blue unless `colors` says), as a data URL."""
+def _turn(page: dict) -> int:
+    """How far to turn the page's images, in degrees counter-clockwise, so its text reads upright:
+    90 or 270 when most of its words of four letters or more stand taller than wide (a page
+    printed sideways: such a word is several times taller than wide in page fractions, an
+    upright one a fraction as tall), as their lines run down or up the page; else 0."""
+    body = [w for w in page["words"] if len(w["text"]) >= 4 and not w.get("furniture")]
+    tall = [w for w in body if w["bbox"][3] - w["bbox"][1] > 1.5 * (w["bbox"][2] - w["bbox"][0])]
+    if 2 * len(tall) <= len(body):
+        return 0
+    down = sum((b["bbox"][1] > a["bbox"][1]) - (b["bbox"][1] < a["bbox"][1])
+               for a, b in zip(tall, tall[1:]) if a.get("line") == b.get("line"))  # fmt: skip
+    return 90 if down >= 0 else 270
+
+
+def _png(image: Image.Image, fmt: str = "PNG") -> str:
+    buf = io.BytesIO()
+    image.save(buf, fmt, **({"quality": 80} if fmt == "JPEG" else {}))
+    return f"data:image/{fmt.lower()};base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _boxed(image: Image.Image, boxes: list, colors: list | None, origin=(0.0, 0.0),
+           width: int = 3) -> None:  # fmt: skip
+    """Draw `boxes` (pixels of the image `origin` was cut from) on the image."""
+    draw = ImageDraw.Draw(image)
+    for b, color in zip(boxes, colors or [BLUE] * len(boxes)):
+        draw.rectangle([b[0] - origin[0] - 4, b[1] - origin[1] - 4, b[2] - origin[0] + 4,
+                        b[3] - origin[1] + 4], outline=color, width=width)  # fmt: skip
+
+
+def _crop(page_id: str, boxes: list, colors: list | None = None, pad: float = 2.0,
+          turn: int = 0) -> str:  # fmt: skip
+    """A crop of the page around `boxes`, each boxed (blue unless `colors` says), as a data URL:
+    15% of the page along the line either side, `pad` line heights across. On a page printed
+    sideways (`turn`, `_turn`) the lines run down it, so the axes swap and the crop turns upright."""
     image = Image.open(render.path(page_id, "c2.png")).convert("RGB")
     w, h = image.size
-    lh = max(b[3] - b[1] for b in boxes)
     x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
     x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
-    crop = (max(0, x0 - 0.15) * w, max(0, y0 - pad * lh) * h,
-            min(1, x1 + 0.15) * w, min(1, y1 + pad * lh) * h)  # fmt: skip
+    if turn:
+        lw = max(b[2] - b[0] for b in boxes)
+        crop = (max(0, x0 - pad * lw) * w, max(0, y0 - 0.15) * h,
+                min(1, x1 + pad * lw) * w, min(1, y1 + 0.15) * h)  # fmt: skip
+    else:
+        lh = max(b[3] - b[1] for b in boxes)
+        crop = (max(0, x0 - 0.15) * w, max(0, y0 - pad * lh) * h,
+                min(1, x1 + 0.15) * w, min(1, y1 + pad * lh) * h)  # fmt: skip
     out = image.crop(tuple(round(v) for v in crop))
-    draw = ImageDraw.Draw(out)
-    for b, color in zip(boxes, colors or [BLUE] * len(boxes)):
-        draw.rectangle([b[0] * w - crop[0] - 4, b[1] * h - crop[1] - 4, b[2] * w - crop[0] + 4,
-                        b[3] * h - crop[1] + 4], outline=color, width=3)  # fmt: skip
-    buf = io.BytesIO()
-    out.save(buf, "PNG")
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    _boxed(out, [[b[0] * w, b[1] * h, b[2] * w, b[3] * h] for b in boxes], colors, crop[:2])
+    return _png(out.rotate(turn, expand=True) if turn else out)
+
+
+def _whole(page_id: str, boxes: list, colors: list | None = None, turn: int = 0) -> str:
+    """The whole page, upright and scaled to 900 pixels across, `boxes` drawn: where an extra
+    word's crop can't show what the output read (a chart, a photo, a heading drawn as a picture)."""
+    image = Image.open(render.path(page_id, "c2.png")).convert("RGB")
+    if turn:
+        image = image.rotate(turn, expand=True)
+    w, h = image.size
+    small = image.resize((900, round(h * 900 / w)), Image.Resampling.LANCZOS)
+    sw, sh = small.size
+    _boxed(small, [[b[0] * sw, b[1] * sh, b[2] * sw, b[3] * sh]
+                   for b in (_turned(b, turn) for b in boxes)], colors, width=2)  # fmt: skip
+    return _png(small, "JPEG")
+
+
+def _turned(b: list, turn: int) -> list:
+    """A box in page fractions after the page turns `turn` degrees counter-clockwise."""
+    if turn == 90:  # (x, y) -> (y, 1 - x)
+        return [b[1], 1 - b[2], b[3], 1 - b[0]]
+    if turn == 270:  # (x, y) -> (1 - y, x)
+        return [1 - b[3], b[0], 1 - b[1], b[2]]
+    return b
 
 
 def _label(word: dict) -> str:
@@ -246,16 +301,20 @@ def _item_html(item: dict, pages: dict, q1_only: bool = False, n: str = "") -> s
     words = [page["words"][i] for i in item["words"]] or page["words"][:1]
     around = [page["words"][i] for i in item.get("neighbours", ())]
     colors = [BLUE] * len(words) + [ORANGE] * len(around)
-    img = f'<img src="{_crop(item["page_id"], [w["bbox"] for w in words + around], colors)}">'
+    boxes, turn = [w["bbox"] for w in words + around], _turn(page)
+    img = f'<img src="{_crop(item["page_id"], boxes, colors, turn=turn)}">'
     part = words[0]["text"][slice(*item["span"])] if "span" in item else ""
     what = (f"“{html.escape(part)}” (part of the boxed word)" if part and part != words[0]["text"]
             else "the boxed word")  # fmt: skip
     head = f'<section data-id="{iid}"><h3>{iid}' + (f" <small>{n}</small>" if n else "")
     out = f'<p class="out">{item.get("output", "")}</p>'
     if item.get("kind") == "hallucination":
+        whole = f'<img src="{_whole(item["page_id"], boxes, colors, turn)}">'
         return (f"{head} · extra word</h3>{img}<p>The output has a word the scorer could not match "
                 "to anything on the page (highlighted below). The blue boxes are the page words "
-                f"the output has just before and after it.</p>{out}<p>The scorer counts the "
+                "the output has just before and after it. The whole page is below the output, "
+                "for what a crop can't show: a chart, a photo, a heading drawn as a picture.</p>"
+                f"{out}<details><summary>The whole page</summary>{whole}</details><p>The scorer counts the "
                 "highlighted word as one the output <b>added or misread</b>. Is that right?</p><p>"
                 f"{_choices(f'{iid}-q3', ('yes', 'no'), EXTRA)}</p></section>")  # fmt: skip
     verdict = OUTCOME.get(item.get("outcome", ""), item.get("outcome", ""))
@@ -265,7 +324,7 @@ def _item_html(item: dict, pages: dict, q1_only: bool = False, n: str = "") -> s
     options = item.get("options", ("struck", "not struck", "cannot tell"))
     shown = tuple("can't tell" if o == "cannot tell" else o for o in options)
     body = (f"{head}</h3>{img}<p><b>1.</b> {question}</p><p>{_choices(f'{iid}-q1', options, shown)} "
-            f'<input name="{iid}-chars" placeholder="only part struck? which letters"></p>')  # fmt: skip
+            f'<input name="{iid}-chars" placeholder="only part struck? e.g. re~mark~s"></p>')  # fmt: skip
     if "answer" in item:
         body += f"<details><summary>Answer</summary><p><b>{html.escape(item['answer'])}</b></p></details>"
     elif not q1_only:
@@ -290,7 +349,9 @@ marked text as deleted and {GAP} where it has nothing. Did the scorer read it ri
 find on the page. Garbled output (stray letters where words should be) is the output's fault, so
 the scorer is right to count it.</p>"""
 INTRO_Q1 = f"""<p>Answer the question under each image from the image alone. {STRIKE} If only
-part of a word is struck, type those letters.</p>"""
+part of a word is struck, type the word with each struck part between tildes: <b>re~mark~s</b> when
+"mark" alone is struck, <b>~un~like~ly~</b> when it is struck in two places. (Typing just the struck
+letters works too, when they occur once in the word.)</p>"""
 
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>{title}</title>
@@ -377,7 +438,8 @@ def g1_items() -> list[dict]:
 def relabel_items(stage: str = "test") -> list[dict]:
     """PREREG, G1's error rate: the G1-test words on which at least three of the four flagships'
     R-best arms disagree with the ground truth (a struck word output live, a live word output
-    marked or absent), for both annotators."""
+    marked or absent), for both annotators; and the G1 words the test audit found its key wrong
+    on (question 2), so their corrections reach the key the same way (deviation 5)."""
     best = {f"{k}:{plans.choice(m['provider'], 'flagship')}:{plans.choice(m['provider'], 'image')}"
             for k, m in config("models").items() if m["role"] == "flagship"}  # fmt: skip
     pages = {p["page_id"]: p for p in load_pages("G1", split="test")}
@@ -390,8 +452,15 @@ def relabel_items(stage: str = "test") -> list[dict]:
             for r in res["details"]:
                 if _kind(r) in ("leak", "over-deletion"):
                     against[o["page_id"], r["word"]].add(o["arm"])
-    return [{"page_id": pid, "words": [i], "kind": "g1-relabel"}
-            for (pid, i), arms in sorted(against.items()) if len(arms) >= 3]  # fmt: skip
+    words = {w for w, arms in against.items() if len(arms) >= 3}
+    audit = RUNS / stage / "audit"
+    if (audit / "ingest.json").exists():
+        key = {k["item_id"]: k for k in read_jsonl(audit / "key.jsonl")}
+        wrong = json.loads((audit / "ingest.json").read_text(encoding="utf-8"))["ground_truth_no"]
+        words |= {
+            (key[i]["page_id"], key[i]["words"][0]) for i in wrong if key[i]["page_id"] in pages
+        }
+    return [{"page_id": pid, "words": [i], "kind": "g1-relabel"} for pid, i in sorted(words)]
 
 
 def _same_line(a: dict, b: dict) -> bool:
@@ -578,7 +647,9 @@ def ingest(folder: Path, files: list[Path], adjudicated: Path | None = None) -> 
         fixes = [{"page_id": key[i]["page_id"], "word": key[i]["words"][0],
                   "text": words[key[i]["page_id"]][key[i]["words"][0]]["text"],
                   "label": labelled[i][0], "chars": labelled[i][1]} for i in relabel]  # fmt: skip
-        if bad := [i for i, f in zip(relabel, fixes) if f["chars"] not in f["text"]]:
+        if bad := [
+            i for i, f in zip(relabel, fixes) if g1.struck_spans(f["text"], f["chars"]) is None
+        ]:
             out["corrections"] = f"not written: struck characters not in the word: {bad}"
         else:
             write_jsonl(g1.CORRECTIONS, fixes)
