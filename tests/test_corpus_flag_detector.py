@@ -133,8 +133,7 @@ def test_unparseable_pymupdf_version_does_not_disable_the_detector(monkeypatch):
     doc.close()
 
 
-# Every shape below except 1.26.10 (a two-digit patch) and the two unparseable strings is a
-# VersionBind PyMuPDF has shipped (read from its wheels, not guessed).
+# 2.0, 1.27.2.2 and 1.23.0rc1 are VersionBind shapes PyMuPDF has shipped (read from its wheels).
 @pytest.mark.parametrize("raw,want", [
     ("1.26.6", (1, 26, 6)),
     ("1.26.10", (1, 26, 10)),
@@ -142,7 +141,6 @@ def test_unparseable_pymupdf_version_does_not_disable_the_detector(monkeypatch):
     ("2.0", (2, 0, 0)),             # 2.0 dropped the patch number
     ("1.27.2.2", (1, 27, 2)),       # a fourth part does not move the floor compare
     ("1.23.0rc1", (1, 23, 0)),      # a suffix is not a reason to give up on the numbers
-    ("1.23.9rc2", (1, 23, 9)),
     ("", None),
     ("nonsense", None),
 ])

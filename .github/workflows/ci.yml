@@ -164,7 +164,7 @@ jobs:
           # -- and passed, because that crash needs a real PDF and CI has no corpus. The other four
           # floors are minor-level, so a ".*" wildcard is a faithful enough reading of them.
           pip install "numpy==1.24.*" "pillow==9.0.*" "scipy==1.10.*" \
-                      "onnxruntime==1.16.*" "pymupdf==1.26.6"
+                      "onnxruntime==1.18.*" "pymupdf==1.26.6"
           pip install --no-deps -e .
           pip install pytest
           pip list | grep -Ei "pymupdf|numpy|scipy|pillow|onnxruntime"

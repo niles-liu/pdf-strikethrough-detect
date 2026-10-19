@@ -5,10 +5,10 @@ placeholder (PyMuPDF 2.0 ships the module), the extra broke on Python 3.10, wher
 install, and CI stayed green. These tests skip where pymupdf4llm is not installed; on Python 3.11+
 PyMuPDF 2.0 installs it even without the extra.
 """
-import importlib
 import importlib.metadata
 import subprocess
 import sys
+import types
 
 import pytest
 
@@ -105,3 +105,12 @@ def test_clean_markdown_keeps_the_callers_message_routing(tmp_path):
                          capture_output=True, text=True, timeout=300)
     assert run.returncode == 0, run.stderr
     assert run.stdout == "" and "Document parser messages" not in run.stderr
+
+
+@needs_markdown
+def test_clean_markdown_survives_a_stderr_without_flush(tmp_path, monkeypatch):
+    """pymupdf.set_messages() asserts its stream has flush(), and some embedders' stderr has only
+    write(); PyMuPDF's messages then stay where they were."""
+    monkeypatch.setattr(sys, "stderr", types.SimpleNamespace(write=len))
+    md = st.clean_markdown(str(_struck_pdf(tmp_path / "struck.pdf")))
+    assert "deleted" not in md

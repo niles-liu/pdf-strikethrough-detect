@@ -55,10 +55,10 @@ FLAG_MIN_PYMUPDF = (1, 26, 6)
 
 
 def _pymupdf_version():
-    """(major, minor, patch) of the installed PyMuPDF binding, or None if it cannot be parsed.
-    PyMuPDF has shipped "2.0" (patch 0), "1.27.2.2" (a fourth part, ignored) and "1.23.0rc1" (a
-    suffix, ignored). Unparseable is treated as unguarded on purpose: a version string this does
-    not recognize must not disable a detector for someone whose build is otherwise fine."""
+    """(major, minor, patch) of the installed PyMuPDF binding, or None if it cannot be parsed. A
+    missing patch reads as 0 (PyMuPDF 2.0 reports "2.0"); anything after the third number is
+    ignored. Unparseable is treated as unguarded on purpose: a version string this does not
+    recognize must not disable a detector for someone whose build is otherwise fine."""
     raw = getattr(pymupdf, "VersionBind", None) or getattr(pymupdf, "__version__", "")
     m = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?", str(raw))
     return tuple(int(g or 0) for g in m.groups()) if m else None
@@ -666,10 +666,11 @@ def _stdout_to_stderr():
     pymupdf.message(), and older releases print a hint on their first call; a library call must not
     write to its caller's stdout. pymupdf.message() writes to the stream PyMuPDF captured at import,
     so redirecting sys.stdout alone misses it; that stream is switched only while it is still the
-    default, so a caller who routed PyMuPDF's messages elsewhere keeps that. Both switches are
-    process-wide while they last: callers hold _MARKDOWN_LOCK."""
+    default, so a caller who routed PyMuPDF's messages elsewhere keeps that, and only to a stderr
+    with the flush() set_messages() asserts on. Both switches are process-wide while they last:
+    callers hold _MARKDOWN_LOCK."""
     prev = getattr(pymupdf, "_g_out_message", None)     # PyMuPDF has no public getter
-    swap = (prev is not None and sys.stderr is not None
+    swap = (prev is not None and hasattr(sys.stderr, "flush")
             and (prev is sys.stdout or prev is sys.__stdout__))
     if swap:
         pymupdf.set_messages(stream=sys.stderr)
