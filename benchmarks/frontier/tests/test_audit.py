@@ -100,6 +100,7 @@ def test_the_test_audits_key_errors_on_g1_join_the_relabel(monkeypatch, tmp_path
     ("CO2CO2", "CO2~CO2~", [[3, 6]]),  # the second of two equal parts
     ("Eaffects", "~E~affect~s~", [[0, 1], [7, 8]]),  # struck in two places
     ("Eaffects", "E s", [[0, 1], [7, 8]]),  # the same as plain parts
+    ("CO2CO2", "CO2", None),  # there twice: only tildes say which
     ("Llist", "L", [[0, 1]]),
     ("abc", "", [[0, 3]]),  # nothing typed: the whole word
     ("abc", "x", None),

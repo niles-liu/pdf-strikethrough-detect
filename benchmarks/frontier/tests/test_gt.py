@@ -178,7 +178,7 @@ def test_corrections_relabel_words_and_refuse_a_different_word(tmp_path, monkeyp
         g1._correct(pages)
     fixes[0] |= {"text": "Oother", "chars": "Q"}  # not in the word: never the whole word struck
     path.write_text("".join(json.dumps(f) + "\n" for f in fixes), encoding="utf-8")
-    with pytest.raises(ValueError, match="'Q' is not in word 0"):
+    with pytest.raises(ValueError, match="can't place 'Q' in word 0"):
         g1._correct(pages)
 
 

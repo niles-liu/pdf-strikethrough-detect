@@ -650,7 +650,9 @@ def ingest(folder: Path, files: list[Path], adjudicated: Path | None = None) -> 
         if bad := [
             i for i, f in zip(relabel, fixes) if g1.struck_spans(f["text"], f["chars"]) is None
         ]:
-            out["corrections"] = f"not written: struck characters not in the word: {bad}"
+            out["corrections"] = (
+                f"not written: struck characters missing from the word, or in it twice: {bad}"
+            )
         else:
             write_jsonl(g1.CORRECTIONS, fixes)
             out["corrections"] = f"{len(fixes)} -> {g1.CORRECTIONS}; now `g1 build`, then rescore"

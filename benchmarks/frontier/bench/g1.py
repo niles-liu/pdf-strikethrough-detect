@@ -218,7 +218,8 @@ def struck_spans(text: str, chars: str) -> list[list[int]] | None:
     """Where the struck characters an annotator typed lie in a word: the whole word when none is
     typed. Typed as the word with each struck part between tildes (`CO2~CO2~`, deviation 5), those
     parts, None if the rest isn't the word; else each part typed (parts apart by spaces) found
-    after the one before, the first such place, None when a part isn't there."""
+    after the one before, None when a part isn't there or is there twice, which only tildes place
+    (`CO2` in `CO2CO2`)."""
     if "~" in chars:
         pieces = chars.strip().split("~")
         if "".join(pieces) != text or len(pieces) % 2 == 0:
@@ -232,7 +233,7 @@ def struck_spans(text: str, chars: str) -> list[list[int]] | None:
     spans, at = [], 0
     for part in chars.split():
         k = text.find(part, at)
-        if k < 0:
+        if k < 0 or text.find(part, text.find(part) + 1) >= 0:  # missing, or there twice
             return None
         spans.append([k, k + len(part)])
         at = k + len(part)
@@ -250,8 +251,8 @@ def _correct(pages: list[dict]) -> None:
                              f"{w['text']!r}, not {c['text']!r}")  # fmt: skip
         spans = struck_spans(w["text"], c["chars"] or "")
         if c["label"] == "struck" and spans is None:
-            raise ValueError(f"{CORRECTIONS.name}: {c['chars']!r} is not in word {c['word']} of "
-                             f"{c['page_id']}, {w['text']!r}")  # fmt: skip
+            raise ValueError(f"{CORRECTIONS.name}: can't place {c['chars']!r} in word "
+                             f"{c['word']} of {c['page_id']}, {w['text']!r}")  # fmt: skip
         w["struck"] = spans if c["label"] == "struck" else []
         w["masked"] = c["label"] == "cannot tell"
 
