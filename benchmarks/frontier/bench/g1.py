@@ -214,6 +214,31 @@ def build() -> list[dict]:
     return out
 
 
+def struck_spans(text: str, chars: str) -> list[list[int]] | None:
+    """Where the struck characters an annotator typed lie in a word: the whole word when none is
+    typed. Typed as the word with each struck part between tildes (`CO2~CO2~`, deviation 5), those
+    parts, None if the rest isn't the word; else each part typed (parts apart by spaces) found
+    after the one before, the first such place, None when a part isn't there."""
+    if "~" in chars:
+        pieces = chars.strip().split("~")
+        if "".join(pieces) != text or len(pieces) % 2 == 0:
+            return None
+        spans, at = [], 0
+        for n, piece in enumerate(pieces):
+            if n % 2 and piece:
+                spans.append([at, at + len(piece)])
+            at += len(piece)
+        return spans or None
+    spans, at = [], 0
+    for part in chars.split():
+        k = text.find(part, at)
+        if k < 0:
+            return None
+        spans.append([k, k + len(part)])
+        at = k + len(part)
+    return spans or [[0, len(text)]]
+
+
 def _correct(pages: list[dict]) -> None:
     """The post-test relabel (PREREG, The audit): each corrected word becomes struck (all of it,
     or the characters the annotators gave), live, or masked where they could not tell."""
@@ -223,12 +248,11 @@ def _correct(pages: list[dict]) -> None:
         if w["text"] != c["text"]:
             raise ValueError(f"{CORRECTIONS.name}: word {c['word']} of {c['page_id']} is "
                              f"{w['text']!r}, not {c['text']!r}")  # fmt: skip
-        k = w["text"].find(c["chars"]) if c["chars"] else -1
-        if c["label"] == "struck" and c["chars"] and k < 0:
+        spans = struck_spans(w["text"], c["chars"] or "")
+        if c["label"] == "struck" and spans is None:
             raise ValueError(f"{CORRECTIONS.name}: {c['chars']!r} is not in word {c['word']} of "
                              f"{c['page_id']}, {w['text']!r}")  # fmt: skip
-        span = [k, k + len(c["chars"])] if k >= 0 else [0, len(w["text"])]
-        w["struck"] = [span] if c["label"] == "struck" else []
+        w["struck"] = spans if c["label"] == "struck" else []
         w["masked"] = c["label"] == "cannot tell"
 
 

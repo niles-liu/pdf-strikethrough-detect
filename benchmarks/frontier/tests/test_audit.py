@@ -56,7 +56,8 @@ def test_the_notation_sweep_lists_leaks_at_r0_and_r1_and_passes_over_failed_answ
     assert "'[struck:' 1" in report
 
 
-def test_a_relabel_needs_three_flagships_and_ignores_failed_pages(monkeypatch):
+def test_a_relabel_needs_three_flagships_and_ignores_failed_pages(monkeypatch, tmp_path):
+    monkeypatch.setattr(audit, "RUNS", tmp_path)  # no test audit labelled yet
     page = {"page_id": "G1.d.p0", "words": [w("abcdef", 0.1), w("ok", 0.1, 0.3)]}
     page["words"][0]["struck"] = [[2, 4]]
     models = {f"m{k}": {"provider": f"p{k}", "role": "flagship"} for k in range(4)}
@@ -80,6 +81,45 @@ def test_a_relabel_needs_three_flagships_and_ignores_failed_pages(monkeypatch):
     assert audit.relabel_items() == []  # empty answers fail; they dispute nothing
 
 
+def test_the_test_audits_key_errors_on_g1_join_the_relabel(monkeypatch, tmp_path):
+    monkeypatch.setattr(audit, "RUNS", tmp_path)
+    page = {"page_id": "G1.d.p0", "words": [w("abcdef", 0.1), w("ok", 0.1, 0.3)]}
+    monkeypatch.setattr(audit, "config", {"models": {}}.__getitem__)
+    monkeypatch.setattr(audit, "load_pages", lambda *s, **k: [page])
+    monkeypatch.setattr(audit.harness, "outputs", lambda stage: [])
+    found = tmp_path / "test" / "audit"
+    found.mkdir(parents=True)
+    keys = [{"item_id": "i001", "page_id": "G1.d.p0", "words": [1]},
+            {"item_id": "i002", "page_id": "G2.b.p0", "words": [3]}]  # fmt: skip
+    (found / "key.jsonl").write_text("".join(json.dumps(k) + "\n" for k in keys), encoding="utf-8")
+    (found / "ingest.json").write_text(json.dumps({"ground_truth_no": ["i001", "i002"]}))
+    assert audit.relabel_items() == [{"page_id": "G1.d.p0", "words": [1], "kind": "g1-relabel"}]
+
+
+@pytest.mark.parametrize("text, chars, spans", [
+    ("CO2CO2", "CO2~CO2~", [[3, 6]]),  # the second of two equal parts
+    ("Eaffects", "~E~affect~s~", [[0, 1], [7, 8]]),  # struck in two places
+    ("Eaffects", "E s", [[0, 1], [7, 8]]),  # the same as plain parts
+    ("Llist", "L", [[0, 1]]),
+    ("abc", "", [[0, 3]]),  # nothing typed: the whole word
+    ("abc", "x", None),
+    ("abc", "a~b~", None),  # the tildes' word must be the word
+])  # fmt: skip
+def test_struck_characters_come_as_the_word_with_tildes_or_as_its_parts(text, chars, spans):
+    assert g1.struck_spans(text, chars) == spans
+
+
+def test_a_page_printed_sideways_turns_upright():
+    def tall(text, y, x=0.5):
+        return {"text": text, "bbox": [x, y, x + 0.02, y + 0.1], "line": [0, 0], "furniture": False}
+
+    down = {"words": [tall("first", 0.1), tall("second", 0.3), tall("third", 0.5)]}
+    assert audit._turn(down) == 90  # its lines run down the page
+    up = {"words": [tall("first", 0.5), tall("second", 0.3), tall("third", 0.1)]}
+    assert audit._turn(up) == 270
+    assert audit._turn({"words": [w("upright", 0.1), w("words", 0.1, 0.3)]}) == 0
+
+
 def test_g5_is_outside_the_audit(monkeypatch):
     page = {"page_id": "G0.d.p0", "words": [w("gone", 0.1, struck=True), w("kept", 0.1, 0.3)]}
     monkeypatch.setattr(audit, "load_pages", lambda *s, **k: [page])  # G0–G2 only
@@ -92,7 +132,7 @@ def test_g5_is_outside_the_audit(monkeypatch):
 
 
 def test_question_three_names_the_part_of_the_word_it_is_about(monkeypatch):
-    monkeypatch.setattr(audit, "_crop", lambda pid, boxes, colors: "x")
+    monkeypatch.setattr(audit, "_crop", lambda pid, boxes, colors, **k: "x")
     page = {"words": [w("semi-monthly", 0.1)]}
     item = {"item_id": "i001", "page_id": "P", "words": [0], "span": [0, 5], "kind": "leak",
             "outcome": "live", "output": "semi-monthly"}  # fmt: skip
@@ -105,7 +145,7 @@ def test_question_three_names_the_part_of_the_word_it_is_about(monkeypatch):
 
 def test_a_span_is_boxed_blue_and_its_neighbours_orange(monkeypatch):
     seen = []
-    monkeypatch.setattr(audit, "_crop", lambda pid, boxes, colors: seen.append(colors) or "x")
+    monkeypatch.setattr(audit, "_crop", lambda pid, boxes, colors, **k: seen.append(colors) or "x")
     page = {"words": [w("a", 0.1), w("b", 0.1, 0.2, True), w("c", 0.1, 0.3)]}
     item = {"item_id": "i001", "page_id": "P", "words": [1], "neighbours": [0, 2],
             "kind": "g2-span"}  # fmt: skip
