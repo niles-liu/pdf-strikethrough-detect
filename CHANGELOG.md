@@ -21,6 +21,10 @@ All notable changes to this project are documented here. The format follows
   `benchmarks/frontier/DEVIATIONS.md`. A new `.gitattributes` checks `benchmarks/frontier/` out
   byte for byte, so its files match the sha256s the pre-registration pins on every platform. The README gains the run's
   summary, in the form the pre-registration fixed.
+- **The benchmark's harness and scorer are in `benchmarks/frontier/`:** the code, its tests, its
+  config and its pinned environment, committed as their history from `prereg-2` on, with a README
+  on checking the code against the pre-registration's pins and re-scoring the run from the Hugging
+  Face dataset.
 
 ### Changed
 - **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub

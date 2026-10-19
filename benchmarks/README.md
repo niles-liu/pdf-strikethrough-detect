@@ -41,7 +41,8 @@ false-positive count** — it includes the real strikes.
 package's job, finding struck text and keeping it out of the live text? Its results are in
 [`frontier/RESULTS.md`](frontier/RESULTS.md); its rules in [`frontier/PREREG.md`](frontier/PREREG.md),
 the reasons in [`frontier/PLAN.md`](frontier/PLAN.md), and each change to a rule in
-[`frontier/DEVIATIONS.md`](frontier/DEVIATIONS.md); its prompts in [`frontier/prompts/`](frontier/prompts/).
+[`frontier/DEVIATIONS.md`](frontier/DEVIATIONS.md); its prompts in [`frontier/prompts/`](frontier/prompts/);
+and its code, with how to re-score the run, in [`frontier/README.md`](frontier/README.md).
 Its requests, responses, scores and labels are in the dataset above, under `frontier/`.
 
 ## Manifest schema
