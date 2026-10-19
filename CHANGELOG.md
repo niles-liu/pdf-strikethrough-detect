@@ -43,6 +43,22 @@ All notable changes to this project are documented here. The format follows
   publishes to PyPI as before.
 
 ### Fixed
+- **The flag detector's version guard could not read PyMuPDF 2.0's version.** 2.0 reports `2.0`,
+  with no patch number, so the guard read it as unknown. Unknown means unguarded, so 2.0 users were
+  never blocked, but the test that the installed PyMuPDF clears the floor failed in every CI job
+  that ran it on 2.0. A two-part version now reads as patch 0.
+- **The `[markdown]` extra could install without a usable pymupdf4llm.** PyMuPDF 2.0 ships the
+  pymupdf4llm module itself, and the pymupdf4llm 2.0 package is an empty placeholder. Beside a
+  PyMuPDF below 2.0 (always on Python 3.10, which 2.0 does not support, or under a pin below 2.0)
+  the extra resolved that placeholder, and `clean_markdown()` asked for the extra that was already
+  installed. The extra now takes `pymupdf4llm>=0.0.27,<2` on Python 3.10 and PyMuPDF 2.0 on 3.11
+  and later. On 3.11 and later, `[markdown]` with PyMuPDF pinned below 2.0 now fails to resolve.
+  New tests cover `clean_markdown()`, which no test called before. Detection output on the
+  benchmark corpus is unchanged under 2.0; `clean_markdown()`'s layout changes in places, mostly
+  around equations.
+- **`clean_markdown()` wrote to stdout.** On PyMuPDF 2.0 without RapidOCR, pymupdf4llm prints a
+  "Document parser messages" banner on every call, and older pymupdf4llm releases print a hint on
+  import. Both now go to stderr. The CLI was not affected: its markdown is built from word records.
 - **The model card described the CNN thresholds wrongly.** Of the two, only `p_hi` decides what
   is reported: a candidate the CNN does not confirm at `p_hi` is dropped, and `p_lo` only labels
   the rest clean or unsure. The card wrote the unsure band as `[p_lo, p_hi)`, said unsure words

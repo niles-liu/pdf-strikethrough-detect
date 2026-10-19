@@ -20,8 +20,10 @@ content rotated by /Rotate); the flag and annotation paths read those. Vertical 
 non-Latin scripts whose strikes run along a different axis are otherwise out of scope. Horizontal
 CJK is regression-tested; vertical writing modes remain on the roadmap.
 """
+import contextlib
 import math
 import re
+import sys
 
 import pymupdf  # (formerly imported as the deprecated `fitz` alias)
 
@@ -53,11 +55,12 @@ FLAG_MIN_PYMUPDF = (1, 26, 6)
 
 def _pymupdf_version():
     """(major, minor, patch) of the installed PyMuPDF binding, or None if it cannot be parsed.
-    Unparseable is treated as unguarded on purpose: a version string this does not recognize must
-    not disable a detector for someone whose build is otherwise fine."""
+    PyMuPDF has shipped "2.0" (patch 0), "1.27.2.2" (a fourth part, ignored) and "1.23.0rc1" (a
+    suffix, ignored). Unparseable is treated as unguarded on purpose: a version string this does
+    not recognize must not disable a detector for someone whose build is otherwise fine."""
     raw = getattr(pymupdf, "VersionBind", None) or getattr(pymupdf, "__version__", "")
-    m = re.match(r"(\d+)\.(\d+)\.(\d+)", str(raw))
-    return tuple(int(g) for g in m.groups()) if m else None
+    m = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?", str(raw))
+    return tuple(int(g or 0) for g in m.groups()) if m else None
 
 
 _PYMUPDF_VERSION = _pymupdf_version()
@@ -648,17 +651,38 @@ def native_doc_strikes(doc, method="vector"):
     return out
 
 
+@contextlib.contextmanager
+def _stdout_to_stderr():
+    """Send what pymupdf4llm prints to stderr instead of stdout while it runs. Its layout parser
+    ends with a "=== Document parser messages ===" banner (on PyMuPDF 2.0 without RapidOCR, every
+    call: "RapidOCR is missing"), written with print() and pymupdf.message(), and a library call
+    must not write to its caller's stdout. pymupdf.message() writes to the stream PyMuPDF captured
+    at import, so redirecting sys.stdout alone misses it. Both switches are process-wide while they
+    last."""
+    prev = getattr(pymupdf, "_g_out_message", None)     # PyMuPDF has no public getter
+    if prev is not None:
+        pymupdf.set_messages(stream=sys.stderr)
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            yield
+    finally:
+        if prev is not None:
+            pymupdf.set_messages(stream=prev)
+
+
 def native_markdown(doc):
     """pymupdf4llm markdown for the whole document — struck spans arrive as ~~text~~. Requires
     the ``[markdown]`` extra; used only for its richer layout (headings, tables, columns). The
-    strikeout signal itself is base-PyMuPDF (see :func:`native_flag_strikes`)."""
-    try:
-        import pymupdf4llm
-    except ImportError as e:
-        raise ImportError(
-            "native_markdown/clean_markdown require the [markdown] extra: "
-            'pip install "pdf-strikethrough-detect[markdown]"') from e
-    return pymupdf4llm.to_markdown(doc, show_progress=False)
+    strikeout signal itself is base-PyMuPDF (see :func:`native_flag_strikes`). Anything
+    pymupdf4llm prints goes to stderr, including what older releases print on import."""
+    with _stdout_to_stderr():
+        try:
+            import pymupdf4llm
+        except ImportError as e:
+            raise ImportError(
+                "native_markdown/clean_markdown require the [markdown] extra: "
+                'pip install "pdf-strikethrough-detect[markdown]"') from e
+        return pymupdf4llm.to_markdown(doc, show_progress=False)
 
 
 _STRIKE_SPAN = re.compile(r"~~(.*?)~~", re.S)
