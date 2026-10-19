@@ -5,7 +5,7 @@ own, the calibration, the cascade, and the canary's drift and window."""
 
 import json
 import math
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -542,9 +542,16 @@ def test_the_canary_reports_each_models_window_and_what_falls_outside(monkeypatc
         "started": "",
         "recorded": (day + timedelta(days=3)).isoformat(),
     }
-    (tmp_path / "test" / "responses.jsonl").write_text(json.dumps(reply) + "\n", "utf-8")
+    dated = reply | {"started": "2026-11-02"}  # xAI's batch metadata: a bare date, no time
+    timed = reply | {"started": "2026-11-02T10:00:00+00:00"}  # beside times with no offset
+    (tmp_path / "test" / "responses.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in (reply, dated, timed)), "utf-8"
+    )
     monkeypatch.setattr(report, "RUNS", tmp_path)
-    assert report._sent_times()["test"]["m"] == [day]  # a batched request: sent when submitted
+    utc = day.replace(tzinfo=UTC)
+    sent = report._sent_times()
+    assert sent["test"]["m"] == [utc, utc, utc + timedelta(hours=1)]  # batched: when submitted
+    assert report.window("m", sent)["outside"] == 3  # all in UTC, so they compare
 
 
 def test_the_strike_columns_set_finding_strikes_apart_from_reading():

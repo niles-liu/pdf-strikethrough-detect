@@ -20,7 +20,7 @@ import csv
 import json
 import math
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 
 import numpy as np
@@ -1004,6 +1004,16 @@ def canary() -> list[dict]:
 TEST_STAGES = ("test", "fable", "qa", "latency")
 
 
+def _when(value: str | None) -> datetime | None:
+    """A recorded time, in UTC; none for a missing one or a bare date, which is how xAI's batch
+    metadata gives a request's start (deviation 4). The harness records UTC, so a time without
+    an offset is read as UTC."""
+    if not value or len(value) <= len("2026-10-18"):
+        return None
+    t = datetime.fromisoformat(value)
+    return t if t.tzinfo else t.replace(tzinfo=UTC)
+
+
 def _sent_times() -> dict[str, dict[str, list[datetime]]]:
     """Per stage and model, when each request recorded was sent: its own start where the reply
     records one, else its batch's submission, else when it was recorded."""
@@ -1012,11 +1022,10 @@ def _sent_times() -> dict[str, dict[str, list[datetime]]]:
         submitted = {b["batch_id"]: b["submitted"]
                      for b in read_jsonl(RUNS / stage / "batches.jsonl") if "submitted" in b}  # fmt: skip
         for r in read_jsonl(RUNS / stage / "responses.jsonl"):
-            when = r.get("started") or submitted.get(r.get("batch_id")) or r.get("recorded")
+            when = (_when(r.get("started")) or _when(submitted.get(r.get("batch_id")))
+                    or _when(r.get("recorded")))  # fmt: skip
             if when:
-                out.setdefault(stage, {}).setdefault(r["model"], []).append(
-                    datetime.fromisoformat(when)
-                )
+                out.setdefault(stage, {}).setdefault(r["model"], []).append(when)
     return out
 
 
