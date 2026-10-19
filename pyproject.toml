@@ -29,7 +29,9 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.24",
-    "pillow>=9.0",
+    # >=10.1: 9.2-10.0 turn a TIFF with an orientation tag upright on load but still report the
+    # tag, so detect_image_file() rotated it a second time.
+    "pillow>=10.1",
     "scipy>=1.10",
     # >=1.18 reads ONNX IR version 10, which the layout models PyMuPDF 2.0 loads on import need;
     # under 2.0, an older onnxruntime fails `import pymupdf` outright.

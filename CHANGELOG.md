@@ -41,6 +41,10 @@ All notable changes to this project are documented here. The format follows
   pymupdf4llm 1.28 loads broke `clean_markdown()`. 2.0 also makes `import pymupdf` about ten times
   slower, a cost the CLI's `--jobs` workers pay again where each starts a fresh interpreter
   (Windows, macOS).
+- **The `pillow` floor is now 10.1.** Pillow 9.2 through 10.0 turn a TIFF with an orientation tag
+  upright on load but still report the tag, so `detect_image_file()` rotated it a second time: an
+  OCR backend got the page sideways, and supplied word boxes drew a spurious EXIF warning. CI's
+  `lowest-bounds` job installed 9.0, which is not affected, so it never showed.
 - **The Gradio demo no longer installs the `[markdown]` extra,** which it never used.
 
 ### Removed
