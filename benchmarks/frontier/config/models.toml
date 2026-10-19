@@ -1,0 +1,130 @@
+# The models (PREREG.md, Models). One table per model, keyed by the name arms use.
+#   provider   anthropic | google | openai | xai
+#   id         the model ID requested; Azure's dated version for GPT-6
+#   expect     the model ID every response must report, filled from the stage B1 smoke test
+#   role       flagship | ladder | other | ceiling
+#   batch      true when the run goes through the provider's batch API
+#   service_tier  "flex" for GPT-6: Azure's half-price tier, as Azure offers GPT-6 no batch
+#   prompt_cache  "off" for GPT-6 from the cache probe on (plans.CACHE_ON): Azure bills a cache
+#              write at 1.25 times input, and few test requests would read one back
+#   cutoff     the stated training cutoff (or the release date where none is stated), with its
+#              source, as read on 2026-10-14 (Gemini 4 Argon's on 2026-10-15)
+#   c1_route   what the model gets from a PDF upload (C1): "image+text" (page images and the
+#              extracted text), "image" (the page image alone), or "text" (the text alone, so
+#              endpoint 4's claim is tagged "by construction"); Anthropic's by its docs, the others
+#              from the stage B1 smoke test (Gemini's usage counts text and image tokens apart)
+#   max_output the model's own output maximum, set only where it is below the harness's 64,000
+#              (the smoke test shows it)
+# GPT-6's deployment names are account-specific: the env vars named here hold them (.env).
+
+[opus-5-5]
+provider = "anthropic"
+id = "claude-opus-5-5"
+expect = "claude-opus-5-5"
+role = "flagship"
+batch = true
+cutoff = "2026-06"
+cutoff_source = "platform.claude.com/docs/en/models/opus-5-5/overview: Training data cutoff Jun 2026"
+c1_route = "image+text"
+
+[sonnet-5-5]
+provider = "anthropic"
+id = "claude-sonnet-5-5"
+expect = "claude-sonnet-5-5"
+role = "ladder"
+batch = true
+cutoff = "2026-06"
+cutoff_source = "platform.claude.com/docs/en/models/sonnet-5-5/overview: Training data cutoff Jun 2026"
+c1_route = "image+text"
+
+[haiku-5-5]
+provider = "anthropic"
+id = "claude-haiku-5-5"
+expect = "claude-haiku-5-5"
+role = "other"
+batch = true
+cutoff = "2026-06"
+cutoff_source = "platform.claude.com/docs/en/models/haiku-5-5/overview: Training data cutoff Jun 2026"
+c1_route = "image+text"
+
+[fable-5-1]
+provider = "anthropic"
+id = "claude-fable-5-1"
+expect = "claude-fable-5-1"
+role = "ceiling"
+batch = true
+cutoff = "2026-06"
+cutoff_source = "platform.claude.com/docs/en/models/fable-5-1/overview: Training data cutoff Jun 2026"
+c1_route = "image+text"
+
+[gemini-4-argon]
+provider = "google"
+id = "gemini-4-argon"
+expect = "gemini-4-argon"
+role = "flagship"
+batch = true
+media_resolution = "ultra_high"   # taken (stage B1): 2,173 image tokens a page, about twice high's
+cutoff = "2026-03"
+cutoff_source = "deepmind.google/models/model-cards/gemini-4-argon: knowledge cutoff March 2026"
+c1_route = "image+text"           # stage B1: ~540 text and 520 image tokens from a PDF page
+
+[gemini-3-8-flash]
+provider = "google"
+id = "gemini-3.8-flash"
+expect = "gemini-3.8-flash"
+role = "ladder"
+batch = true
+media_resolution = "ultra_high"
+cutoff = "2026-03"
+cutoff_source = "deepmind.google/models/model-cards/gemini-3-8-flash: knowledge cutoff March 2026"
+c1_route = "image"                # stage B1: 520 image tokens and no text from a PDF page
+
+[gpt-6-astra]
+provider = "openai"
+id = "gpt-6-astra-2026-09-03"
+expect = "gpt-6-astra-2026-09-03"   # Azure's x-ms-served-model
+role = "flagship"
+batch = false
+service_tier = "flex"
+prompt_cache = "off"
+image_detail = "original"
+deployment_env = "AZURE_OPENAI_DEPLOYMENT_GPT6_ASTRA"
+cutoff = "2026-04-30"
+cutoff_source = "developers.openai.com/api/docs/models/gpt-6-astra: Apr 30, 2026 knowledge cutoff"
+c1_route = "image+text"  # stage B1: reads an image-only PDF and a born-digital page's underlines
+
+[gpt-6-sol]
+provider = "openai"
+id = "gpt-6-sol-2026-09-22"
+expect = "gpt-6-sol-2026-09-22"     # Azure's x-ms-served-model
+role = "ladder"
+batch = false
+service_tier = "flex"
+prompt_cache = "off"
+image_detail = "original"
+deployment_env = "AZURE_OPENAI_DEPLOYMENT_SOL"
+cutoff = "2026-04-20"
+cutoff_source = "developers.openai.com/api/docs/models/gpt-6-sol: Apr 20, 2026 knowledge cutoff"
+c1_route = "image+text"  # stage B1: reads an image-only PDF and a born-digital page's underlines
+
+[grok-4-7]
+provider = "xai"
+id = "grok-4.7"
+expect = "grok-4.7"
+role = "flagship"
+batch = false                        # Grok 4.7 has no batch API
+image_detail = "high"
+cutoff = "2026-05"
+cutoff_source = "docs.x.ai/developers/grok-4-7: Knowledge cutoff May 2026"
+c1_route = "image"  # stage B1: reads an image-only PDF; no search call, no text tokens
+
+[grok-4-3]
+provider = "xai"
+id = "grok-4.3"                      # grok-4.20-0309-reasoning if it fails the smoke test
+expect = "grok-4.3"
+role = "ladder"
+batch = true
+image_detail = "high"
+cutoff = "2026-06-17"
+cutoff_source = "not stated; latest possible release date (x.ai/news/grok-amazon-bedrock, 2026-06-17)"
+c1_route = "image"  # stage B1: reads an image-only PDF; no search call, no text tokens
