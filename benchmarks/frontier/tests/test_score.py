@@ -550,17 +550,108 @@ def test_a_garbled_line_at_the_page_edge_absorbs_its_reading_but_not_a_readable_
                    {"text": "rule", **l1}, {"text": "y", **l2}, {"text": "ሺ2ሻ", **l2})  # fmt: skip
     counts = score_page(between, parse("(1) x foo bar baz y (2)"))
     assert counts["live_absent"] == 2 and counts["inserted"] == 3  # a readable line stays a miss
-    across = page({"text": "x", **l0}, {"text": "ሺ1ሻ", **l0}, {"text": "alpha", **l1},
-                  {"text": "y", **l2}, {"text": "ሺ2ሻ", **l2})  # fmt: skip
-    assert score_page(across, parse("y qqqq x"))["inserted"] == 1  # neighbours out of order
+    across = page({"text": "x", **l0}, {"text": "z", **l0}, {"text": "v", **l0},
+                  {"text": "ሺ1ሻ", **l0}, {"text": "alpha", **l1}, {"text": "y", **l2},
+                  {"text": "w", **l2}, {"text": "u", **l2}, {"text": "ሺ2ሻ", **l2})  # fmt: skip
+    assert score_page(across, parse("y w u qqqq x z v"))["inserted"] == 1  # neighbours out of order
 
 
 def test_the_out_of_order_passes_give_a_scored_word_its_own_token_first():
     furniture = {"text": "13", "furniture": True}  # a margin number near the struck "12"
     pg = page(("12", [[0, 2]]), "alpha", "beta", "gamma", furniture)
-    assert outcomes(pg, "alpha beta gamma ~~12~~")[0] == ("12", "marked")
+    assert outcomes(pg, "alpha ~~12~~ beta gamma")[0] == ("12", "marked")
     masked = page({"text": "fee", "masked": True}, "a", "b", "c", ("fee", [[0, 3]]))
     assert outcomes(masked, "a b ~~fee~~ c")[-1] == ("fee", "marked")
+
+
+# Deviation 5: what the test audit found in the scorer.
+
+
+def test_a_word_split_into_more_than_two_tokens_aligns_to_it():
+    pg = page("ERCl2", "×", "(aRELHCl/aRELCl2)", "Where:")
+    text = "ER<sub>Cl</sub>2 × (aREL<sub>HCl</sub>/aREL<sub>Cl</sub>2) Where:"
+    counts = score_page(pg, parse(text))
+    assert counts["live_live"] == counts["live"] == 3 and counts["inserted"] == 0
+    assert (counts["wer_num"], counts["cer_num"]) == (0, 0)
+    letter = page("the", ("Llist", [[0, 1]]), "of")  # "List" made "list": the L struck
+    assert outcomes(letter, "the ~~L~~ l ist of")[1:3] == [("L", "marked"), ("list", "live")]
+
+
+def test_a_token_gluing_more_than_two_words_aligns_to_them():
+    pg = page("stage", ("of", [[0, 2]]), ("technological", [[0, 13]]), ("development", [[0, 11]]))
+    assert outcomes(pg, "stage ~~oftechnologicaldevelopment~~") == [
+        ("stage", "live"), ("of", "marked"), ("technological", "marked"), ("development", "marked"),
+    ]  # fmt: skip
+
+
+def test_every_symbol_class_is_stripped_at_a_tokens_edges():
+    pg = page("7", "minutes", "max")
+    assert score_page(pg, parse("│ 7 minutes ┐ max ▼"))["inserted"] == 0
+    ticked = page("Plat", "✓")
+    counts = score_page(ticked, parse("Plat"))
+    assert counts["dropped"] == 1 and counts["live"] == counts["live_live"] == 1
+    assert score_page(page("90", "°F"), parse("90 ℉"))["live_live"] == 2
+
+
+def test_a_clean_copy_keeping_the_live_part_of_a_word_struck_in_part():
+    pg = page("successive", ("terms", [[0, 3]]), "of")
+    assert outcomes(pg, "successive ms of") == [
+        ("successive", "live"), ("ter", "absent"), ("ms", "live"), ("of", "live"),
+    ]  # fmt: skip
+    assert score_page(pg, parse("successive ms of"))["inserted"] == 0
+    agr = page("this", ("Agreement", [[3, 9]]), "for")
+    assert outcomes(agr, "this Agr for")[1:3] == [("Agr", "live"), ("eement", "absent")]
+
+
+def test_a_tie_goes_to_the_word_the_tokens_marks_agree_with():
+    # "breach of confidentiality or of the": the second "of" struck with the words before it
+    pg = page("breach", "of", ("confidentiality", [[0, 15]]), ("or", [[0, 2]]), ("of", [[0, 2]]),
+              "the")  # fmt: skip
+    assert outcomes(pg, "breach of the") == [
+        ("breach", "live"), ("of", "live"), ("confidentiality", "absent"), ("or", "absent"),
+        ("of", "absent"), ("the", "live"),
+    ]  # fmt: skip
+    assert outcomes(pg, "breach of ~~of~~ the")[1::3] == [("of", "live"), ("of", "marked")]
+    run = page("exceed", "300", "pages", ("or", [[0, 2]]), ("exceed", [[0, 6]]), ("300", [[0, 3]]),
+               ("pages", [[0, 5]]), "§")  # fmt: skip
+    got = outcomes(run, "exceed 300 pages §")
+    assert got[:3] == [("exceed", "live"), ("300", "live"), ("pages", "live")]
+    assert {o for _, o in got[3:7]} == {"absent"}
+
+
+def test_the_leftover_pass_ignores_a_models_own_summary_and_far_passages():
+    words = [f"w{i}" for i in range(12)]
+    pg = page(*words, ("and", [[0, 3]]), ("rules", [[0, 5]]))
+    summary = "Here is my reading of the page and of its rules, written up before I copy it out:"
+    counts = score_page(pg, parse(f"{summary} {' '.join(words)}"))
+    assert counts["struck_live"] == 0 and counts["struck_absent"] == 2
+    # a lone token takes the word left over near it, not the first in page order
+    far = page(("the", [[0, 3]]), *words * 9, "the", "x", "y")
+    got = outcomes(far, " ".join(words * 9) + " x the y")
+    assert got[0] == ("the", "absent") and got[-3] == ("the", "live")
+    # a passage typed out of order pairs wherever it lies: a footnote typed at the end
+    note = page("1", "See", "the", "rule", *words * 9)
+    counts = score_page(note, parse(" ".join(words * 9) + " 1 See the rule"))
+    assert counts["live_live"] == counts["live"] and counts["inserted"] == 0
+    # but two words a model's own text shares with a struck pair are no passage
+    pair = page(("of", [[0, 2]]), ("the", [[0, 3]]), *words * 9)
+    text = " ".join(words * 9) + " This is my copy of the page, as asked."
+    assert score_page(pair, parse(text))["struck_live"] == 0
+
+
+def test_a_masked_word_absorbs_one_token_however_far_its_reading():
+    # the text layer orders "(ii2)" where the page shows "(2ii)"
+    pg = page({"text": "(ii2)", "masked": True}, "From", "an")
+    counts = score_page(pg, parse("~~(2ii)~~ From an"))
+    assert counts["inserted"] == 0 and counts["live_live"] == 2
+
+
+def test_a_latex_accent_reads_as_the_combining_mark():
+    pg = page("c̄i", "=", "a")
+    counts = score_page(pg, parse(r"\(\bar{c}_{\mathrm{i}}\) = a"))
+    assert counts["inserted"] == 0 and counts["live_live"] == 2
+    text = answer({"text": r"\bar{x}", "verdict": "clean"})
+    assert outcomes(page("x̄"), text, json_answer=True) == [("x̄", "live")]
 
 
 def test_garbled_reads_only_wrong_glyphs():
