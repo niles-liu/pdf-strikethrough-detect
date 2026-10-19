@@ -37,10 +37,12 @@ script that produces every ruled-forms figure quoted in the README and CHANGELOG
 against a label set rather than counting detections, because **a struck-final count is not a
 false-positive count** — it includes the real strikes.
 
-[`frontier/`](frontier/) holds the plan for a benchmark against frontier models: can they do this
-package's job, finding struck text and keeping it out of the live text? Nothing there runs yet, and
-it has its own pinned environment; read [`frontier/PLAN.md`](frontier/PLAN.md), then the draft
-pre-registration, [`frontier/PREREG.md`](frontier/PREREG.md).
+[`frontier/`](frontier/) holds a pre-registered benchmark against frontier models: can they do this
+package's job, finding struck text and keeping it out of the live text? Its results are in
+[`frontier/RESULTS.md`](frontier/RESULTS.md); its rules in [`frontier/PREREG.md`](frontier/PREREG.md),
+the reasons in [`frontier/PLAN.md`](frontier/PLAN.md), and each change to a rule in
+[`frontier/DEVIATIONS.md`](frontier/DEVIATIONS.md); its prompts in [`frontier/prompts/`](frontier/prompts/).
+Its requests, responses, scores and labels are in the dataset above, under `frontier/`.
 
 ## Manifest schema
 

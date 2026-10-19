@@ -1,0 +1,3 @@
+# The frontier benchmark's files are pinned by sha256 (benchmarks/frontier/config/prereg*.json):
+# check them out byte for byte, with no line-ending conversion.
+benchmarks/frontier/** -text

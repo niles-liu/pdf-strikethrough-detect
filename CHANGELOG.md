@@ -7,19 +7,24 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **`benchmarks/frontier/PLAN.md` plans a benchmark against frontier models.** Can they do this
-  package's job, finding struck text and keeping it out of the live text? Nothing runs yet; the
-  protocol is to be pre-registered first. Its environment (`benchmarks/frontier/requirements.txt`)
-  pins the package to the 0.12.1 release and every dependency, so a later change to the package on
-  `main` cannot reach the results.
-- **`benchmarks/frontier/PREREG.md` drafts that benchmark's pre-registration.** It names the
-  models (Anthropic, Google, OpenAI and xAI, with open-weights vision models), fixes the decision
-  rules, the ground truth, the scoring and the audit, and adds a build guide for stages B1 to B3.
-  It binds only once tagged.
+- **`benchmarks/frontier/` holds a pre-registered benchmark against frontier models.** Can they do
+  this package's job, finding struck text and keeping it out of the live text? `PLAN.md` gives the
+  reasons and `PREREG.md` the binding protocol, tagged `prereg-1` (2026-10-16) and `prereg-2`
+  (2026-10-17), each a release here and a version on Zenodo, with what each tag fixed in
+  `config/prereg1.json` and `config/prereg2.json`. The benchmark ran in an environment pinning the
+  package to the 0.12.1 release and every dependency (the lock's sha256 is in
+  `config/prereg2.json`), so no later change on `main` reaches its results.
+- **`benchmarks/frontier/RESULTS.md` reports that benchmark's test run,** pre-registered as
+  `prereg-1` and `prereg-2`: the four primary endpoints, every arm on every set, the routes, the
+  audits and the limitations, with its tables in `benchmarks/frontier/results/`, every prompt
+  template it used in `benchmarks/frontier/prompts/`, and each change to a rule since `prereg-1` in
+  `benchmarks/frontier/DEVIATIONS.md`. A new `.gitattributes` checks `benchmarks/frontier/` out
+  byte for byte, so its files match the sha256s the pre-registration pins on every platform. The README gains the run's
+  summary, in the form the pre-registration fixed.
 
 ### Changed
 - **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub
-  Release with another tag, such as the ones that will timestamp the benchmark's pre-registration,
+  Release with another tag, such as the ones that timestamp the benchmark's pre-registration,
   builds and publishes nothing and asks for no approval. A version tag still has to match
   `__version__`. Releases are now immutable (a repository setting): a published release's tag
   cannot be moved.
