@@ -1,0 +1,3329 @@
+{
+  "provenance": {
+    "commit": "c29474f79207223d5e9c0407b54bd638a9e37cee",
+    "tags": [
+      "prereg-1",
+      "prereg-2"
+    ],
+    "changed_since_prereg_2": [
+      "bench/audit.py",
+      "bench/g1.py",
+      "bench/report.py",
+      "bench/score.py"
+    ]
+  },
+  "claims": [
+    {
+      "endpoint": 1,
+      "claim": "P-native leaks less than opus-5-5 R0, on C1 and C2",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "opus-5-5:R0:C1": [
+          -0.0024283632831471587,
+          -0.005284112870552478,
+          -0.0004952763288815601
+        ],
+        "opus-5-5:R0:C2": [
+          -0.0024283632831471587,
+          -0.005284112870552478,
+          -0.0004952763288815601
+        ]
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "opus-5-5:R0:C1": {},
+        "opus-5-5:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "opus-5-5",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "opus-5-5 R1 C2 is no worse than P-native, in every wording",
+      "set": "G2",
+      "p": 9.999000099990002e-05,
+      "struck": 2059,
+      "clusters": 44,
+      "ci": {
+        "wording 0": {
+          "leakage": [
+            -0.0024283632831471587,
+            -0.005284112870552478,
+            -0.0004952763288815601
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.0004927726675427069,
+            0.0,
+            0.0010719761817271941
+          ]
+        },
+        "wording 1": {
+          "leakage": [
+            -0.0014570179698882952,
+            -0.004432145242726076,
+            0.0009857681211367963
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.000657030223390276,
+            0.00015510849984913294,
+            0.001320275193379333
+          ]
+        },
+        "wording 2": {
+          "leakage": [
+            -0.0024283632831471587,
+            -0.005284112870552478,
+            -0.0004952763288815601
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "wording 3": {
+          "leakage": [
+            -0.0024283632831471587,
+            -0.005284112870552478,
+            -0.0004952763288815601
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.000164257555847569,
+            0.0,
+            0.0005652911249293386
+          ]
+        }
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 44,
+      "p_worst_case": 9.999000099990002e-05,
+      "p_without_failures": 9.999000099990002e-05,
+      "failures": {
+        "opus-5-5:R1:C2": {},
+        "opus-5-5:R1:C2:p1": {},
+        "opus-5-5:R1:C2:p2": {},
+        "opus-5-5:R1:C2:p3": {},
+        "opus-5-5:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "opus-5-5",
+      "split_versions": false,
+      "p_holm": 0.00039996000399960006,
+      "holds": true
+    },
+    {
+      "endpoint": 3,
+      "claim": "opus-5-5 R2 C2 F1 above P-scan",
+      "set": "G2",
+      "p": 9.999000099990002e-05,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "F1 model − P-scan": [
+          0.060847240051347895,
+          0.05270362765229297,
+          0.06981930389526915
+        ],
+        "P-native F1": 0.9987843423292001
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 9.999000099990002e-05,
+      "p_without_failures": 9.999000099990002e-05,
+      "failures": {
+        "opus-5-5:R2:C2": {},
+        "P-scan": {}
+      },
+      "model": "opus-5-5",
+      "split_versions": false,
+      "p_holm": 0.0007999200079992001,
+      "holds": true
+    },
+    {
+      "endpoint": 3,
+      "claim": "P-scan F1 above opus-5-5 R2 C2",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "F1 model − P-scan": [
+          0.060847240051347895,
+          0.05270362765229297,
+          0.06981930389526915
+        ],
+        "P-native F1": 0.9987843423292001
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "opus-5-5:R2:C2": {},
+        "P-scan": {}
+      },
+      "model": "opus-5-5",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "opus-5-5 R0 C1 leaks more than C2",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "opus-5-5:R0:C1": {},
+        "opus-5-5:R0:C2": {}
+      },
+      "by_construction": false,
+      "model": "opus-5-5",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "P-native leaks less than opus-5-5 R0, on C1 and C2",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "opus-5-5:R0:C1": {},
+        "opus-5-5:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "opus-5-5 R1 C2 is no worse than P-native, in every wording",
+      "set": "G2-strict",
+      "p": 0.015625,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.015625,
+      "p_without_failures": 0.015625,
+      "failures": {
+        "opus-5-5:R1:C2": {},
+        "opus-5-5:R1:C2:p1": {},
+        "opus-5-5:R1:C2:p2": {},
+        "opus-5-5:R1:C2:p3": {},
+        "opus-5-5:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "opus-5-5 R2 C2 F1 above P-scan",
+      "set": "G2-strict",
+      "p": 0.03125,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.03125,
+      "p_without_failures": 0.03125,
+      "failures": {
+        "opus-5-5:R2:C2": {},
+        "P-scan": {}
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "P-scan F1 above opus-5-5 R2 C2",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "opus-5-5:R2:C2": {},
+        "P-scan": {}
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "opus-5-5 R0 C1 leaks more than C2",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "opus-5-5:R0:C1": {},
+        "opus-5-5:R0:C2": {}
+      },
+      "by_construction": false,
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "opus-5-5:R0:C1": [
+          -0.17502054231717337,
+          -0.18858374463632954,
+          -0.16141722275818723
+        ],
+        "opus-5-5:R0:C2": [
+          -0.17556833744179676,
+          -0.18874681370186172,
+          -0.16287438043867292
+        ]
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "wording 0": {
+          "leakage": [
+            -0.17502054231717337,
+            -0.18800205181604562,
+            -0.16236106715905868
+          ],
+          "over_marked": [
+            -0.01132991637442676,
+            -0.01721422002783328,
+            -0.00614203036120221
+          ],
+          "over_absent_vs_r0": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "wording 1": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        },
+        "wording 2": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        },
+        "wording 3": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "F1 model − P-scan": [
+          0.17805223120818126,
+          0.1646505213686933,
+          0.19151640174142961
+        ]
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "C1 − C2 leakage": [
+          0.0005477951246233908,
+          -0.0014451076000361063,
+          0.00312234445529467
+        ]
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "opus-5-5:R0:C1": {
+          "pooled": 0.0002642706131078224,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.0,
+            "ceq-nepa-regs-redline": 0.0,
+            "ceq-nepa-regs-redline-proposed": 0.0,
+            "epa-40cfr63-subparteee-redline": 0.0,
+            "epa-lmdv-multipollutant-nprm-redline": 0.0005927682276229994,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.0
+          }
+        },
+        "opus-5-5:R0:C2": {
+          "pooled": -0.0002642706131078224,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.0,
+            "ceq-nepa-regs-redline": -0.0016366612111292963,
+            "ceq-nepa-regs-redline-proposed": 0.0,
+            "epa-40cfr63-subparteee-redline": 0.0,
+            "epa-lmdv-multipollutant-nprm-redline": 0.0,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.0
+          }
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "wording 0": {
+          "leakage": {
+            "pooled": 0.021141649048625793,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.1326530612244898,
+              "ceq-nepa-regs-redline": 0.0032733224222585926,
+              "ceq-nepa-regs-redline-proposed": 0.0,
+              "epa-40cfr63-subparteee-redline": 0.0,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": null,
+              "gretna-udo-edits": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 4.1271151465125874e-05,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.000273000273000273,
+              "ceq-nepa-regs-redline": 0.0,
+              "ceq-nepa-regs-redline-proposed": 0.0,
+              "epa-40cfr63-subparteee-redline": 0.0,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": 0.0,
+              "gretna-udo-edits": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.00012381345439537762,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.0,
+              "ceq-nepa-regs-redline": 0.000292654375182909,
+              "ceq-nepa-regs-redline-proposed": 0.0,
+              "epa-40cfr63-subparteee-redline": 0.0006146281499692685,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": 0.0,
+              "gretna-udo-edits": 0.0
+            }
+          }
+        },
+        "wording 1": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        },
+        "wording 2": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        },
+        "wording 3": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "F1 model − P-scan": {
+          "pooled": 0.03848286047910221,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.0491942804842298,
+            "ceq-nepa-regs-redline": 0.07545928920614597,
+            "ceq-nepa-regs-redline-proposed": 0.048101265822784844,
+            "epa-40cfr63-subparteee-redline": 0.10169491525423724,
+            "epa-lmdv-multipollutant-nprm-redline": 0.009865470852017943,
+            "fdic-fair-lending-redline": 0.0,
+            "gretna-udo-edits": 0.5625
+          }
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "C1 − C2 leakage": {
+          "pooled": 0.0005285412262156448,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.0,
+            "ceq-nepa-regs-redline": 0.0016366612111292963,
+            "ceq-nepa-regs-redline-proposed": 0.0,
+            "epa-40cfr63-subparteee-redline": 0.0,
+            "epa-lmdv-multipollutant-nprm-redline": 0.0005927682276229994,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.0
+          }
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "opus-5-5:R0:C1": {
+          "pooled": -0.0055248618784530384,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": -0.05555555555555555,
+            "s4974": 0.0,
+            "s5026": 0.0,
+            "s5163": 0.0,
+            "s5249": 0.0
+          }
+        },
+        "opus-5-5:R0:C2": {
+          "pooled": -0.0055248618784530384,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": -0.05555555555555555,
+            "s4974": 0.0,
+            "s5026": 0.0,
+            "s5163": 0.0,
+            "s5249": 0.0
+          }
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "wording 0": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0005443658138268917,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0028653295128939827,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 1": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0005443658138268917,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0028653295128939827,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 2": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 3": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "F1 model − P-scan": {
+          "pooled": 0.0801186943620178,
+          "per_cluster": {
+            "s4949": 0.1145038167938931,
+            "s4965": 0.05882352941176472,
+            "s4974": 0.10344827586206895,
+            "s5026": 0.03448275862068961,
+            "s5163": 0.0,
+            "s5249": 0.07462686567164178
+          }
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "opus-5-5: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "C1 − C2 leakage": {
+          "pooled": 0.0,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": 0.0,
+            "s4974": 0.0,
+            "s5026": 0.0,
+            "s5163": 0.0,
+            "s5249": 0.0
+          }
+        }
+      },
+      "model": "opus-5-5",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "P-native leaks less than gemini-4-argon R0, on C1 and C2",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "gemini-4-argon:R0:C1": [
+          -0.0024283632831471587,
+          -0.005284112870552478,
+          -0.0004952763288815601
+        ],
+        "gemini-4-argon:R0:C2": [
+          0.25012141816415734,
+          0.07225466383019356,
+          0.44523297811137136
+        ]
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gemini-4-argon:R0:C1": {},
+        "gemini-4-argon:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gemini-4-argon R1 C2 is no worse than P-native, in every wording",
+      "set": "G2",
+      "p": 0.9999000099990001,
+      "struck": 2059,
+      "clusters": 44,
+      "ci": {
+        "wording 0": {
+          "leakage": [
+            0.02428363283147159,
+            0.009463675759774796,
+            0.045117881636319815
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.0021353482260183967,
+            -0.000867688373704507,
+            0.00800008279287981
+          ]
+        },
+        "wording 1": {
+          "leakage": [
+            0.03351141330743079,
+            0.014326647564469915,
+            0.05829319007603841
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.08869908015768725,
+            0.02065646155609301,
+            0.1730057901469828
+          ]
+        },
+        "wording 2": {
+          "leakage": [
+            0.007285089849441476,
+            0.000646830530401035,
+            0.014047489310948739
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            -0.000328515111695138,
+            -0.001046974294230961,
+            0.0
+          ]
+        },
+        "wording 3": {
+          "leakage": [
+            0.05828071879553181,
+            0.02417145649795216,
+            0.1074300198632705
+          ],
+          "over_marked": [
+            0.000164257555847569,
+            0.0,
+            0.0005165311493538007
+          ],
+          "over_absent_vs_r0": [
+            0.09954007884362681,
+            0.05112423483036591,
+            0.16066125357052025
+          ]
+        }
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 44,
+      "p_worst_case": 0.9999000099990001,
+      "p_without_failures": 0.9999000099990001,
+      "failures": {
+        "gemini-4-argon:R1:C2": {},
+        "gemini-4-argon:R1:C2:p1": {},
+        "gemini-4-argon:R1:C2:p2": {},
+        "gemini-4-argon:R1:C2:p3": {},
+        "gemini-4-argon:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gemini-4-argon R5 C2-tiled F1 above P-scan",
+      "set": "G2",
+      "p": 9.999000099990002e-05,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "F1 model − P-scan": [
+          0.05987495030900469,
+          0.05175528435767227,
+          0.06871419985385684
+        ],
+        "P-native F1": 0.9987843423292001
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 9.999000099990002e-05,
+      "p_without_failures": 9.999000099990002e-05,
+      "failures": {
+        "gemini-4-argon:R5:C2-tiled": {},
+        "P-scan": {}
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false,
+      "p_holm": 0.0007999200079992001,
+      "holds": true
+    },
+    {
+      "endpoint": 3,
+      "claim": "P-scan F1 above gemini-4-argon R5 C2-tiled",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "F1 model − P-scan": [
+          0.05987495030900469,
+          0.05175528435767227,
+          0.06871419985385684
+        ],
+        "P-native F1": 0.9987843423292001
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gemini-4-argon:R5:C2-tiled": {},
+        "P-scan": {}
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gemini-4-argon R0 C1 leaks more than C2",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": [
+        -0.2525497814473045,
+        -0.4473097141414143,
+        -0.07572250861493998
+      ],
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gemini-4-argon:R0:C1": {},
+        "gemini-4-argon:R0:C2": {}
+      },
+      "by_construction": false,
+      "model": "gemini-4-argon",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "P-native leaks less than gemini-4-argon R0, on C1 and C2",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gemini-4-argon:R0:C1": {},
+        "gemini-4-argon:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gemini-4-argon R1 C2 is no worse than P-native, in every wording",
+      "set": "G2-strict",
+      "p": 0.890625,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.890625,
+      "p_without_failures": 0.890625,
+      "failures": {
+        "gemini-4-argon:R1:C2": {},
+        "gemini-4-argon:R1:C2:p1": {},
+        "gemini-4-argon:R1:C2:p2": {},
+        "gemini-4-argon:R1:C2:p3": {},
+        "gemini-4-argon:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gemini-4-argon R5 C2-tiled F1 above P-scan",
+      "set": "G2-strict",
+      "p": 0.03125,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.03125,
+      "p_without_failures": 0.03125,
+      "failures": {
+        "gemini-4-argon:R5:C2-tiled": {},
+        "P-scan": {}
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "P-scan F1 above gemini-4-argon R5 C2-tiled",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gemini-4-argon:R5:C2-tiled": {},
+        "P-scan": {}
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gemini-4-argon R0 C1 leaks more than C2",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gemini-4-argon:R0:C1": {},
+        "gemini-4-argon:R0:C2": {}
+      },
+      "by_construction": false,
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "gemini-4-argon:R0:C1": [
+          0.11038071761161326,
+          0.006127878081805534,
+          0.22507090774224528
+        ],
+        "gemini-4-argon:R0:C2": [
+          0.33360723089564503,
+          0.1924232847216718,
+          0.47508483516691297
+        ]
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "wording 0": {
+          "leakage": [
+            -0.15694330320460148,
+            -0.17119419205582195,
+            -0.1419786654410321
+          ],
+          "over_marked": [
+            -0.012274076072295657,
+            -0.01834944604556602,
+            -0.006818633962969852
+          ],
+          "over_absent_vs_r0": [
+            0.018208794173185865,
+            0.014111692203133148,
+            0.022385199590505285
+          ]
+        },
+        "wording 1": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        },
+        "wording 2": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        },
+        "wording 3": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "F1 model − P-scan": [
+          0.1750557126714395,
+          0.1615874060016208,
+          0.1883702251071051
+        ]
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "C1 − C2 leakage": [
+          -0.22322651328403179,
+          -0.3917373196856119,
+          -0.05325774381175426
+        ]
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "gemini-4-argon:R0:C1": {
+          "pooled": 0.030391120507399578,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.0,
+            "ceq-nepa-regs-redline": 0.008183306055646482,
+            "ceq-nepa-regs-redline-proposed": 0.0012285012285012285,
+            "epa-40cfr63-subparteee-redline": 0.016129032258064516,
+            "epa-lmdv-multipollutant-nprm-redline": 0.06401896858328393,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.0
+          }
+        },
+        "gemini-4-argon:R0:C2": {
+          "pooled": 0.20243128964059195,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.0017006802721088435,
+            "ceq-nepa-regs-redline": -0.0016366612111292963,
+            "ceq-nepa-regs-redline-proposed": 0.05773955773955774,
+            "epa-40cfr63-subparteee-redline": 0.0,
+            "epa-lmdv-multipollutant-nprm-redline": 0.42620035566093656,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.0
+          }
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "wording 0": {
+          "leakage": {
+            "pooled": 0.0029069767441860465,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.006802721088435374,
+              "ceq-nepa-regs-redline": 0.0032733224222585926,
+              "ceq-nepa-regs-redline-proposed": 0.004914004914004914,
+              "epa-40cfr63-subparteee-redline": 0.0,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0005927682276229994,
+              "fdic-fair-lending-redline": null,
+              "gretna-udo-edits": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.0,
+              "ceq-nepa-regs-redline": 0.0,
+              "ceq-nepa-regs-redline-proposed": 0.0,
+              "epa-40cfr63-subparteee-redline": 0.0,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": 0.0,
+              "gretna-udo-edits": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.000330169211721007,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.000273000273000273,
+              "ceq-nepa-regs-redline": 0.000292654375182909,
+              "ceq-nepa-regs-redline-proposed": 0.0007002801120448179,
+              "epa-40cfr63-subparteee-redline": 0.001229256299938537,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": 0.0,
+              "gretna-udo-edits": 0.0
+            }
+          }
+        },
+        "wording 1": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        },
+        "wording 2": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        },
+        "wording 3": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "F1 model − P-scan": {
+          "pooled": 0.037295369181163496,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.0491942804842298,
+            "ceq-nepa-regs-redline": 0.07464430309704218,
+            "ceq-nepa-regs-redline-proposed": 0.04442929519854988,
+            "epa-40cfr63-subparteee-redline": 0.10169491525423724,
+            "epa-lmdv-multipollutant-nprm-redline": 0.009272702624394946,
+            "fdic-fair-lending-redline": 0.0,
+            "gretna-udo-edits": 0.5625
+          }
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "C1 − C2 leakage": {
+          "pooled": -0.1720401691331924,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": -0.0017006802721088435,
+            "ceq-nepa-regs-redline": 0.009819967266775777,
+            "ceq-nepa-regs-redline-proposed": -0.056511056511056514,
+            "epa-40cfr63-subparteee-redline": 0.016129032258064516,
+            "epa-lmdv-multipollutant-nprm-redline": -0.36218138707765263,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.0
+          }
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "gemini-4-argon:R0:C1": {
+          "pooled": -0.0055248618784530384,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": -0.05555555555555555,
+            "s4974": 0.0,
+            "s5026": 0.0,
+            "s5163": 0.0,
+            "s5249": 0.0
+          }
+        },
+        "gemini-4-argon:R0:C2": {
+          "pooled": 0.24861878453038674,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": -0.05555555555555555,
+            "s4974": 1.0,
+            "s5026": 1.0,
+            "s5163": 0.0,
+            "s5249": 0.0
+          }
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "wording 0": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": -0.0010887316276537834,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": -0.007194244604316547,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 1": {
+          "leakage": {
+            "pooled": 0.0718232044198895,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.4
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.1502449646162221,
+            "per_cluster": {
+              "s4949": 0.49523809523809526,
+              "s4965": 0.0,
+              "s4974": 0.4316546762589928,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 2": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": -0.0010887316276537834,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": -0.007194244604316547,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 3": {
+          "leakage": {
+            "pooled": 0.07734806629834254,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.2,
+              "s5163": 0.0,
+              "s5249": 0.2571428571428571
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0005443658138268917,
+            "per_cluster": {
+              "s4949": 0.0031746031746031746,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.051714752313554706,
+            "per_cluster": {
+              "s4949": 0.009523809523809525,
+              "s4965": 0.0,
+              "s4974": 0.0683453237410072,
+              "s5026": 0.12034383954154727,
+              "s5163": 0.0,
+              "s5249": 0.11923076923076924
+            }
+          }
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "F1 model − P-scan": {
+          "pooled": 0.0801186943620178,
+          "per_cluster": {
+            "s4949": 0.1145038167938931,
+            "s4965": 0.05882352941176472,
+            "s4974": 0.10344827586206895,
+            "s5026": 0.03448275862068961,
+            "s5163": 0.0,
+            "s5249": 0.07462686567164178
+          }
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gemini-4-argon: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "C1 − C2 leakage": {
+          "pooled": -0.2541436464088398,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": 0.0,
+            "s4974": -1.0,
+            "s5026": -1.0,
+            "s5163": 0.0,
+            "s5249": 0.0
+          }
+        }
+      },
+      "model": "gemini-4-argon",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "P-native leaks less than gpt-6-astra R0, on C1 and C2",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "gpt-6-astra:R0:C1": [
+          0.32782904322486645,
+          0.20454458576591605,
+          0.5216937128656128
+        ],
+        "gpt-6-astra:R0:C2": [
+          -0.0024283632831471587,
+          -0.005284112870552478,
+          -0.0004952763288815601
+        ]
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gpt-6-astra:R0:C1": {},
+        "gpt-6-astra:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gpt-6-astra R1 C2 is no worse than P-native, in every wording",
+      "set": "G2",
+      "p": 9.999000099990002e-05,
+      "struck": 2059,
+      "clusters": 44,
+      "ci": {
+        "wording 0": {
+          "leakage": [
+            -0.0024283632831471587,
+            -0.005284112870552478,
+            -0.0004952763288815601
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "wording 1": {
+          "leakage": [
+            -0.001942690626517727,
+            -0.0048543689320388345,
+            0.0
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.000164257555847569,
+            0.0,
+            0.0005375477140945142
+          ]
+        },
+        "wording 2": {
+          "leakage": [
+            -0.0024283632831471587,
+            -0.005284112870552478,
+            -0.0004952763288815601
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.000164257555847569,
+            0.0,
+            0.0005375477140945142
+          ]
+        },
+        "wording 3": {
+          "leakage": [
+            -0.0024283632831471587,
+            -0.005284112870552478,
+            -0.0004952763288815601
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 44,
+      "p_worst_case": 9.999000099990002e-05,
+      "p_without_failures": 9.999000099990002e-05,
+      "failures": {
+        "gpt-6-astra:R1:C2": {},
+        "gpt-6-astra:R1:C2:p1": {},
+        "gpt-6-astra:R1:C2:p2": {},
+        "gpt-6-astra:R1:C2:p3": {},
+        "gpt-6-astra:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false,
+      "p_holm": 0.00039996000399960006,
+      "holds": true
+    },
+    {
+      "endpoint": 3,
+      "claim": "gpt-6-astra R2 C2-tiled F1 above P-scan",
+      "set": "G2",
+      "p": 9.999000099990002e-05,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "F1 model − P-scan": [
+          0.060847240051347895,
+          0.05270362765229297,
+          0.06981930389526915
+        ],
+        "P-native F1": 0.9987843423292001
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 9.999000099990002e-05,
+      "p_without_failures": 9.999000099990002e-05,
+      "failures": {
+        "gpt-6-astra:R2:C2-tiled": {},
+        "P-scan": {}
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false,
+      "p_holm": 0.0007999200079992001,
+      "holds": true
+    },
+    {
+      "endpoint": 3,
+      "claim": "P-scan F1 above gpt-6-astra R2 C2-tiled",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "F1 model − P-scan": [
+          0.060847240051347895,
+          0.05270362765229297,
+          0.06981930389526915
+        ],
+        "P-native F1": 0.9987843423292001
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gpt-6-astra:R2:C2-tiled": {},
+        "P-scan": {}
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gpt-6-astra R0 C1 leaks more than C2",
+      "set": "G2",
+      "p": 9.999000099990002e-05,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": [
+        0.3302574065080136,
+        0.2055834299700139,
+        0.5259323793172118
+      ],
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 9.999000099990002e-05,
+      "p_without_failures": 9.999000099990002e-05,
+      "failures": {
+        "gpt-6-astra:R0:C1": {},
+        "gpt-6-astra:R0:C2": {}
+      },
+      "by_construction": false,
+      "model": "gpt-6-astra",
+      "split_versions": false,
+      "p_holm": 0.00039996000399960006,
+      "holds": true
+    },
+    {
+      "endpoint": 1,
+      "claim": "P-native leaks less than gpt-6-astra R0, on C1 and C2",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gpt-6-astra:R0:C1": {},
+        "gpt-6-astra:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gpt-6-astra R1 C2 is no worse than P-native, in every wording",
+      "set": "G2-strict",
+      "p": 0.015625,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.015625,
+      "p_without_failures": 0.015625,
+      "failures": {
+        "gpt-6-astra:R1:C2": {},
+        "gpt-6-astra:R1:C2:p1": {},
+        "gpt-6-astra:R1:C2:p2": {},
+        "gpt-6-astra:R1:C2:p3": {},
+        "gpt-6-astra:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gpt-6-astra R2 C2-tiled F1 above P-scan",
+      "set": "G2-strict",
+      "p": 0.03125,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.03125,
+      "p_without_failures": 0.03125,
+      "failures": {
+        "gpt-6-astra:R2:C2-tiled": {},
+        "P-scan": {}
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "P-scan F1 above gpt-6-astra R2 C2-tiled",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "gpt-6-astra:R2:C2-tiled": {},
+        "P-scan": {}
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gpt-6-astra R0 C1 leaks more than C2",
+      "set": "G2-strict",
+      "p": 0.03125,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.03125,
+      "p_without_failures": 0.03125,
+      "failures": {
+        "gpt-6-astra:R0:C1": {},
+        "gpt-6-astra:R0:C2": {}
+      },
+      "by_construction": false,
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "gpt-6-astra:R0:C1": [
+          0.27882771843330595,
+          0.14344188476614017,
+          0.4149196780238295
+        ],
+        "gpt-6-astra:R0:C2": [
+          -0.16680361544782252,
+          -0.18011091952000563,
+          -0.1536314698810428
+        ]
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "wording 0": {
+          "leakage": [
+            -0.16324294713777046,
+            -0.17722987088522701,
+            -0.14918655954294832
+          ],
+          "over_marked": [
+            -0.001348799568384138,
+            -0.008391924441067445,
+            0.00517642125556552
+          ],
+          "over_absent_vs_r0": [
+            0.008429997302400863,
+            0.005535243527446836,
+            0.01157227682841236
+          ]
+        },
+        "wording 1": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        },
+        "wording 2": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        },
+        "wording 3": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "F1 model − P-scan": [
+          0.14003155777569032,
+          0.1202473204749193,
+          0.1577162936917097
+        ]
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "C1 − C2 leakage": [
+          0.44563133388112847,
+          0.31341643168418354,
+          0.5783201493953617
+        ]
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "gpt-6-astra:R0:C1": {
+          "pooled": 0.35993657505285415,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.023809523809523808,
+            "ceq-nepa-regs-redline": 0.3993453355155483,
+            "ceq-nepa-regs-redline-proposed": 0.6326781326781327,
+            "epa-40cfr63-subparteee-redline": 0.9838709677419355,
+            "epa-lmdv-multipollutant-nprm-redline": 0.3070539419087137,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.45454545454545453
+          }
+        },
+        "gpt-6-astra:R0:C2": {
+          "pooled": 0.0018498942917547568,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.0,
+            "ceq-nepa-regs-redline": 0.0016366612111292963,
+            "ceq-nepa-regs-redline-proposed": 0.007371007371007371,
+            "epa-40cfr63-subparteee-redline": 0.0,
+            "epa-lmdv-multipollutant-nprm-redline": 0.0,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.0
+          }
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "wording 0": {
+          "leakage": {
+            "pooled": 0.0018498942917547568,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.0,
+              "ceq-nepa-regs-redline": 0.0016366612111292963,
+              "ceq-nepa-regs-redline-proposed": 0.007371007371007371,
+              "epa-40cfr63-subparteee-redline": 0.0,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": null,
+              "gretna-udo-edits": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 4.1271151465125874e-05,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.000273000273000273,
+              "ceq-nepa-regs-redline": 0.0,
+              "ceq-nepa-regs-redline-proposed": 0.0,
+              "epa-40cfr63-subparteee-redline": 0.0,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": 0.0,
+              "gretna-udo-edits": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0001650846058605035,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.0,
+              "ceq-nepa-regs-redline": 0.0,
+              "ceq-nepa-regs-redline-proposed": 0.0007002801120448179,
+              "epa-40cfr63-subparteee-redline": 0.0006146281499692685,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": 0.0,
+              "gretna-udo-edits": 0.0
+            }
+          }
+        },
+        "wording 1": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        },
+        "wording 2": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        },
+        "wording 3": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "F1 model − P-scan": {
+          "pooled": 0.03848286047910221,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.04834321788416862,
+            "ceq-nepa-regs-redline": 0.07627829002514674,
+            "ceq-nepa-regs-redline-proposed": 0.048101265822784844,
+            "epa-40cfr63-subparteee-redline": 0.10169491525423724,
+            "epa-lmdv-multipollutant-nprm-redline": 0.009865470852017943,
+            "fdic-fair-lending-redline": 0.0,
+            "gretna-udo-edits": 0.5625
+          }
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "C1 − C2 leakage": {
+          "pooled": 0.35808668076109934,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.023809523809523808,
+            "ceq-nepa-regs-redline": 0.397708674304419,
+            "ceq-nepa-regs-redline-proposed": 0.6253071253071253,
+            "epa-40cfr63-subparteee-redline": 0.9838709677419355,
+            "epa-lmdv-multipollutant-nprm-redline": 0.3070539419087137,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.45454545454545453
+          }
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "gpt-6-astra:R0:C1": {
+          "pooled": 0.5911602209944752,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": 0.9444444444444444,
+            "s4974": 1.0,
+            "s5026": 1.0,
+            "s5163": 1.0,
+            "s5249": 1.0
+          }
+        },
+        "gpt-6-astra:R0:C2": {
+          "pooled": -0.0055248618784530384,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": -0.05555555555555555,
+            "s4974": 0.0,
+            "s5026": 0.0,
+            "s5163": 0.0,
+            "s5249": 0.0
+          }
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "wording 0": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 1": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 2": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 3": {
+          "leakage": {
+            "pooled": -0.0055248618784530384,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": -0.05555555555555555,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "F1 model − P-scan": {
+          "pooled": 0.0801186943620178,
+          "per_cluster": {
+            "s4949": 0.1145038167938931,
+            "s4965": 0.05882352941176472,
+            "s4974": 0.10344827586206895,
+            "s5026": 0.03448275862068961,
+            "s5163": 0.0,
+            "s5249": 0.07462686567164178
+          }
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "gpt-6-astra: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "C1 − C2 leakage": {
+          "pooled": 0.5966850828729282,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": 1.0,
+            "s4974": 1.0,
+            "s5026": 1.0,
+            "s5163": 1.0,
+            "s5249": 1.0
+          }
+        }
+      },
+      "model": "gpt-6-astra",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "P-native leaks less than grok-4-7 R0, on C1 and C2",
+      "set": "G2",
+      "p": 9.999000099990002e-05,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "grok-4-7:R0:C1": [
+          0.9902865468674114,
+          0.9784352632244065,
+          0.9969732223826597
+        ],
+        "grok-4-7:R0:C2": [
+          0.9917435648372996,
+          0.9803687397966528,
+          0.9980806602098258
+        ]
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 9.999000099990002e-05,
+      "p_without_failures": 9.999000099990002e-05,
+      "failures": {
+        "grok-4-7:R0:C1": {},
+        "grok-4-7:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "grok-4-7",
+      "split_versions": false,
+      "p_holm": 0.00039996000399960006,
+      "holds": true
+    },
+    {
+      "endpoint": 2,
+      "claim": "grok-4-7 R1 C2 is no worse than P-native, in every wording",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 44,
+      "ci": {
+        "wording 0": {
+          "leakage": [
+            0.9441476444876153,
+            0.861357167153406,
+            0.9916231938766742
+          ],
+          "over_marked": [
+            0.005256241787122208,
+            0.0,
+            0.01749285086556837
+          ],
+          "over_absent_vs_r0": [
+            0.000164257555847569,
+            0.0,
+            0.0005375477140945142
+          ]
+        },
+        "wording 1": {
+          "leakage": [
+            0.9349198640116562,
+            0.8339862373364264,
+            0.9924067491002909
+          ],
+          "over_marked": [
+            0.004434954007884363,
+            0.0,
+            0.013480800218329201
+          ],
+          "over_absent_vs_r0": [
+            0.000164257555847569,
+            0.0,
+            0.0005375477140945142
+          ]
+        },
+        "wording 2": {
+          "leakage": [
+            0.9417192812044682,
+            0.8770035836402322,
+            0.9830629389046257
+          ],
+          "over_marked": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "over_absent_vs_r0": [
+            0.0009855453350854138,
+            0.0,
+            0.00281877261118237
+          ]
+        },
+        "wording 3": {
+          "leakage": [
+            0.9271491015055853,
+            0.8567349520508054,
+            0.9755011408661416
+          ],
+          "over_marked": [
+            0.0008212877792378449,
+            0.0,
+            0.002630240786265279
+          ],
+          "over_absent_vs_r0": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 44,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "grok-4-7:R1:C2": {},
+        "grok-4-7:R1:C2:p1": {},
+        "grok-4-7:R1:C2:p2": {},
+        "grok-4-7:R1:C2:p3": {},
+        "grok-4-7:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "grok-4-7",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "grok-4-7 R2 C2 F1 above P-scan",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "F1 model − P-scan": [
+          -0.7426462097303115,
+          -0.8998736677773261,
+          -0.5629653774214788
+        ],
+        "P-native F1": 0.9987843423292001
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "grok-4-7:R2:C2": {},
+        "P-scan": {}
+      },
+      "model": "grok-4-7",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "P-scan F1 above grok-4-7 R2 C2",
+      "set": "G2",
+      "p": 9.999000099990002e-05,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": {
+        "F1 model − P-scan": [
+          -0.7426462097303115,
+          -0.8998736677773261,
+          -0.5629653774214788
+        ],
+        "P-native F1": 0.9987843423292001
+      },
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 9.999000099990002e-05,
+      "p_without_failures": 9.999000099990002e-05,
+      "failures": {
+        "grok-4-7:R2:C2": {},
+        "P-scan": {}
+      },
+      "model": "grok-4-7",
+      "split_versions": false,
+      "p_holm": 0.0007999200079992001,
+      "holds": true
+    },
+    {
+      "endpoint": 4,
+      "claim": "grok-4-7 R0 C1 leaks more than C2",
+      "set": "G2",
+      "p": 1.0,
+      "struck": 2059,
+      "clusters": 45,
+      "ci": [
+        -0.0014570179698882952,
+        -0.003573297282754068,
+        0.0
+      ],
+      "insufficient": false,
+      "struck_without_failures": 2059,
+      "clusters_without_failures": 45,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "grok-4-7:R0:C1": {},
+        "grok-4-7:R0:C2": {}
+      },
+      "by_construction": false,
+      "model": "grok-4-7",
+      "split_versions": false,
+      "p_holm": 1.0,
+      "holds": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "P-native leaks less than grok-4-7 R0, on C1 and C2",
+      "set": "G2-strict",
+      "p": 0.015625,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.015625,
+      "p_without_failures": 0.015625,
+      "failures": {
+        "grok-4-7:R0:C1": {},
+        "grok-4-7:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "grok-4-7 R1 C2 is no worse than P-native, in every wording",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "grok-4-7:R1:C2": {},
+        "grok-4-7:R1:C2:p1": {},
+        "grok-4-7:R1:C2:p2": {},
+        "grok-4-7:R1:C2:p3": {},
+        "grok-4-7:R0:C2": {},
+        "P-native": {}
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "grok-4-7 R2 C2 F1 above P-scan",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "grok-4-7:R2:C2": {},
+        "P-scan": {}
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "P-scan F1 above grok-4-7 R2 C2",
+      "set": "G2-strict",
+      "p": 0.015625,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 0.015625,
+      "p_without_failures": 0.015625,
+      "failures": {
+        "grok-4-7:R2:C2": {},
+        "P-scan": {}
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "grok-4-7 R0 C1 leaks more than C2",
+      "set": "G2-strict",
+      "p": 1.0,
+      "struck": 181,
+      "clusters": 6,
+      "ci": null,
+      "insufficient": true,
+      "struck_without_failures": 181,
+      "clusters_without_failures": 6,
+      "p_worst_case": 1.0,
+      "p_without_failures": 1.0,
+      "failures": {
+        "grok-4-7:R0:C1": {},
+        "grok-4-7:R0:C2": {}
+      },
+      "by_construction": false,
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "grok-4-7:R0:C1": [
+          0.3182689674061901,
+          0.24781893153881615,
+          0.3921978468639427
+        ],
+        "grok-4-7:R0:C2": [
+          0.4491920021911805,
+          0.3958141630138162,
+          0.5068373961685568
+        ]
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "wording 0": {
+          "leakage": [
+            0.45220487537660914,
+            0.3943585030415234,
+            0.5101777012139996
+          ],
+          "over_marked": [
+            -0.0008767197194496898,
+            -0.007780707295319593,
+            0.005740071740700026
+          ],
+          "over_absent_vs_r0": [
+            0.0074858376045319665,
+            0.003501746447462374,
+            0.01244174720226552
+          ]
+        },
+        "wording 1": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        },
+        "wording 2": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        },
+        "wording 3": {
+          "leakage": [
+            null,
+            null,
+            null
+          ],
+          "over_marked": [
+            null,
+            null,
+            null
+          ],
+          "over_absent_vs_r0": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "F1 model − P-scan": [
+          -0.18753453264519548,
+          -0.21578722063347258,
+          -0.15972576403022817
+        ]
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G0",
+      "ci": {
+        "C1 − C2 leakage": [
+          -0.13092303478499043,
+          -0.21252521621726203,
+          -0.051142790931187475
+        ]
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "grok-4-7:R0:C1": {
+          "pooled": 0.5132135306553911,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.2602040816326531,
+            "ceq-nepa-regs-redline": 0.24549918166939444,
+            "ceq-nepa-regs-redline-proposed": 0.29238329238329236,
+            "epa-40cfr63-subparteee-redline": 0.9354838709677419,
+            "epa-lmdv-multipollutant-nprm-redline": 0.7949021932424422,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.09090909090909091
+          }
+        },
+        "grok-4-7:R0:C2": {
+          "pooled": 0.9030126849894292,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": 0.7329931972789115,
+            "ceq-nepa-regs-redline": 0.8363338788870703,
+            "ceq-nepa-regs-redline-proposed": 0.9508599508599509,
+            "epa-40cfr63-subparteee-redline": 0.967741935483871,
+            "epa-lmdv-multipollutant-nprm-redline": 0.971547125074096,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.09090909090909091
+          }
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "wording 0": {
+          "leakage": {
+            "pooled": 0.686046511627907,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.39625850340136054,
+              "ceq-nepa-regs-redline": 0.5400981996726678,
+              "ceq-nepa-regs-redline-proposed": 0.699017199017199,
+              "epa-40cfr63-subparteee-redline": 0.8064516129032258,
+              "epa-lmdv-multipollutant-nprm-redline": 0.8369887374036752,
+              "fdic-fair-lending-redline": null,
+              "gretna-udo-edits": 0.09090909090909091
+            }
+          },
+          "over_marked": {
+            "pooled": 0.020057779612051175,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.06115206115206115,
+              "ceq-nepa-regs-redline": 0.027509511267193445,
+              "ceq-nepa-regs-redline-proposed": 0.037815126050420166,
+              "epa-40cfr63-subparteee-redline": 0.0,
+              "epa-lmdv-multipollutant-nprm-redline": 0.011931394481730051,
+              "fdic-fair-lending-redline": 0.0,
+              "gretna-udo-edits": 0.0025
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0027651671481634336,
+            "per_cluster": {
+              "ccpa-mod-redline-2020": 0.017745017745017744,
+              "ceq-nepa-regs-redline": 0.001170617500731636,
+              "ceq-nepa-regs-redline-proposed": 0.0,
+              "epa-40cfr63-subparteee-redline": -0.00030731407498463427,
+              "epa-lmdv-multipollutant-nprm-redline": 0.0,
+              "fdic-fair-lending-redline": -0.0004510599909788002,
+              "gretna-udo-edits": 0.0
+            }
+          }
+        },
+        "wording 1": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        },
+        "wording 2": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        },
+        "wording 3": {
+          "leakage": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_marked": {
+            "pooled": null,
+            "per_cluster": {}
+          },
+          "over_absent_vs_r0": {
+            "pooled": null,
+            "per_cluster": {}
+          }
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "F1 model − P-scan": {
+          "pooled": -0.5953834442148358,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": -0.4063319407698971,
+            "ceq-nepa-regs-redline": -0.28491019651152916,
+            "ceq-nepa-regs-redline-proposed": -0.5961893916166615,
+            "epa-40cfr63-subparteee-redline": -0.6049717514124294,
+            "epa-lmdv-multipollutant-nprm-redline": -0.8940200097205792,
+            "fdic-fair-lending-redline": 0.0,
+            "gretna-udo-edits": -0.14784482758620687
+          }
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G1",
+      "by_cluster": {
+        "C1 − C2 leakage": {
+          "pooled": -0.38979915433403806,
+          "per_cluster": {
+            "ccpa-mod-redline-2020": -0.47278911564625853,
+            "ceq-nepa-regs-redline": -0.5908346972176759,
+            "ceq-nepa-regs-redline-proposed": -0.6584766584766585,
+            "epa-40cfr63-subparteee-redline": -0.03225806451612903,
+            "epa-lmdv-multipollutant-nprm-redline": -0.17664493183165383,
+            "fdic-fair-lending-redline": null,
+            "gretna-udo-edits": 0.0
+          }
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 1,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "grok-4-7:R0:C1": {
+          "pooled": 0.988950276243094,
+          "per_cluster": {
+            "s4949": 1.0,
+            "s4965": 0.9444444444444444,
+            "s4974": 1.0,
+            "s5026": 0.9666666666666667,
+            "s5163": 1.0,
+            "s5249": 1.0
+          }
+        },
+        "grok-4-7:R0:C2": {
+          "pooled": 0.994475138121547,
+          "per_cluster": {
+            "s4949": 1.0,
+            "s4965": 0.9444444444444444,
+            "s4974": 1.0,
+            "s5026": 1.0,
+            "s5163": 1.0,
+            "s5249": 1.0
+          }
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 2,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "wording 0": {
+          "leakage": {
+            "pooled": 0.994475138121547,
+            "per_cluster": {
+              "s4949": 1.0,
+              "s4965": 0.9444444444444444,
+              "s4974": 1.0,
+              "s5026": 1.0,
+              "s5163": 1.0,
+              "s5249": 1.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 1": {
+          "leakage": {
+            "pooled": 0.994475138121547,
+            "per_cluster": {
+              "s4949": 1.0,
+              "s4965": 0.9444444444444444,
+              "s4974": 1.0,
+              "s5026": 1.0,
+              "s5163": 1.0,
+              "s5249": 1.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 2": {
+          "leakage": {
+            "pooled": 0.8287292817679558,
+            "per_cluster": {
+              "s4949": 1.0,
+              "s4965": 0.9444444444444444,
+              "s4974": 1.0,
+              "s5026": 0.0,
+              "s5163": 1.0,
+              "s5249": 1.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        },
+        "wording 3": {
+          "leakage": {
+            "pooled": 0.8287292817679558,
+            "per_cluster": {
+              "s4949": 1.0,
+              "s4965": 0.9444444444444444,
+              "s4974": 1.0,
+              "s5026": 0.0,
+              "s5163": 1.0,
+              "s5249": 1.0
+            }
+          },
+          "over_marked": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          },
+          "over_absent_vs_r0": {
+            "pooled": 0.0,
+            "per_cluster": {
+              "s4949": 0.0,
+              "s4965": 0.0,
+              "s4974": 0.0,
+              "s5026": 0.0,
+              "s5163": 0.0,
+              "s5249": 0.0
+            }
+          }
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 3,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "F1 model − P-scan": {
+          "pooled": -0.9198813056379822,
+          "per_cluster": {
+            "s4949": -0.8854961832061069,
+            "s4965": -0.9411764705882353,
+            "s4974": -0.896551724137931,
+            "s5026": -0.9655172413793104,
+            "s5163": -1.0,
+            "s5249": -0.9253731343283582
+          }
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    },
+    {
+      "endpoint": 4,
+      "claim": "grok-4-7: reported, not tested",
+      "set": "G2-strict",
+      "by_cluster": {
+        "C1 − C2 leakage": {
+          "pooled": -0.0055248618784530384,
+          "per_cluster": {
+            "s4949": 0.0,
+            "s4965": 0.0,
+            "s4974": 0.0,
+            "s5026": -0.03333333333333333,
+            "s5163": 0.0,
+            "s5249": 0.0
+          }
+        }
+      },
+      "model": "grok-4-7",
+      "split_versions": false
+    }
+  ]
+}

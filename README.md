@@ -146,6 +146,20 @@ keeps 91%: its confidence gates, built for degraded ruled forms, drop some crisp
 DI still reads with high confidence. On a clean scan of a printed redline, pass
 `scan_config=ScanConfig.confidence_free()` with `di_result`.
 
+## Against frontier models
+
+On 45 US Senate bills published after the tested models' training cutoffs, asked only to transcribe
+a page, Grok 4.7 left more struck text live than pdf-strikethrough-detect 0.12.1, Claude Opus 5.5
+left less, and Gemini 4 Argon and GPT-6 Astra were not shown to differ; told in one line never to
+present struck text as current, Claude Opus 5.5 and GPT-6 Astra were no worse than the package and
+Gemini 4 Argon and Grok 4.7 were not shown to be. On the 6 bills introduced after the cutoff: Grok
+4.7 left more struck text live on all 6, Claude Opus 5.5 left less on 1 and the same on 5, Gemini 4
+Argon left less on 1, more on 2 as images only and the same on 3, and GPT-6 Astra more on 5 as PDFs
+only (on one of them less as an image) and the same on 1; told in one line, Claude Opus 5.5 and
+GPT-6 Astra were no worse on all 6, Gemini 4 Argon on 2 and Grok 4.7 on none. The full tables, the
+pre-registration and the data:
+[`benchmarks/frontier/RESULTS.md`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/benchmarks/frontier/RESULTS.md).
+
 ## Beyond PDFs — images, Word docs, cloud OCR
 
 The same detection reaches inputs that never were a born-digital PDF:

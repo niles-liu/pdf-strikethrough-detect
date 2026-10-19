@@ -1,0 +1,15 @@
+{
+  "commit": "c29474f79207223d5e9c0407b54bd638a9e37cee",
+  "tags": [
+    "prereg-1",
+    "prereg-2"
+  ],
+  "changed_since_prereg_2": [
+    "bench/audit.py",
+    "bench/g1.py",
+    "bench/report.py",
+    "bench/score.py"
+  ],
+  "scored": "2026-10-19T13:47:08.728414+00:00",
+  "partial": false
+}

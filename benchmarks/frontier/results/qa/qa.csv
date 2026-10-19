@@ -1,0 +1,9 @@
+﻿arm,live,struck,both,neither,failed
+gemini-4-argon:QA-R0:C2,40,0,0,0,0
+gemini-4-argon:QA-R1:C2,40,0,0,0,0
+gpt-6-astra:QA-R0:C2,40,0,0,0,0
+gpt-6-astra:QA-R1:C2,40,0,0,0,0
+grok-4-7:QA-R0:C2,38,0,0,2,0
+grok-4-7:QA-R1:C2,38,0,0,2,0
+opus-5-5:QA-R0:C2,38,0,2,0,0
+opus-5-5:QA-R1:C2,40,0,0,0,0

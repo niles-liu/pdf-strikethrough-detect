@@ -1,0 +1,116 @@
+[
+  {
+    "image": "struck.png",
+    "page_id": "G0.dev-002.p0",
+    "answer": {
+      "words": [
+        {
+          "text": "government.",
+          "chars": "government.",
+          "verdict": "struck",
+          "confidence": 1.0
+        },
+        {
+          "text": "If",
+          "chars": "If",
+          "verdict": "struck",
+          "confidence": 1.0
+        },
+        {
+          "text": "such",
+          "chars": "such",
+          "verdict": "struck",
+          "confidence": 1.0
+        },
+        {
+          "text": "an",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "event",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "continues",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        }
+      ]
+    }
+  },
+  {
+    "image": "underline.png",
+    "page_id": "G0.dev-002.p0",
+    "answer": {
+      "words": [
+        {
+          "text": "90",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "days",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "before",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "the",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "end",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "of",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        }
+      ]
+    }
+  },
+  {
+    "image": "table-rule.png",
+    "page_id": "G0.dev-002.p0",
+    "answer": {
+      "words": [
+        {
+          "text": "Firewall",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "appliance",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        },
+        {
+          "text": "FW-8",
+          "chars": "",
+          "verdict": "clean",
+          "confidence": 1.0
+        }
+      ]
+    }
+  }
+]

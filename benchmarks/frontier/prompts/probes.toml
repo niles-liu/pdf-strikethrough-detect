@@ -1,0 +1,17 @@
+# The QA probe and stage B4's prompts (PREREG.md, Prompts): drafts, fixed in prereg-2.
+
+[qa]
+# Asked with R0's framing (no system line) and again with R1's system line, on C2.
+user = "Answer this question about the page: {question} Reply with the answer only."
+
+[m_plus_p]
+# R2's prompt and the page, plus the package's output for the page.
+intro = "A strikethrough detector reports the following for this page. Use it, but trust the page where they disagree."
+struck = "Struck words (the struck characters in brackets):"
+clean = "The page's text with struck text removed:"
+# A page P-scan failed: the same prompt and page, and this in place of its reading.
+none = "A strikethrough detector was run on this page but produced no reading."
+
+[text_only]
+# No image: the page's provenance_text, in which deleted text reads [deleted: …].
+user = "Transcribe the current text of this page to markdown, wrapping deleted text in `~~`."

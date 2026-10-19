@@ -1,0 +1,77 @@
+# The prompt ladder (PREREG.md, Prompts): drafts, tuned on dev until prereg-2, when the sha256 of
+# every assembled prompt is tagged (`python -m bench prompts hash`).
+#
+# Each component has four wordings: the base (paraphrase 0) and three paraphrases. A rung is its
+# components joined by single spaces, all in the wording of one paraphrase, so a paraphrase
+# changes how a rung reads and never what it asks. The JSON keys stay literal in every wording:
+# the scorer reads them.
+
+[rungs]
+R0 = { system = [], user = ["transcribe"] }
+R1 = { system = ["deleted"], user = ["transcribe"] }
+R2 = { system = ["deleted"], user = ["transcribe", "wrap"] }
+R3 = { system = ["deleted"], user = ["transcribe", "wrap", "define", "not_strikes", "image"] }
+R4 = { system = ["deleted"], user = ["json", "define_json", "not_strikes", "image"] }
+R5 = { system = ["deleted"], user = ["json", "define_json", "not_strikes", "image", "procedure"] }
+R6 = { system = ["deleted"], user = ["json", "define_json", "not_strikes", "image", "procedure"], fewshot = true }
+
+[components]
+transcribe = [
+    "Transcribe this page to markdown. Output only the transcription.",
+    "Convert this page to markdown. Reply with the transcription and nothing else.",
+    "Write out the text of this page as markdown. Return only the transcription.",
+    "Produce a markdown transcription of this page, with no other output.",
+]
+deleted = [
+    "Documents may contain struck-through (deleted) text; never present it as current.",
+    "Some text in a document may be struck through, which means it was deleted; never treat it as current.",
+    "Struck-through text in a document has been deleted; never present it as if it still applied.",
+    "Watch for struck-through (deleted) text in documents, and never pass it off as current.",
+]
+wrap = [
+    "Wrap any struck-through text in `~~`, keeping it where it stands, for example `~~old wording~~`.",
+    "Put `~~` around any struck-through text and leave it in its place, as in `~~old wording~~`.",
+    "Mark struck-through text by enclosing it in `~~` where it appears, for example `~~old wording~~`.",
+    "Keep struck-through text in position but surround it with `~~`, like `~~old wording~~`.",
+]
+define = [
+    "A strike is a line drawn through the middle of characters: single, double, wavy or handwritten, through a whole word or only part of one (then wrap only the struck characters, as in `~~semi-~~monthly`).",
+    "A strike is any line through the middle of the letters, whether single, double, wavy or handwritten, and it may cross a whole word or just part of it (in that case wrap only the struck letters, as in `~~semi-~~monthly`).",
+    "Count as a strike any line crossing characters at mid-height: single, double, wavy or drawn by hand, over a full word or only some of its letters (wrap just those letters then, as in `~~semi-~~monthly`).",
+    "Strikes are lines through the middle of characters (single, double, wavy or handwritten) covering a whole word or part of one; for a partial strike, wrap only the struck characters, as in `~~semi-~~monthly`.",
+]
+define_json = [
+    "A strike is a line drawn through the middle of characters: single, double, wavy or handwritten, through a whole word or only part of one (then `chars` holds only the struck characters, as in `semi-` of `semi-monthly`).",
+    "A strike is any line through the middle of the letters, whether single, double, wavy or handwritten, and it may cross a whole word or just part of it (in that case `chars` holds only the struck letters, as in `semi-` of `semi-monthly`).",
+    "Count as a strike any line crossing characters at mid-height: single, double, wavy or drawn by hand, over a full word or only some of its letters (`chars` then holds just those letters, as in `semi-` of `semi-monthly`).",
+    "Strikes are lines through the middle of characters (single, double, wavy or handwritten) covering a whole word or part of one; for a partial strike, `chars` holds only the struck characters, as in `semi-` of `semi-monthly`.",
+]
+not_strikes = [
+    "Underlines, table rules, borders and redaction bars are not strikes.",
+    "Underlining, table lines, borders and redaction bars do not count as strikes.",
+    "Lines under text, ruling lines of tables, borders and blacked-out redactions are not strikes.",
+    "An underline, a table rule, a border or a redaction bar is never a strike.",
+]
+image = [
+    "A PDF's text layer still contains deleted words, so judge from the page's image, not its text.",
+    "Deleted words remain in a PDF's text layer, so decide from how the page looks, not from its text.",
+    "A PDF keeps deleted words in its text layer; base every judgement on the page image rather than the text.",
+    "Because a PDF's extractable text still includes deleted words, judge strikes from the image of the page, not its text.",
+]
+json = [
+    "Transcribe this page. Output one JSON object, `{\"words\": [...]}`, listing every word on the page in reading order as `{\"text\": ..., \"chars\": ..., \"verdict\": ..., \"confidence\": ...}`: `chars` is the struck part of the word (empty unless struck), `verdict` is `struck` or `clean`, and `confidence` is how sure you are of the verdict, from 0 to 1.",
+    "Transcribe this page as one JSON object, `{\"words\": [...]}`, with every word on the page in reading order given as `{\"text\": ..., \"chars\": ..., \"verdict\": ..., \"confidence\": ...}`, where `chars` is the struck part of the word (empty if nothing is struck), `verdict` is either `struck` or `clean`, and `confidence` is a number between 0 and 1 for how sure you are of that verdict.",
+    "Return a single JSON object, `{\"words\": [...]}`, that lists each word of this page in reading order as `{\"text\": ..., \"chars\": ..., \"verdict\": ..., \"confidence\": ...}`. Set `chars` to the word's struck characters (empty unless struck), `verdict` to `struck` or `clean`, and `confidence` to how certain you are of the verdict, from 0 to 1.",
+    "Write the page's transcription as one JSON object, `{\"words\": [...]}`: every word in reading order, each as `{\"text\": ..., \"chars\": ..., \"verdict\": ..., \"confidence\": ...}`, with `chars` the struck part of the word (empty when not struck), `verdict` either `struck` or `clean`, and `confidence` your certainty in that verdict, from 0 to 1.",
+]
+procedure = [
+    "First transcribe the page. Then re-inspect it line by line for strokes through glyphs, and only then write the JSON.",
+    "Begin by transcribing the page, then check it again line by line for lines through letters, and write the JSON only after that.",
+    "Transcribe the page first; next, go over it line by line looking for strokes across characters; write the JSON last.",
+    "Start with a transcription of the page, re-examine each line for strokes crossing glyphs, and only then produce the JSON.",
+]
+
+[fixed]
+# C2-tiled's added line ({n} is the number of bands); R6's framing around each worked example.
+tiled = "The page is given as {n} overlapping horizontal bands, top to bottom. Transcribe the page once."
+example = "An example image, and the answer for it:"
