@@ -25,14 +25,16 @@ Choices the PREREG text leaves open, fixed here:
   prompts offer `struck` and `clean` alone) reads as live and gives 0.5, whatever the confidence;
   a boolean or any other non-number, or another verdict, gives none; a struck item's probability
   goes to its struck tokens alone.
-- Joins go both ways: an output token equal to two adjacent ground-truth words joined aligns to
-  both, and two adjacent output tokens equal to one ground-truth word joined align to it (hyphens
-  ignored, edge punctuation kept inside the joined text).
+- Joins go both ways: an output token equal to adjacent ground-truth words joined aligns to them
+  all, and adjacent output tokens equal to one ground-truth word joined align to it (hyphens
+  ignored, edge punctuation kept inside the joined text), up to eight pieces in the scorer
+  (deviation 5; two in G2's ground truth, as frozen).
 - Characters align by an Indel (LCS) alignment, the cost model a substitution costing twice a gap
   gives; on its ties, unmatched characters between two matched runs pair up in order, so a
   misread character still counts as present.
 - Ties in the word alignment go to a substitution, then a join, then a split, then an absent
-  ground-truth word, then an inserted output token.
+  ground-truth word, then an inserted output token; in the scorer, a token paired with one of
+  two equal words then goes to the one its marks agree with (deviation 5).
 - CER and WER compare normalized live text: output tokens with marked characters removed, against
   the scored words' live characters, each joined by single spaces; words the alignment joined or
   split count as one.
@@ -40,7 +42,8 @@ Choices the PREREG text leaves open, fixed here:
   output token at a cost of 1.5: less than leaving both unaligned (2), more than any pair close
   enough to count as present (at most 1). So a model's reading of it is ignored, never counted as
   inserted, and never takes a token a readable word could have. A scored word is never a wildcard,
-  whatever its text.
+  whatever its text. In the scorer, any other masked word aligns to a token at its pair's cost or
+  1.5, whichever is lower (deviation 5).
 """
 
 import html
@@ -108,6 +111,13 @@ LATEX_MARKUP = frozenset(  # font, text and sizing commands: markup, like emphas
     "nonumber".split()
 )
 LATEX_NAMES = frozenset("max min log ln exp sin cos tan lim det arg sup inf".split())
+ACCENTS = {  # an accent over one character (`\bar{c}`): the character and its combining mark
+    "bar": "\u0304", "overline": "\u0304", "hat": "\u0302", "widehat": "\u0302", "tilde": "\u0303",
+    "widetilde": "\u0303", "dot": "\u0307", "ddot": "\u0308", "vec": "\u20d7",
+}  # fmt: skip
+ACCENT = re.compile(
+    rf"\\({'|'.join(ACCENTS)})(?![A-Za-z])\s*(?:\{{\s*([^{{}}\s\\])\s*\}}|([^\s{{}}\\]))"
+)
 TYPOGRAPHIC = str.maketrans(
     dict.fromkeys("‘’‚‛′", "'") | dict.fromkeys("“”„‟", '"') | dict.fromkeys("‐‑‒–—―−", "-")
 )
@@ -177,6 +187,9 @@ def _parse_markdown(text: str) -> list[Token]:
             _flag(drop, m.start() + 1, m.end())
     for m in LATEX_ENV.finditer(search):
         _flag(drop, m.start(), m.end())
+    for m in ACCENT.finditer(search):  # deviation 5: `\bar{c}` reads as c̄
+        chars[m.start() : m.start() + 2] = (m.group(2) or m.group(3)) + ACCENTS[m.group(1)]
+        _flag(drop, m.start() + 2, m.end())
     for m in LATEX.finditer(search):
         if (rep := _latex(m.group(1))) is not None:  # never longer than the command
             chars[m.start() : m.start() + len(rep)] = rep
@@ -197,6 +210,7 @@ def _latex(name: str) -> str | None:
 def _delatex(text: str) -> str:
     """A JSON word's text with its LaTeX read as the markdown parser reads it, braces breaking
     words."""
+    text = ACCENT.sub(lambda m: (m.group(2) or m.group(3)) + ACCENTS[m.group(1)], text)
     text = LATEX.sub(lambda m: m.group() if (r := _latex(m.group(1))) is None else r,
                      LATEX_ENV.sub("", text))  # fmt: skip
     return text.replace("{", " ").replace("}", " ")
@@ -315,6 +329,27 @@ def normalize(text: str) -> tuple[str, list[int]]:
     trailing punctuation and symbols stripped. Returns the normalized text and, for each of its
     characters, the index of the character it came from. A base character and the combining marks
     after it normalize together, so a decomposed accent composes."""
+    out, src = _inner(text)
+    s, e = 0, len(out)
+    while s < e and _is_punct(out[s]):
+        s += 1
+    while e > s and _is_punct(out[e - 1]):
+        e -= 1
+    return "".join(out[s:e]), src[s:e]
+
+
+def _edges(text: str) -> str:
+    """`text` with leading and trailing punctuation and symbols stripped, as normalize strips."""
+    s, e = 0, len(text)
+    while s < e and _is_punct(text[s]):
+        s += 1
+    while e > s and _is_punct(text[e - 1]):
+        e -= 1
+    return text[s:e]
+
+
+def _inner(text: str) -> tuple[list[str], list[int]]:
+    """normalize's characters before it strips the edges, with their sources."""
     out, src = [], []
     i = 0
     while i < len(text):
@@ -328,57 +363,79 @@ def normalize(text: str) -> tuple[str, list[int]]:
             out.append(ch)
             src.append(i)
         i = j
-    s, e = 0, len(out)
-    while s < e and _is_punct(out[s]):
-        s += 1
-    while e > s and _is_punct(out[e - 1]):
-        e -= 1
-    return "".join(out[s:e]), src[s:e]
+    return out, src
 
 
 def _is_punct(c: str) -> bool:
-    return (
-        c in PUNCT
-        or unicodedata.category(c) in ("Sc", "Sk", "Sm")
-        or unicodedata.category(c).startswith("P")
-    )
+    """Punctuation or a symbol: every Unicode symbol class, the box-drawing lines, ticks and
+    arrows a model draws a chart with (`│`, `▼`, `✓`) included (deviation 5), but not UNREAD,
+    which stands for a word no one could read."""
+    return c in PUNCT or (unicodedata.category(c)[0] in "PS" and c != UNREAD)
 
 
 # -------------------------------------------------------------------------------- alignment
 
 Step = tuple[tuple[int, ...], tuple[int, ...]]  # (output indices, ground-truth indices)
+Runs = dict[int, list[str]]  # k -> each run of k adjacent items joined, by its first index
+MOST = 8  # the most pieces a join or a split takes, for the scorer (deviation 5)
+# the scorer's leftover pass (deviation 5): a lone token's reach, in words either side of its word,
+# and the shortest passage typed out of order that pairs wherever it lies
+REACH = 100, 3
 
 
-def align_words(out: list[str], gt: list[str], joins: list[str] | None = None,
-                splits: list[str] | None = None, early: bool = False,
-                wild: Collection[int] = ()) -> list[Step]:  # fmt: skip
+def _runs(seq: list[str], most: int) -> Runs:
+    return {
+        k: ["".join(seq[i : i + k]) for i in range(len(seq) - k + 1)] for k in range(2, most + 1)
+    }
+
+
+def align_words(out: list[str], gt: list[str], joins: Runs | list[str] | None = None,
+                splits: Runs | list[str] | None = None, early: bool = False,
+                wild: Collection[int] = (), most: int = 2, absorb: Collection[int] = (),
+                alt: list[str | None] | None = None) -> list[Step]:  # fmt: skip
     """Global alignment of normalized tokens: gaps cost 1, a substitution twice the pair's
-    normalized edit distance, or UNREAD_COST against a ground-truth word in `wild`. At no cost,
-    an output token aligns to two adjacent ground-truth words whose joined text (`joins[j]`, for
-    words j and j+1) it equals, and two adjacent output tokens whose joined text (`splits[i]`)
-    equals a ground-truth word align to it; hyphens are ignored in both. The path's steps:
-    ((i,), (j,)) a pair, ((i,), (j, j+1)) a join, ((i, i+1), (j,)) a split, ((), (j,)) an
-    unmatched ground-truth word, ((i,), ()) an inserted output token. Among equal-cost paths the
-    traceback takes the latest copy of a repeated run; `early` takes the earliest, by aligning
-    both sequences reversed."""
+    normalized edit distance, or UNREAD_COST against a ground-truth word in `wild`, and at most
+    UNREAD_COST against one in `absorb`; against a word with an `alt` text (a word struck in part:
+    its live characters), the nearer of the two. At no cost, an output token aligns to k adjacent
+    ground-truth words whose joined text (`joins[k][j]`, for words j to j+k-1) it equals, and k
+    adjacent output tokens whose joined text (`splits[k][i]`) equals a ground-truth word align to
+    it, for k from 2 to `most`; hyphens are ignored in both, and a plain list of keys is k = 2's.
+    The path's steps: ((i,), (j,)) a pair, ((i,), (j, ..., j+k-1)) a join, ((i, ..., i+k-1), (j,))
+    a split, ((), (j,)) an unmatched ground-truth word, ((i,), ()) an inserted output token. Among
+    equal-cost paths the traceback takes the latest copy of a repeated run; `early` takes the
+    earliest, by aligning both sequences reversed."""
     n, m = len(out), len(gt)
-    joins = joins if joins is not None else [gt[j] + gt[j + 1] for j in range(m - 1)]
-    splits = splits if splits is not None else [out[i] + out[i + 1] for i in range(n - 1)]
-    if early:  # word j's join with j+1 becomes reversed word m-2-j's with m-1-j: the same key
-        steps = align_words(out[::-1], gt[::-1], joins[::-1], splits[::-1],
-                            wild=[m - 1 - j for j in wild])  # fmt: skip
+    joins = {2: joins} if isinstance(joins, list) else joins or _runs(gt, most)
+    splits = {2: splits} if isinstance(splits, list) else splits or _runs(out, most)
+    if early:  # words j..j+k-1 become reversed words m-k-j..m-1-j: the same key
+        steps = align_words(out[::-1], gt[::-1], {k: v[::-1] for k, v in joins.items()},
+                            {k: v[::-1] for k, v in splits.items()}, wild=[m - 1 - j for j in wild],
+                            absorb=[m - 1 - j for j in absorb], alt=alt[::-1] if alt else None)  # fmt: skip
         return [(tuple(n - 1 - i for i in reversed(o)), tuple(m - 1 - j for j in reversed(g)))
                 for o, g in reversed(steps)]  # fmt: skip
     sub = (2 * process.cdist(out, gt, scorer=Levenshtein.normalized_distance, dtype=np.float64)
            if n and m else np.zeros((n, m)))  # fmt: skip
+    if alt and n and m and any(alt):
+        live = [a if a else g for a, g in zip(alt, gt)]
+        sub = np.minimum(sub, 2 * process.cdist(out, live, scorer=Levenshtein.normalized_distance,
+                                                dtype=np.float64))  # fmt: skip
+    if absorb:
+        sub[:, sorted(absorb)] = np.minimum(sub[:, sorted(absorb)], UNREAD_COST)
     sub[:, sorted(wild)] = UNREAD_COST
-    by_join, by_word = {}, {}
-    for j, key in enumerate(joins):
-        by_join.setdefault(key.replace("-", ""), []).append(j)
+    by_word: dict[str, list[int]] = {}
     for j, word in enumerate(gt):
         by_word.setdefault(word.replace("-", ""), []).append(j)
-    join_at = [by_join.get(o.replace("-", ""), []) for o in out]  # j: out[i] = gt[j] + gt[j+1]
-    split_at = [by_word.get(k.replace("-", ""), []) for k in splits]  # j: out[i] + out[i+1] = gt[j]
+    join_at = {}  # k -> per output token i, the j where out[i] = gt[j] + ... + gt[j+k-1]
+    for k, keys in joins.items():
+        by_join: dict[str, list[int]] = {}
+        for j, key in enumerate(keys):
+            by_join.setdefault(key.replace("-", ""), []).append(j)
+        join_at[k] = [by_join.get(o.replace("-", ""), []) for o in out]
+    # k -> per first token i, the j where out[i] + ... + out[i+k-1] = gt[j]
+    split_at = {
+        k: [by_word.get(s.replace("-", ""), []) for s in keys] for k, keys in splits.items()
+    }
+    ks = sorted(set(join_at) | set(split_at))
     cols = np.arange(m + 1, dtype=np.float64)
     d = np.empty((n + 1, m + 1))
     d[0] = cols
@@ -386,15 +443,24 @@ def align_words(out: list[str], gt: list[str], joins: list[str] | None = None,
         best = np.empty(m + 1)
         best[0] = i
         best[1:] = np.minimum(d[i - 1, :-1] + sub[i - 1], d[i - 1, 1:] + 1)
-        for j in join_at[i - 1]:
-            best[j + 2] = min(best[j + 2], d[i - 1, j])
-        if i >= 2:
-            for j in split_at[i - 2]:
-                best[j + 1] = min(best[j + 1], d[i - 2, j])
+        for k in ks:
+            for j in join_at.get(k, ((),) * n)[i - 1]:
+                best[j + k] = min(best[j + k], d[i - 1, j])
+            if i >= k and k in split_at:
+                for j in split_at[k][i - k]:
+                    best[j + 1] = min(best[j + 1], d[i - k, j])
         d[i] = np.minimum.accumulate(best - cols) + cols
 
     def same(a: float, b: float) -> bool:
         return abs(a - b) <= 1e-9  # absolute: path costs grow, a relative tolerance would too
+
+    def joined(i: int, j: int) -> int | None:
+        return next((k for k in ks if k in join_at and j >= k and j - k in join_at[k][i - 1]
+                     and same(d[i - 1, j - k], d[i, j])), None)  # fmt: skip
+
+    def split(i: int, j: int) -> int | None:
+        return next((k for k in ks if k in split_at and i >= k and j - 1 in split_at[k][i - k]
+                     and same(d[i - k, j - 1], d[i, j])), None)  # fmt: skip
 
     path: list[Step] = []
     i, j = n, m
@@ -403,12 +469,12 @@ def align_words(out: list[str], gt: list[str], joins: list[str] | None = None,
         if i and j and same(d[i - 1, j - 1] + sub[i - 1, j - 1], here):
             path.append(((i - 1,), (j - 1,)))
             i, j = i - 1, j - 1
-        elif i and j >= 2 and j - 2 in join_at[i - 1] and same(d[i - 1, j - 2], here):
-            path.append(((i - 1,), (j - 2, j - 1)))
-            i, j = i - 1, j - 2
-        elif i >= 2 and j and j - 1 in split_at[i - 2] and same(d[i - 2, j - 1], here):
-            path.append(((i - 2, i - 1), (j - 1,)))
-            i, j = i - 2, j - 1
+        elif i and j and (k := joined(i, j)):
+            path.append(((i - 1,), tuple(range(j - k, j))))
+            i, j = i - 1, j - k
+        elif i and j and (k := split(i, j)):
+            path.append((tuple(range(i - k, i)), (j - 1,)))
+            i, j = i - k, j - 1
         elif j and same(d[i, j - 1] + 1, here):
             path.append(((), (j - 1,)))
             j -= 1
@@ -439,46 +505,117 @@ def align_chars(a: str, b: str) -> list[tuple[int, int]]:
     return pairs
 
 
+def _by_marks(steps: list[Step], marked: list[bool], state: list[str | None],
+              gt: list[str]) -> list[Step]:  # fmt: skip
+    """Deviation 5: a token paired with a word its marks contradict (an unmarked token with a
+    struck word, a marked one with a live word) moves to an equal word, unpaired, between the
+    words its neighbours aligned to, whose state its marks match: an equal-cost tie the text
+    can't decide ("breach of the" against "breach of confidentiality or ~~of~~ the")."""
+    paired = [s for s, (o, g) in enumerate(steps) if o and g]
+    taken = {j for s in paired for j in steps[s][1]}
+    steps = list(steps)
+    for n, s in enumerate(paired):
+        outs, gs = steps[s]
+        if len(outs) != 1 or len(gs) != 1:
+            continue
+        want, j = "struck" if marked[outs[0]] else "live", gs[0]
+        if state[j] in (want, None):
+            continue
+        lo = max(steps[paired[n - 1]][1]) if n else -1
+        hi = min(steps[paired[n + 1]][1]) if n + 1 < len(paired) else len(gt)
+        if near := [x for x in range(lo + 1, hi)
+                    if x not in taken and gt[x] == gt[j] and state[x] == want]:  # fmt: skip
+            x = min(near, key=lambda x: abs(x - j))
+            taken = taken - {j} | {x}
+            steps[s] = (steps[s][0], (x,))
+    return steps
+
+
 def match(tokens: list[Token], texts: list[str], early: bool = False,
           wild: Collection[int] = (), leftovers: bool = False, furniture: Collection[int] = (),
-          unscored: Collection[int] = ()) -> tuple[dict, dict]:  # fmt: skip
+          unscored: Collection[int] = (), most: int = 2, lives: list | None = None,
+          absorb: Collection[int] = (), states: list[str | None] | None = None,
+          reach: tuple[int, int] | None = None) -> tuple[dict, dict]:  # fmt: skip
     """Align output tokens to ground-truth word texts, then characters within each aligned pair.
     Returns `hits`, per word, its aligned characters (original index -> aligned to a marked
     output character?), and `used`, per output token that normalizes to something, the words it
     aligned to (none: inserted, including a pair farther apart than 0.5, unless the word is in
-    `wild`). `early` and `wild` as in `align_words`, `wild` indexing `texts`. `furniture` words
-    align in a pass of their own, after the others, so a margin line number between the two
-    halves of a word hyphenated at a line end no longer keeps them apart. `leftovers` pairs
-    equal tokens and words the alignment left over, whatever their order, a scored word before an
-    `unscored` one: the scorer's, never G2's ground truth, which aligns in order. With it, a token
-    equal to a word left over and to no furniture word sits out the furniture's pass, so that pass
-    can't take a word's own token typed out of order."""
-    wild, furniture, unscored = set(wild), set(furniture), set(unscored)
+    `wild` or `absorb`). `early`, `wild`, `most` and `absorb` as in `align_words`, indexing
+    `texts`. `furniture` words align in a pass of their own, after the others, so a margin line
+    number between the two halves of a word hyphenated at a line end no longer keeps them apart.
+    `leftovers` pairs equal tokens and words the alignment left over, whatever their order, a
+    scored word before an `unscored` one: the scorer's, never G2's ground truth, which aligns in
+    order. With it, a token equal to a word left over and to no furniture word sits out the
+    furniture's pass, so that pass can't take a word's own token typed out of order.
+
+    The scorer's options (deviation 5): `lives`, per word struck in part, the indices of its live
+    characters, which a token may match alone (a clean copy keeps "ms" of "~~ter~~ms"); `states`,
+    per word "struck", "live" or None, to break ties by the output's marks (`_by_marks`); and
+    `reach`, (words, passage), for the leftover pass: a passage typed out of order (that many
+    tokens in a row or more, equal to words in a row, all left over: a footnote typed at the end)
+    pairs wherever it lies, but a lone token only with a word it lies among the tokens of, the
+    tokens aligned to the words that many words either side of it. So a word of a model's own
+    summary or note before or after its copy, or of a passage elsewhere on the page, pairs with
+    nothing, nor does a common pair of words ("of the") that text happens to share with one."""
+    wild, furniture, unscored, absorb = set(wild), set(furniture), set(unscored), set(absorb)
     onorm = [normalize(t.text) for t in tokens]
     gnorm = [normalize(t) for t in texts]
+    lnorm: dict[int, tuple[str, list[int]]] = {}  # a word struck in part: its live characters'
+    for j, idx in enumerate(lives or ()):
+        if idx:
+            text, src = normalize("".join(texts[j][p] for p in idx))
+            if text:
+                lnorm[j] = text, [idx[s] for s in src]
     keep = [k for k, (o, _) in enumerate(onorm) if o]
     gkeep = [j for j, (g, _) in enumerate(gnorm) if g]
     hits: dict[int, dict[int, bool]] = {}
     used: dict[int, tuple[int, ...]] = dict.fromkeys(keep, ())
 
+    def marked(k: int) -> bool:
+        return 2 * sum(tokens[k].marks[s] for s in onorm[k][1]) >= len(onorm[k][1])
+
+    # each piece normalized once, edges kept, to join runs of three pieces or more cheaply
+    oinner = ["".join(_inner(t.text)[0]) for t in tokens] if most > 2 else []
+    ginner = ["".join(_inner(t)[0]) for t in texts] if most > 2 else []
+
+    def runs(raw: list[str], inner: list[str], at: list[int]) -> Runs:
+        """Each run of k adjacent pieces joined, then normalized: two pieces' from their raw text,
+        longer runs' from each piece's normalized text (the same, but where a combining mark
+        starts a piece)."""
+        out = {2: [normalize(a + b)[0] for a, b in zip(raw, raw[1:])]}
+        for k in range(3, most + 1):
+            out[k] = [_edges("".join(inner[x] for x in at[i : i + k]))
+                      for i in range(len(at) - k + 1)]  # fmt: skip
+        return out
+
     def align(outs_at: list[int], gts_at: list[int]) -> None:
-        joins = [normalize(texts[a] + texts[b])[0] for a, b in zip(gts_at, gts_at[1:])]
-        splits = [normalize(tokens[a].text + tokens[b].text)[0] for a, b in zip(outs_at, outs_at[1:])]  # fmt: skip
+        joins = runs([texts[j] for j in gts_at], ginner, gts_at)
+        splits = runs([tokens[k].text for k in outs_at], oinner, outs_at)
         out_norm, gt_norm = [onorm[k][0] for k in outs_at], [gnorm[j][0] for j in gts_at]
         wild_at = [i for i, j in enumerate(gts_at) if j in wild]
-        for outs, gts in align_words(out_norm, gt_norm, joins, splits, early, wild_at):
+        absorb_at = [i for i, j in enumerate(gts_at) if j in absorb]
+        alt = [lnorm[j][0] if j in lnorm else None for j in gts_at] if lnorm else None
+        steps = align_words(out_norm, gt_norm, joins, splits, early, wild_at, most, absorb_at, alt)
+        if states is not None:
+            steps = _by_marks(steps, [marked(k) for k in outs_at], [states[j] for j in gts_at],
+                              gt_norm)  # fmt: skip
+        for outs, gts in steps:
             if not outs or not gts:
                 continue
             ks, js = [outs_at[i] for i in outs], [gts_at[j] for j in gts]
             o = "".join(onorm[k][0] for k in ks)
             marks = [tokens[k].marks[s] for k in ks for s in onorm[k][1]]
             target = "".join(gnorm[j][0] for j in js)
-            far = Levenshtein.normalized_distance(o, target) > MAX_PAIR_DISTANCE
-            if far and not wild.issuperset(js):
+            owner = [(j, p) for j in js for p in gnorm[j][1]]
+            dist = Levenshtein.normalized_distance(o, target)
+            if len(js) == 1 and js[0] in lnorm:  # the nearer of the word and its live part
+                live, src = lnorm[js[0]]
+                if (d_live := Levenshtein.normalized_distance(o, live)) < dist:
+                    target, owner, dist = live, [(js[0], p) for p in src], d_live
+            if dist > MAX_PAIR_DISTANCE and not (wild | absorb).issuperset(js):
                 continue
             for k in ks:
                 used[k] = tuple(js)
-            owner = [(j, p) for j in js for p in gnorm[j][1]]
             for a, b in align_chars(o, target):
                 j, p = owner[b]
                 got = hits.setdefault(j, {})
@@ -499,13 +636,47 @@ def match(tokens: list[Token], texts: list[str], early: bool = False,
     for j in sorted(gkeep, key=lambda j: j in unscored) if leftovers else ():  # stable
         if j not in hits and j not in wild:
             left.setdefault(gnorm[j][0], []).append(j)
+    at: dict[int, list[int]] = {}  # per word, the tokens the passes above aligned to it
+    for k, js in used.items():
+        for j in js:
+            at.setdefault(j, []).append(k)
+    after_k = dict(zip(keep, keep[1:]))  # the next token, and the next word, that count
+    after_j = dict(zip(gkeep, gkeep[1:]))
+
+    def near(j: int, k: int) -> bool:
+        around = [t for x in range(j - reach[0], j + reach[0] + 1) for t in at.get(x, ())]
+        return bool(around) and min(around) <= k <= max(around)
+
+    def unpaired(k: int | None, j: int | None) -> bool:  # both left over, with equal texts
+        return (k is not None and j is not None and not used[k] and j not in hits
+                and j not in wild and onorm[k][0] == gnorm[j][0])  # fmt: skip
+
+    def opens(k: int, j: int) -> bool:  # k on j starts a passage at least reach[1] long
+        for _ in range(reach[1] - 1):
+            k, j = after_k.get(k), after_j.get(j)
+            if not unpaired(k, j):
+                return False
+        return True
+
+    last: tuple[int, int] | None = None  # the pass's previous pair
     for k in keep:
-        if not used[k] and (spare := left.get(onorm[k][0])):
-            j = spare.pop(0)
-            used[k] = (j,)
-            got = hits.setdefault(j, {})
-            for p, s in zip(gnorm[j][1], onorm[k][1]):  # equal texts: characters pair in order
-                got[p] = got.get(p, False) or tokens[k].marks[s]
+        if used[k] or not (spare := left.get(onorm[k][0])):
+            continue
+        if reach is None:
+            j = spare[0]
+        elif last and after_k.get(last[0]) == k and after_j.get(last[1]) in spare:
+            j = after_j[last[1]]  # the passage typed out of order goes on
+        else:
+            j = next((j for j in spare if opens(k, j)), None)
+            j = j if j is not None else next((j for j in spare if near(j, k)), None)
+        if j is None:
+            continue
+        spare.remove(j)
+        used[k] = (j,)
+        last = k, j
+        got = hits.setdefault(j, {})
+        for p, s in zip(gnorm[j][1], onorm[k][1]):  # equal texts: characters pair in order
+            got[p] = got.get(p, False) or tokens[k].marks[s]
     return hits, used
 
 
@@ -527,6 +698,23 @@ def sub_tokens(word: dict) -> list[tuple[int, int, bool]]:
         out.append((i, i + n, struck))
         i += n
     return out
+
+
+def _live_at(word: dict) -> list[int] | None:
+    """A word struck in part: the indices of its live characters (deviation 5); else None."""
+    struck = {i for s, e in word["struck"] for i in range(s, e)}
+    kept = normalize(word["text"])[1]
+    if not (struck & set(kept) and set(kept) - struck):
+        return None
+    return [i for i in range(len(word["text"])) if i not in struck]
+
+
+def _state(word: dict) -> str | None:
+    """A word's state for breaking ties (deviation 5): "struck" or "live" when every character the
+    scorer keeps is, None for a word struck in part."""
+    struck = {i for s, e in word["struck"] for i in range(s, e)}
+    kept = set(normalize(word["text"])[1])
+    return "struck" if kept <= struck else "live" if not kept & struck else None
 
 
 def outcome(n_chars: int, n_aligned: int, n_marked: int) -> str:
@@ -560,11 +748,14 @@ def score_page(
     unread = unreadable(words)
     scored = [not (w["masked"] or w["furniture"] or j in unread) for j, w in enumerate(words)]
     wild = [j for j, w in enumerate(words) if w["masked"] and w["text"] == UNREAD]
+    absorb = [j for j, w in enumerate(words) if w["masked"] and w["text"] != UNREAD]
     texts = [w["text"] for w in words]
     furniture = [j for j, w in enumerate(words) if w["furniture"]]
     unscored = {j for j, s in enumerate(scored) if not s}
     hits, used = (match(tokens, texts, wild=wild, leftovers=True, furniture=furniture,
-                        unscored=unscored) if tokens is not None else ({}, {}))  # fmt: skip
+                        unscored=unscored, most=MOST, lives=[_live_at(w) for w in words],
+                        absorb=absorb, states=[_state(w) if s else None for w, s in zip(words, scored)],
+                        reach=REACH) if tokens is not None else ({}, {}))  # fmt: skip
     if tokens is not None:
         _furniture_out_of_order(words, tokens, used)
         _between_unreadable(used, unread, unscored, len(words))
@@ -724,9 +915,9 @@ def _live_text(words, scored, tokens, used) -> tuple[list[str], list[str]]:
     def live(text: str, marked) -> str:
         return "".join(c for c, m in zip(text, marked) if not m)
 
-    lead = {js[1]: js[0] for js in used.values() if len(js) == 2}  # word j+1 joins word j
+    lead = {j: js[0] for js in used.values() if len(js) >= 2 for j in js[1:]}  # joins word js[0]
     shared = Counter(used.values())
-    joined = {lead.get(j, j) for js in used.values() for j in js if len(js) == 2 or shared[js] > 1}
+    joined = {lead.get(j, j) for js in used.values() for j in js if len(js) >= 2 or shared[js] > 1}
     gt_units: dict[int, str] = {}
     for j, w in enumerate(words):
         if scored[j]:
@@ -739,7 +930,7 @@ def _live_text(words, scored, tokens, used) -> tuple[list[str], list[str]]:
             continue
         split = len(js) == 1 and shared[js] > 1
         unit = ("split", js) if split else ("token", k)
-        if split or len(js) == 2:
+        if split or len(js) >= 2:
             out_joined.add(unit)
         out_units[unit] = out_units.get(unit, "") + live(tokens[k].text, tokens[k].marks)
 
