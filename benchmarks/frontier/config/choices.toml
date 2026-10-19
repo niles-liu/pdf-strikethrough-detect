@@ -1,0 +1,30 @@
+# Chosen on dev at stage B2 and fixed in prereg-2 (PREREG.md, Prompts): per provider, R-best,
+# the runner-up rung and the image condition (C2 or C2-tiled) at R-best, from `python -m bench
+# report rbest` (R-best first; once ladder-tiled has run R-best on C2-tiled, the image condition);
+# then `flagship`, the rung the provider's flagship runs as its R-best (R-best or the runner-up),
+# from `python -m bench report flagship-check`. A runner-up of "none" means no second rung
+# qualified, and the flagship then keeps R-best.
+
+[anthropic]
+rbest = "R2"
+runner_up = "R5"
+image = "C2"
+flagship = "R2"
+
+[google]
+rbest = "R2"
+runner_up = "R5"
+image = "C2-tiled"
+flagship = "R5"
+
+[openai]
+rbest = "R2"
+runner_up = "none"
+image = "C2-tiled"
+flagship = "R2"
+
+[xai]
+rbest = "R2"
+runner_up = "none"
+image = "C2"
+flagship = "R2"

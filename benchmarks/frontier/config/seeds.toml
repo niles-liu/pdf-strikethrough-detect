@@ -1,0 +1,18 @@
+# The public seeds, as PREREG.md fixes them. G0's held-back seed is private, in
+# data/private/g0_heldback_seed.txt; only its sha256 is published (031ad201…, PREREG.md).
+g0_dev = 20261008
+g0_test = 20261009
+g1_dev = 20261010
+pilot_audit = 20261011
+sign_flip = 20261012
+dev_pages = 20261013
+test_audit = 20261014
+g1_error_sample = 20261015
+double_label = 20261016
+bootstrap = 20261017
+fable_subset = 20261018
+latency = 20261019
+qa_probe = 20261020
+g2_spans = 20261021
+kappa = 20261022
+g5_pages = 20261023

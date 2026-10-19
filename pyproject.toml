@@ -80,6 +80,10 @@ version = { attr = "pdf_strikethrough.__version__" }
 # dynamic version above: after a version bump an editable install kept reporting the old one.
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/pdf_strikethrough/__init__.py" }]
 
+[tool.pytest.ini_options]
+# The package's tests; benchmarks/frontier/tests run in that folder's own environment (its README).
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 100        # the codebase targets ~99 cols
 

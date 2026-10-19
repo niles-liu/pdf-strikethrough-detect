@@ -1,0 +1,21 @@
+# The caps, the reserve and the drop order (PREREG.md, Operations). A cap covers everything spent
+# so far, the smoke tests included. `cap_b2_usd` covers stages B1 and B2: the author sets it once
+# the smoke tests have run (`harness dry-run b2 --smoke` prices stage B2, choices not yet made
+# taken at their costliest), and prereg-1 fixes it. `cap_b3_usd` covers stages B1 to B3: set from
+# `harness dry-run b3` and fixed in prereg-2, no lower than the cells never dropped. `reserve_usd`
+# sits on top of it for G3's and G4's addenda and stage B4: $150, as the smoke tests saw several
+# arms think well past 4k tokens a request. At stage B3, `dropped` takes drop_order's items, first
+# to last, until the dry run fits, and `plans` leaves those cells out; only drop_order's cells can
+# ever be dropped.
+cap_b2_usd = 250  # the smoke-priced dry run's $248.40, rounded up (10/16); about $40–70 expected
+# stage B3's dry run (10/17) $910.27, $669.82 never dropped, + $67.79 spent; the rest is room for
+# the canaries' R0 answers repricing R0 (about $50–120) and late GPT-6 at the standard tier
+cap_b3_usd = 1150
+reserve_usd = 150
+drop_order = [
+    "test:C1 marks",  # the flagships' C1 at R1 and R-best
+    "test:C1prime",   # the flagships' C1′ at R0, on G0 and G2
+    "fable",
+    "qa",
+]
+dropped = []

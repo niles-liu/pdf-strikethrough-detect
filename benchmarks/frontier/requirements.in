@@ -1,0 +1,13 @@
+# The frontier benchmark's environment. The package under test comes from its PyPI release, so a
+# later change to the package cannot reach the results; requirements.txt pins every package.
+# Regenerate, only between runs, with:
+#   uv pip compile benchmarks/frontier/requirements.in -o benchmarks/frontier/requirements.txt --universal --python-version 3.14
+pdf-strikethrough-detect[markdown,rapidocr]==0.12.1
+# provider SDKs (xAI goes through the OpenAI SDK)
+anthropic
+google-genai
+google-cloud-storage
+openai
+# the scorer's edit distances, and the tests
+rapidfuzz
+pytest
