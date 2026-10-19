@@ -24,6 +24,7 @@ import contextlib
 import math
 import re
 import sys
+import threading
 
 import pymupdf  # (formerly imported as the deprecated `fitz` alias)
 
@@ -651,22 +652,32 @@ def native_doc_strikes(doc, method="vector"):
     return out
 
 
+# One pymupdf4llm call at a time: _stdout_to_stderr() switches process-wide streams, and two calls
+# that overlapped would each restore what the other switched in, leaving stdout on stderr for good.
+# PyMuPDF is not thread-safe either, so this costs no real parallelism.
+_MARKDOWN_LOCK = threading.Lock()
+
+
 @contextlib.contextmanager
 def _stdout_to_stderr():
-    """Send what pymupdf4llm prints to stderr instead of stdout while it runs. Its layout parser
-    ends with a "=== Document parser messages ===" banner (on PyMuPDF 2.0 without RapidOCR, every
-    call: "RapidOCR is missing"), written with print() and pymupdf.message(), and a library call
-    must not write to its caller's stdout. pymupdf.message() writes to the stream PyMuPDF captured
-    at import, so redirecting sys.stdout alone misses it. Both switches are process-wide while they
-    last."""
+    """Send what pymupdf4llm prints to stderr instead of stdout while it runs. On PyMuPDF 2.0 its
+    layout parser ends every call with a "=== Document parser messages ===" banner ("RapidOCR is
+    missing" without RapidOCR, "Using RapidOCR" with it), written with print() and
+    pymupdf.message(), and older releases print a hint on their first call; a library call must not
+    write to its caller's stdout. pymupdf.message() writes to the stream PyMuPDF captured at import,
+    so redirecting sys.stdout alone misses it; that stream is switched only while it is still the
+    default, so a caller who routed PyMuPDF's messages elsewhere keeps that. Both switches are
+    process-wide while they last: callers hold _MARKDOWN_LOCK."""
     prev = getattr(pymupdf, "_g_out_message", None)     # PyMuPDF has no public getter
-    if prev is not None:
+    swap = (prev is not None and sys.stderr is not None
+            and (prev is sys.stdout or prev is sys.__stdout__))
+    if swap:
         pymupdf.set_messages(stream=sys.stderr)
     try:
         with contextlib.redirect_stdout(sys.stderr):
             yield
     finally:
-        if prev is not None:
+        if swap:
             pymupdf.set_messages(stream=prev)
 
 
@@ -674,8 +685,8 @@ def native_markdown(doc):
     """pymupdf4llm markdown for the whole document — struck spans arrive as ~~text~~. Requires
     the ``[markdown]`` extra; used only for its richer layout (headings, tables, columns). The
     strikeout signal itself is base-PyMuPDF (see :func:`native_flag_strikes`). Anything
-    pymupdf4llm prints goes to stderr, including what older releases print on import."""
-    with _stdout_to_stderr():
+    pymupdf4llm prints goes to stderr, and calls from several threads run one at a time."""
+    with _MARKDOWN_LOCK, _stdout_to_stderr():
         try:
             import pymupdf4llm
         except ImportError as e:

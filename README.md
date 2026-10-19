@@ -88,7 +88,9 @@ development code — 55.2k struck words), **99.8% of vector detections are indep
 by MuPDF's strikeout signal** (99.6–100% per document; 9 of 10 ≥99.9%), and the flag method adds
 ~2.1% more words (font-attribute strikes and edge cases) — use `method="both"` to capture them.
 `pymupdf4llm` is not used for detection at all; it is only an optional `[markdown]` extra for
-richer layout in `clean_markdown()`.
+richer layout in `clean_markdown()`. On Python 3.11+ the extra installs PyMuPDF 2.0, which ships
+pymupdf4llm itself; to stay on PyMuPDF below 2.0 there, install `pymupdf4llm<2` instead of the
+extra.
 
 ## Any PDF — routed per page, scanned pages use OCR + CNN
 

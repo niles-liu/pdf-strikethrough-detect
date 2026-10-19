@@ -48,8 +48,11 @@ dependencies = [
 # empty placeholder: beside a PyMuPDF below 2.0 it installs no module at all. 2.0 needs Python
 # 3.11, so 3.10 takes a real pymupdf4llm (<2; >=0.0.22 introduced ~~ strike spans, >=0.0.27
 # matches the pymupdf>=1.26 base floor) and 3.11+ takes PyMuPDF 2.0.
+# On 3.11+ the placeholder is named too, so the extra keeps installing a pymupdf4llm distribution
+# if a later PyMuPDF stops depending on it.
 markdown = ["pymupdf4llm>=0.0.27,<2; python_version < '3.11'",
-            "pymupdf>=2.0; python_version >= '3.11'"]
+            "pymupdf>=2.0; python_version >= '3.11'",
+            "pymupdf4llm>=2.0; python_version >= '3.11'"]
 rapidocr = ["rapidocr>=3.2", "onnxruntime>=1.16"]   # free, pip-only scanned-word OCR backend
                                                     # (>=3.2: nested word_results shape)
 tesseract = ["pytesseract>=0.3.10"]    # needs the tesseract system binary too

@@ -71,3 +71,37 @@ def test_clean_markdown_writes_nothing_to_stdout(tmp_path):
         capture_output=True, text=True, timeout=300)
     assert run.returncode == 0, run.stderr
     assert run.stdout == ""
+
+
+@needs_markdown
+def test_clean_markdown_in_threads_leaves_stdout_alone(tmp_path):
+    """The stderr switch is process-wide: two calls that overlapped once each restored what the
+    other had switched in, leaving the caller's stdout on stderr for good."""
+    pdf = _struck_pdf(tmp_path / "struck.pdf")
+    code = ("import sys, pymupdf, pdf_strikethrough as st\n"
+            "from concurrent.futures import ThreadPoolExecutor\n"
+            "out, msg = sys.stdout, pymupdf._g_out_message\n"
+            "with ThreadPoolExecutor(4) as pool:\n"
+            "    list(pool.map(st.clean_markdown, [sys.argv[1]] * 8))\n"
+            "assert sys.stdout is out and pymupdf._g_out_message is msg\n"
+            "print('ok')\n")
+    run = subprocess.run([sys.executable, "-c", code, str(pdf)],
+                         capture_output=True, text=True, timeout=600)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "ok\n"
+
+
+@needs_markdown
+def test_clean_markdown_keeps_the_callers_message_routing(tmp_path):
+    """A caller who sent PyMuPDF's messages elsewhere gets pymupdf4llm's banner there, not on
+    stderr (where PyMuPDF prints none, as below 2.0, this holds trivially)."""
+    pdf = _struck_pdf(tmp_path / "struck.pdf")
+    code = ("import io, sys, pymupdf, pdf_strikethrough as st\n"
+            "pymupdf.set_messages(stream=io.StringIO())\n"
+            "msg = pymupdf._g_out_message\n"
+            "st.clean_markdown(sys.argv[1])\n"
+            "assert pymupdf._g_out_message is msg\n")
+    run = subprocess.run([sys.executable, "-c", code, str(pdf)],
+                         capture_output=True, text=True, timeout=300)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "" and "Document parser messages" not in run.stderr
