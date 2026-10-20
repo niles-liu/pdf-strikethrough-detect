@@ -35,6 +35,17 @@ All notable changes to this project are documented here. The format follows
   `tests/test_dependency_floors.py` now fails when its copy and `pyproject.toml` disagree. The
   `pymupdf` floor may rise above `native.FLAG_MIN_PYMUPDF` (1.26.6, where the flag detector's
   1.26.3–1.26.5 crash ends), but still not fall below it.
+- **The `onnxruntime` floor is now 1.18.** PyMuPDF 2.0 loads ONNX layout models when it is
+  imported, and they need ONNX IR version 10, which onnxruntime reads from 1.18. Under 2.0 an older
+  onnxruntime made `import pdf_strikethrough` fail; on Python 3.10 the layout models that
+  pymupdf4llm 1.28 loads broke `clean_markdown()`. 2.0 also makes `import pymupdf` about ten times
+  slower, which adds seconds to the start of each CLI `--jobs` worker that starts a fresh
+  interpreter.
+- **The `pillow` floor is now 10.1.** Pillow 9.2 through 10.0 turn a TIFF with an orientation tag
+  upright on load but still report the tag, so `detect_image_file()` rotated it a second time: an
+  OCR backend got the page sideways, and supplied word boxes drew a spurious EXIF warning. CI's
+  `lowest-bounds` job installed 9.0, which is not affected, so it never showed.
+- **The Gradio demo no longer installs the `[markdown]` extra,** which it never used.
 
 ### Removed
 - **The TestPyPI rehearsal.** A manual run of `publish.yml` tried to publish to TestPyPI, where this
@@ -54,6 +65,7 @@ All notable changes to this project are documented here. The format follows
   installed. The extra now takes `pymupdf4llm>=0.0.27,<2` on Python 3.10 and PyMuPDF 2.0 on 3.11
   and later. On 3.11 and later, `[markdown]` with PyMuPDF pinned below 2.0 now fails to resolve:
   to stay below 2.0 there, install the base package with `pymupdf4llm<2` instead of the extra.
+  Dependabot is told not to lift the `<2` cap.
   New tests cover `clean_markdown()`, which no test called before. Detection output on the
   benchmark corpus is unchanged under 2.0; `clean_markdown()`'s layout changes in places, mostly
   around equations.

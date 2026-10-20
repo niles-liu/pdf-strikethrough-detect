@@ -29,9 +29,13 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.24",
-    "pillow>=9.0",
+    # >=10.1: 9.2-10.0 turn a TIFF with an orientation tag upright on load but still report the
+    # tag, so detect_image_file() rotated it a second time.
+    "pillow>=10.1",
     "scipy>=1.10",
-    "onnxruntime>=1.16",
+    # >=1.18 reads ONNX IR version 10, which the layout models PyMuPDF 2.0 loads on import need;
+    # under 2.0, an older onnxruntime fails `import pymupdf` outright.
+    "onnxruntime>=1.18",
     # >=1.26 for TEXT_COLLECT_STYLES + FZ_STEXT_STRIKEOUT (the flag detector). The floor is 1.26.6
     # because 1.26.3/1.26.4/1.26.5 SEGFAULT in it: get_text("dict") with TEXT_COLLECT_VECTORS
     # raises a native access violation in JM_make_textpage_dict on ordinary real-world PDFs (page 0
@@ -53,7 +57,7 @@ dependencies = [
 markdown = ["pymupdf4llm>=0.0.27,<2; python_version < '3.11'",
             "pymupdf>=2.0; python_version >= '3.11'",
             "pymupdf4llm>=2.0; python_version >= '3.11'"]
-rapidocr = ["rapidocr>=3.2", "onnxruntime>=1.16"]   # free, pip-only scanned-word OCR backend
+rapidocr = ["rapidocr>=3.2", "onnxruntime>=1.18"]   # free, pip-only scanned-word OCR backend
                                                     # (>=3.2: nested word_results shape)
 tesseract = ["pytesseract>=0.3.10"]    # needs the tesseract system binary too
 torch = ["torch>=2.0"]                 # optional .pt fallback for the CNN

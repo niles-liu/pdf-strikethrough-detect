@@ -18,3 +18,8 @@ updates:
     groups:
       python:
         patterns: ["*"]
+    ignore:
+      # The [markdown] extra caps pymupdf4llm below 2 on Python 3.10 on purpose: pymupdf4llm 2.0 is
+      # an empty placeholder for PyMuPDF 2.0, which ships the module (see pyproject.toml).
+      - dependency-name: "pymupdf4llm"
+        versions: [">=2"]
