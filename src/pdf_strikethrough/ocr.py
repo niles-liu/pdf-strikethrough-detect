@@ -270,9 +270,9 @@ def rapidocr_backend(engine=None, **engine_kwargs):
     apply to it, so build it with ``RapidOCR(params={"Global.use_cls": False})``.
 
     A word box that runs past the edge of the page is clamped to it; a word placed wholly off the
-    page keeps its text, on a zero-width box at the edge. RapidOCR detection is phrase/line-grained, so its word boxes run
-    coarser than a true word-level engine — good for locating struck regions, weaker for per-word
-    char spans."""
+    page keeps its text, on a zero-width box at the edge. RapidOCR detection is phrase/line-grained,
+    so its word boxes run coarser than a true word-level engine: good for locating struck regions,
+    weaker for per-word char spans."""
     if engine is None:
         engine_kwargs["params"] = {**_RAPIDOCR_DEFAULT_PARAMS,
                                    **(engine_kwargs.get("params") or {})}

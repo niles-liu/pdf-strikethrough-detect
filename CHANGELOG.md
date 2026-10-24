@@ -108,10 +108,10 @@ All notable changes to this project are documented here. The format follows
   word partly or wholly past the edge of the page (the last word of one equation line ran from
   0.78 to 1.57 of the page width). `Word` refuses a box past 1.5, its guard against pixel
   coordinates, so `rapidocr_backend()` raised `ValueError` inside `detect_pdf()` or
-  `detect_image_file()` and the call returned nothing. The backend now clamps each word box to the
-  page, so a word placed wholly off it keeps its text on a zero-width box at the edge; a box only
-  slightly past the edge, which `Word` accepted before, is clamped too. `Word` still refuses a box
-  past 1.5 from any other source.
+  `detect_image_file()` and the call raised, so nothing came back. The backend now clamps each word
+  box to the page, so a word placed wholly off it keeps its text on a zero-width box at the edge; a
+  box only slightly past the edge, which `Word` accepted before, is clamped too. `Word` still
+  refuses a box past 1.5 from any other source.
 
 ## [0.12.1] — 2026-10-08
 
