@@ -1,7 +1,8 @@
 """The RapidOCR adapter: the engine it builds (orientation classifier off unless the caller turns it
-on, a caller's engine used as is) and the word boxes it hands on (one placed off the page is
-clipped to it, not refused along with the whole document). Fake engines stand in for RapidOCR,
-so none of this needs the extra installed."""
+on, a caller's engine used as is), the word boxes it hands on (one placed off the page is
+clipped to it, not refused along with the whole document) and the lone CJK characters it removes
+from a page without CJK text. Fake engines stand in for RapidOCR, so all but the last test run
+without the extra installed."""
 import sys
 import types
 from types import SimpleNamespace
@@ -35,19 +36,21 @@ def _fake_rapidocr_module(monkeypatch):
 
 
 class _Engine:
-    """A stand-in RapidOCR engine reading one line of words. Boxes are given in page fractions and
-    reported as pixel corner points of the image it is called on, as RapidOCR reports them."""
+    """A stand-in RapidOCR engine reading one line of words, or one line per argument. Boxes are
+    given in page fractions and reported as pixel corner points of the image it is called on, as
+    RapidOCR reports them."""
 
-    def __init__(self, words):
-        self.words, self.calls = words, []
+    def __init__(self, words, *more_lines):
+        self.lines, self.calls = (words, *more_lines), []
 
     def __call__(self, image, return_word_box):
         self.calls.append((image.shape, return_word_box))
         h, w = image.shape[:2]
-        line = tuple((text, 0.99, [[x0 * w, y0 * h], [x1 * w, y0 * h], [x1 * w, y1 * h],
-                                   [x0 * w, y1 * h]])
-                     for text, (x0, y0, x1, y1) in self.words)
-        return SimpleNamespace(word_results=(line,))
+        return SimpleNamespace(word_results=tuple(
+            tuple((text, 0.99, [[x0 * w, y0 * h], [x1 * w, y0 * h], [x1 * w, y1 * h],
+                                [x0 * w, y1 * h]])
+                  for text, (x0, y0, x1, y1) in line)
+            for line in self.lines))
 
 
 # ----------------------------------------------------------------------- the engine it builds
@@ -129,3 +132,81 @@ def test_detect_pdf_reads_past_an_off_page_box():
     res = st.detect_pdf(doc.tobytes(), ocr=rapidocr_backend(engine=engine))
     assert res["page_sources"] == ["scanned"]
     assert _struck(res) == ["struck"] and res["clean_text"].split() == ["keep", "tail"]
+
+
+# ------------------------------------------------------------------ lone CJK characters it removes
+
+def _row(*texts):
+    """One line of words, each 0.04 wide, left to right."""
+    return [(t, (0.1 + 0.05 * i, 0.2, 0.14 + 0.05 * i, 0.23)) for i, t in enumerate(texts)]
+
+
+def _texts(words):
+    return [w.text for w in words]
+
+
+_TABLE_ROW = _row("67.8", "(", "斗", ")", "17.38")     # a footnote marker (a) read as a Han character
+
+
+def test_a_lone_cjk_character_on_an_english_page_is_removed():
+    words = rapidocr_backend(engine=_Engine(_TABLE_ROW))(_BLANK)
+    assert _texts(words) == ["67.8", "(", ")", "17.38"]
+
+
+def test_drop_lone_cjk_false_keeps_it(monkeypatch):
+    words = rapidocr_backend(engine=_Engine(_TABLE_ROW), drop_lone_cjk=False)(_BLANK)
+    assert _texts(words) == ["67.8", "(", "斗", ")", "17.38"]
+    built = _fake_rapidocr_module(monkeypatch)
+    rapidocr_backend(drop_lone_cjk=False)(_BLANK)
+    assert built == [{"params": {"Global.use_cls": False}}]   # the switch never reaches RapidOCR
+
+
+@pytest.mark.parametrize("texts", [
+    ("第", "三", "条", "2024", "斗"),             # RapidOCR returns each Han character as a word
+    ("Mr.", "王", "小", "明", "(Wang)", "斗"),     # a name in an English line
+    ("Ver.", "データ", "2", "二"),                 # a kana word
+    ("the", "人々", "of", "二"),                   # the iteration mark counts as a character
+])
+def test_a_page_with_cjk_text_is_left_as_read(texts):
+    words = rapidocr_backend(engine=_Engine(_row(*texts)))(_BLANK)
+    assert _texts(words) == list(texts)            # the lone character beside the run stays too
+
+
+def test_two_characters_ending_and_starting_two_lines_are_cjk_text():
+    first = [("Signed", (0.1, 0.2, 0.2, 0.23)), ("王", (0.21, 0.2, 0.23, 0.23))]
+    second = [("明", (0.1, 0.3, 0.12, 0.33)), ("Wang", (0.13, 0.3, 0.2, 0.33)),
+              ("斗", (0.21, 0.3, 0.23, 0.33))]
+    words = rapidocr_backend(engine=_Engine(first, second))(_BLANK)
+    assert _texts(words) == ["Signed", "王", "明", "Wang", "斗"]
+
+
+def test_a_cjk_character_inside_a_word_becomes_a_space():
+    row = _row("xニ1", "2019ー2020", "ニ1", "aニ", "Total", "二", "。", "（a）", "A・B")
+    words = rapidocr_backend(engine=_Engine(row))(_BLANK)
+    # inside a word a space, at either end cut; a lone Han character dropped; CJK punctuation,
+    # fullwidth forms and the katakana middle dot kept
+    assert _texts(words) == ["x 1", "2019 2020", "1", "a", "Total", "。", "（a）", "A・B"]
+    for w, (_, box) in zip(words[:4], row[:4]):
+        assert w.bbox == pytest.approx(box)                 # the box of the word it came from
+
+
+def _han_page():
+    """A 200-dpi RGB render of a Chinese and a Japanese line, set in PyMuPDF's built-in CJK fonts."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=420, height=150)
+    page.insert_text((30, 60), "合同双方应当按照约定全面履行义务。", fontsize=16, fontname="china-s")
+    page.insert_text((30, 100), "第五条 秘密保持義務は存続する。", fontsize=16, fontname="japan")
+    pix = page.get_pixmap(dpi=200)
+    return np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width, pix.n)[..., :3]
+
+
+def test_real_rapidocr_reads_a_cjk_page_unchanged():
+    pytest.importorskip("rapidocr")
+    from rapidocr import RapidOCR
+
+    from pdf_strikethrough.ocr import _CJK
+    engine, image = RapidOCR(params={"Global.use_cls": False}), _han_page()
+    kept = rapidocr_backend(engine=engine)(image)
+    read = rapidocr_backend(engine=engine, drop_lone_cjk=False)(image)
+    assert _texts(kept) == _texts(read)
+    assert sum(len(_CJK.findall(w.text)) for w in kept) >= 20

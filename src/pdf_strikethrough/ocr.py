@@ -23,6 +23,7 @@ rests on geometry + the CNN alone.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 
@@ -256,7 +257,60 @@ def _clip_to_page(bbox):
     return tuple(min(max(v, 0.0), 1.0) for v in bbox)
 
 
-def rapidocr_backend(engine=None, **engine_kwargs):
+# CJK letters and ideographs. CJK punctuation (U+3000-303F but for U+3005), the katakana double
+# hyphen and middle dot (U+30A0, U+30FB) and fullwidth forms (U+FF00-FF65) are left out: a misread
+# there stands for punctuation or a Latin letter.
+_CJK_RANGES = (
+    (0x1100, 0x11FF),       # Hangul jamo
+    (0x2E80, 0x2FDF),       # CJK and Kangxi radicals
+    (0x3005, 0x3005),       # the ideographic iteration mark
+    (0x3040, 0x309F),       # hiragana
+    (0x30A1, 0x30FA),       # katakana
+    (0x30FC, 0x30FF),       # katakana length and iteration marks
+    (0x3100, 0x318F),       # bopomofo, Hangul compatibility jamo
+    (0x31A0, 0x31FF),       # bopomofo extended, CJK strokes, katakana extensions
+    (0x3400, 0x4DBF),       # CJK Extension A
+    (0x4E00, 0x9FFF),       # CJK Unified Ideographs
+    (0xA960, 0xA97F),       # Hangul jamo extended A
+    (0xAC00, 0xD7FF),       # Hangul syllables, jamo extended B
+    (0xF900, 0xFAFF),       # CJK compatibility ideographs
+    (0xFF66, 0xFFDC),       # halfwidth katakana and Hangul
+    (0x20000, 0x3FFFF),     # CJK Extensions B and later
+)
+_CJK_CLASS = "[" + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _CJK_RANGES) + "]"
+_CJK = re.compile(_CJK_CLASS)
+_CJK_PAIR = re.compile(_CJK_CLASS + "{2}")
+
+
+def _has_cjk_text(words):
+    """True when two CJK characters stand next to each other, in one word or across two words in
+    reading order. RapidOCR returns each Han character as a word of its own, so CJK text reads as
+    runs of one-character words, while its misreads on a Latin page stand alone."""
+    prev_cjk = False
+    for w in words:
+        text = w.text.strip()
+        if _CJK_PAIR.search(text) or (prev_cjk and text and _CJK.match(text)):
+            return True
+        prev_cjk = bool(text) and _CJK.match(text[-1]) is not None
+    return False
+
+
+def _drop_lone_cjk(words):
+    """Words with every CJK character removed, when no two CJK characters on the page stand next
+    to each other. One inside a word becomes a space, which keeps the word's characters where they
+    sit in its box; a word left with no text is dropped. A page with CJK text is returned as is."""
+    if not any(_CJK.search(w.text) for w in words) or _has_cjk_text(words):
+        return words
+    out = []
+    for w in words:
+        if not _CJK.search(w.text):
+            out.append(w)
+        elif text := _CJK.sub(" ", w.text).strip():
+            out.append(Word(text, w.bbox, w.confidence))
+    return out
+
+
+def rapidocr_backend(engine=None, *, drop_lone_cjk=True, **engine_kwargs):
     """Return an OCR backend using RapidOCR (ONNX, no system binary). Requires the `rapidocr`
     extra (``>=3.2``). The engine is built lazily as ``RapidOCR(**engine_kwargs)``, with
     ``params={"Global.use_cls": False}`` merged under any ``params`` you pass: RapidOCR's
@@ -268,6 +322,18 @@ def rapidocr_backend(engine=None, **engine_kwargs):
 
     `engine` may be a preconstructed ``rapidocr.RapidOCR``, used as is: the default above does not
     apply to it, so build it with ``RapidOCR(params={"Global.use_cls": False})``.
+
+    RapidOCR's default recognizer reads Chinese and Japanese as well as English, and on a Latin
+    page it can read a small mark as a CJK character (a table's footnote marker ``(a)`` as ``(斗)``,
+    an ``=`` as ``二``). So on a page where no two CJK characters (Han, kana, Hangul, bopomofo) come
+    one right after the other in reading order (inside a word, or the last of one word and the
+    first of the next, across a line break too; a digit in between breaks the run), each one is
+    removed: a word left empty is dropped, and one inside a word becomes a space. Real CJK goes too
+    when it stands alone like that: ``100 円``, ``5 個`` and ``7 元`` lose the unit, and
+    ``Article 1 (第1条)`` reads ``(1)``. A page with CJK text, where the characters come in runs, is
+    returned as read. CJK punctuation and fullwidth forms are kept. Pass ``drop_lone_cjk=False`` to
+    keep every character; it applies to an `engine` you pass too. The CLI's ``--ocr rapidocr``
+    always removes them.
 
     A word box that runs past the edge of the page is clamped to it; a word placed wholly off the
     page keeps its text, on a zero-width box at the edge. RapidOCR detection is phrase/line-grained,
@@ -310,7 +376,7 @@ def rapidocr_backend(engine=None, **engine_kwargs):
                 if bbox is not None:
                     out.append(Word(str(text), bbox,
                                     float(score) if score is not None else None))
-        return out
+        return _drop_lone_cjk(out) if drop_lone_cjk else out
 
     return backend
 
