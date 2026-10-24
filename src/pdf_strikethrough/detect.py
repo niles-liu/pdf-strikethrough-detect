@@ -477,16 +477,21 @@ def _native_word_seq(page, words=None):
 def _match_native_seq(page, recs, words=None):
     """Reading-order [(text, bbox_frac, rec_or_None)] for a native page. Both detectors emit
     get_text('words') boxes, so records match by exact (bbox, text) key; a same-text spatial
-    fallback (record center inside the word box) covers any residual float drift. ``words``
-    optionally supplies this page's ``get_text("words")`` output (default None = extract here)."""
-    by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
+    fallback (record center inside the word box) covers any residual float drift. Text is compared
+    without U+0336 overlays, and a matched word takes its record's text, since a vector record
+    drops the overlays its span strikes. ``words`` optionally supplies this page's
+    ``get_text("words")`` output (default None = extract here)."""
+    def bare(text):
+        return text.replace(native.OVERLAY, "")
+
+    by_key = {(r["bbox_frac"], bare(r["text"])): r for r in recs}
     matched = set()
     seq = []
     for t, b in _native_word_seq(page, words):
-        rec = by_key.get((b, t))
+        rec = by_key.get((b, bare(t)))
         if rec is None:
             for r in recs:
-                if r["text"] != t or id(r) in matched:
+                if bare(r["text"]) != bare(t) or id(r) in matched:
                     continue
                 cx = (r["bbox_frac"][0] + r["bbox_frac"][2]) / 2
                 cy = (r["bbox_frac"][1] + r["bbox_frac"][3]) / 2
@@ -495,6 +500,7 @@ def _match_native_seq(page, recs, words=None):
                     break
         if rec is not None:
             matched.add(id(rec))
+            t = rec["text"]
         seq.append((t, b, rec))
     return seq
 
@@ -693,6 +699,9 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         for done, pno in enumerate(page_indices, start=1):
             page = doc[pno]
             recs, seq = [], []
+            # on native pages, the detectors that read U+0336 overlays ('vector', 'both') also
+            # drop from clean_text the overlaid characters a record's one span leaves out
+            overlays = False
             log.debug("page %d/%d (index %d): source=%s", done, total, pno, sources[pno])
             if sources[pno] == "native":
                 nat_words = page.get_text("words")   # extract once; threaded through both detectors
@@ -701,6 +710,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                     r["final"], r["verdict"] = True, "struck"
                 if include_markdown:
                     seq = _match_native_seq(page, recs, words=nat_words)
+                    overlays = method in ("vector", "both")
                 log.debug("page %d: native detector (%s) -> %d strike record(s)",
                           pno, method, len(recs))
             elif sources[pno] == "scanned":
@@ -749,6 +759,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         r["final"], r["verdict"] = True, "struck"
                     if include_markdown:
                         seq = _match_native_seq(page, recs, words=nat_words)
+                        overlays = method in ("vector", "both")
                 elif di_pages is not None and on_missing_ocr != "skip":
                     covered = ", ".join(str(p) for p in sorted(di_pages)) or "none"
                     raise ValueError(
@@ -767,7 +778,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             words.extend(recs)
             if include_markdown:
                 page_md.append(_md.page_markdown(seq))
-                page_clean.append(_md.page_clean_text(seq))
+                page_clean.append(_md.page_clean_text(seq, drop_overlaid=overlays))
                 for ps in _md.group_passages(seq):
                     ps["page"] = pno
                     passages.append(ps)

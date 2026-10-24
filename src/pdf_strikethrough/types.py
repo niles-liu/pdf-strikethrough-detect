@@ -31,7 +31,8 @@ Verdict = Literal["struck", "clean", "unsure"]
 class StruckWord(TypedDict, total=False):
     """One struck-word record. Keys common to all tiers first, then tier-specific ones."""
     page: int
-    text: str                    # the full OCR/extracted word
+    text: str                    # the full OCR/extracted word ('vector': less the U+0336
+                                 # overlays on the characters `char_span` reports)
     chars: str                   # just the struck substring (== text on a full strike)
     char_span: CharSpan          # offsets of `chars` within `text`
     partial: bool                # True when only some characters are struck
@@ -40,9 +41,11 @@ class StruckWord(TypedDict, total=False):
     verdict: Verdict
     final: bool                  # the ship decision: is this word reported as struck?
     # native only
-    coverage: float              # vector: fraction of the word's width the stroke spans;
+    coverage: float              # vector: fraction of the word's width the stroke spans (with
+                                 # U+0336 overlays, that its struck characters' boxes span);
                                  # flag/annot: fraction of its characters that are struck
-    # native 'vector' only — forensics from the dominant contributing stroke
+    # native 'vector' only: forensics from the dominant contributing stroke (absent when
+    # U+0336 overlays alone strike the word)
     stroke_color: Tuple[float, float, float]   # RGB in [0, 1]; unset paint reads as black
     stroke_width: float          # stroke line width (pt), or bar height for a filled-rect strike
     # native 'annot' only — /StrikeOut annotation forensics (present when the annotation supplies)

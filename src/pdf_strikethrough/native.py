@@ -10,6 +10,14 @@ a genuine partial strike ('semi-' of 'semi-monthly', '19' of '192012'). The stru
 the ones the strike crosses, read from MuPDF's per-character boxes; a word is a FULL strike only
 when every character is struck.
 
+Text can also be struck in the text layer itself, as online strikethrough generators write it: each
+character followed by U+0336 COMBINING LONG STROKE OVERLAY (``o̶f̶``). The vector detector reads
+that too: every character an overlay follows is struck. The overlay characters are strike marks,
+not text, so its record drops those on the characters it reports (``text`` is ``of``, its
+``char_span`` indexes that); 'flag' and 'annot' don't read them and leave the text as it is. Only
+U+0336 is read: the other overlays (U+0334, the short U+0335 and U+0337, and U+0338, the slash
+of a decomposed ≠) are left as they are.
+
 All output bbox_frac values are fractions of the ROTATED (as-rendered) page, so they map
 directly onto ``page.get_pixmap()`` output; detection itself runs in MuPDF's unrotated text
 space, where strikes over upright text stay horizontal regardless of /Rotate.
@@ -25,6 +33,7 @@ import math
 import re
 import sys
 import threading
+import unicodedata
 from collections import namedtuple
 
 import pymupdf  # (formerly imported as the deprecated `fitz` alias)
@@ -46,6 +55,8 @@ DASH_MAX_SEG = 6.0       # pt; a segment shorter than this may be a dash, so it 
 DASH_MAX_GAP = 4.0       # pt; max x-gap between dashes of one chained strike
 
 FLAG_MIN_WCOV = 0.15     # a span on a word with no character boxes must cover >= this of it
+
+OVERLAY = "\N{COMBINING LONG STROKE OVERLAY}"    # U+0336: strikes the character before it
 
 METHODS = ("vector", "flag", "annot", "both")    # the native detectors page_strikes selects
 
@@ -332,6 +343,83 @@ class _PageChars:
         return [v for v in self._visible if r.intersects(v)]
 
 
+def _attaches(c):
+    """A combining mark, or a format character (a joiner, a soft hyphen): part of the character
+    before it, never a base an overlay strikes on its own."""
+    cat = unicodedata.category(c)
+    return cat[0] == "M" or cat == "Cf"
+
+
+def _split_overlay(txt):
+    """``(text, struck, keep)`` for text that may carry U+0336 overlays: the text without them, a
+    per-character mask of the characters they strike, and the index in `txt` of each character
+    kept. An overlay strikes the base character before it with everything :func:`_attaches` to
+    that base, before or after the overlay (normalization puts U+0336, combining class 1, ahead of
+    most accents: ``e`` U+0336 U+0301). One with no base character before it (at the start of a
+    word, or after whitespace, where it struck a space) strikes nothing."""
+    if OVERLAY not in txt:
+        return txt, [False] * len(txt), range(len(txt))
+    keep, struck, base = [], [], None
+    for i, c in enumerate(txt):
+        if c == OVERLAY:
+            if base is not None:
+                struck[base:] = [True] * (len(struck) - base)
+            continue
+        mark = _attaches(c)
+        if c.isspace():
+            base = None
+        elif not mark:
+            base = len(keep)
+        keep.append(i)
+        struck.append(mark and base is not None and struck[base])
+    return "".join(txt[i] for i in keep), struck, keep
+
+
+def _drop_overlaid(text):
+    """`text` without the characters U+0336 overlays strike, or the overlays."""
+    if OVERLAY not in text:
+        return text
+    bare, struck, _keep = _split_overlay(text)
+    return "".join(c for c, s in zip(bare, struck) if not s)
+
+
+def _overlay_text(raw, c0, c1):
+    """``(text, t0, t1)``: a word's `raw` text with the U+0336 overlays that strike characters
+    ``[c0, c1)`` of its overlay-free text dropped, along with those that strike nothing. Overlays on
+    characters outside that span stay, so text a record can't report still reads as struck.
+    ``(t0, t1)`` is the span in the returned text. Bases are found as :func:`_split_overlay` finds
+    them."""
+    out, n, base, t0, t1 = [], 0, None, None, None
+    for c in raw:
+        if c == OVERLAY:
+            if base is not None and not c0 <= base < c1:
+                out.append(c)
+            continue
+        if n == c0:
+            t0 = len(out)
+        if n == c1:
+            t1 = len(out)
+        if c.isspace():
+            base = None
+        elif not _attaches(c):
+            base = n
+        out.append(c)
+        n += 1
+    return "".join(out), t0, len(out) if t1 is None else t1
+
+
+def _runs(mask):
+    """``[(start, end), ...]``: the runs of True in a per-character mask."""
+    runs, start = [], None
+    for i, s in enumerate([*mask, False]):
+        if s and start is None:
+            start = i
+        elif not s and start is not None:
+            runs.append((start, i))
+            start = None
+    return runs
+
+
 def _even_char_boxes(word):
     """Fallback character boxes: the word box split into equal-width slices, one per character."""
     x0, y0, x1, y1, txt = word[:5]
@@ -346,13 +434,7 @@ def _struck_span(txt, struck, cov, exact, enters=(False, False)):
     STRUCK_COV) drop a stroke end clipping a neighbor; they apply when the boxes are not `exact`
     or the run touches an edge the mark `enters` from outside ``(from_left, from_right)``. A mark
     inside a word with exact boxes is a strike however small ('(ed)' striking just the 'd')."""
-    runs, start = [], None
-    for i, s in enumerate([*struck, False]):
-        if s and start is None:
-            start = i
-        elif not s and start is not None:
-            runs.append((start, i))
-            start = None
+    runs = _runs(struck)
     if not runs:
         return None
     if runs == [(0, len(txt))]:
@@ -362,6 +444,76 @@ def _struck_span(txt, struck, cov, exact, enters=(False, False)):
     if (not exact or overshoot) and (cov < PARTIAL_COV or (cov < STRUCK_COV and c1 - c0 < 2)):
         return None
     return c0, c1, False
+
+
+def _in_char_band(box, y):
+    """Whether height `y` lies in one character's own middle band, ``[y0 + MID_BAND*h,
+    y1 - MID_BAND*h]`` of its `box`."""
+    h = box[3] - box[1]
+    return box[1] + MID_BAND * h <= y <= box[3] - MID_BAND * h
+
+
+def _fits(s, box):
+    """Whether stroke `s` (a :func:`_strokes` tuple) counts on the character with this `box`: a
+    stroke at least DASH_MAX_SEG long counts wherever the word's middle band takes it; a shorter
+    one (a fraction bar, a root's bar) only through the character's own middle band, since in a
+    word mixing sizes the word's band also takes in rules above or below the small characters."""
+    return s[5] >= DASH_MAX_SEG or _in_char_band(box, s[2])
+
+
+def _through_strokes(word, mid, found, boxes, chars):
+    """The strokes in `mid` (:func:`_strokes` tuples through the word's middle band) that strike
+    its text: on an invisible word laid over visible text, a short stroke only through the middle
+    of a visible character beneath, not as its underline; on a tilted line, no leaning stroke (a
+    slanted line along slanted text crosses its upright box); and a short stroke only through some
+    character's own middle band (:func:`_fits`). `boxes` are the word's characters' (overlays left
+    out)."""
+    if found is not None:
+        under = chars.visible_under(word) if found.hidden else []
+        if under:
+            mid = [s for s in mid if s[5] >= DASH_MAX_SEG or any(
+                min(s[1], v.x1) > max(s[0], v.x0) and _in_char_band(v, s[2]) for v in under)]
+        if found.tilted:
+            mid = [s for s in mid if not s[6]]
+    return [s for s in mid if s[5] >= DASH_MAX_SEG or any(
+        _fits(s, b) and min(s[1], b[2]) > max(s[0], b[0]) for b in boxes)]
+
+
+def _stroke_span(word, txt, boxes, exact, mid):
+    """``(span, cov)`` for the strokes in `mid` (:func:`_strokes` tuples, already through the
+    word's text): `span` as :func:`_struck_span` gives it for `txt` (the word's text without
+    overlays) from its character `boxes` (`exact` when MuPDF's, not an even split), `cov` the
+    share of the word's width the strokes cover. A character is struck by the strokes that
+    :func:`_fits` it."""
+    wx0, wx1 = word[0], word[2]
+    merged, covered = _merged_intervals(wx0, wx1, [s[:2] for s in mid])
+    cov = covered / max(wx1 - wx0, 1e-6)
+    struck = []
+    for bx in boxes:
+        bx0, bx1 = bx[0], bx[2]
+        own = merged
+        if not all(_fits(s, bx) for s in mid):
+            own = _merged_intervals(wx0, wx1, [s[:2] for s in mid if _fits(s, bx)])[0]
+        if bx1 - bx0 <= 1e-6:
+            # zero-width: the rest of a ligature ('fi' gives an 'f' spanning the glyph and an
+            # 'i' at its right edge) or a combining mark, so it goes with the character before
+            struck.append(struck[-1] if struck else any(a <= bx0 <= b for a, b in own))
+        else:
+            covered = sum(max(0.0, min(b, bx1) - max(a, bx0)) for a, b in own)
+            struck.append(covered >= CHAR_STRUCK_COV * (bx1 - bx0))
+    if exact:
+        # a sub/superscript next to a struck character is struck with it: redline tools strike
+        # it at its own height with a stub too short to pass as a stroke
+        tall = max(b[3] - b[1] for b in boxes)
+        for order in (range(len(boxes)), range(len(boxes) - 1, -1, -1)):
+            prev = None
+            for i in order:
+                if (not struck[i] and boxes[i][3] - boxes[i][1] <= 0.8 * tall
+                        and prev is not None and struck[prev]):
+                    struck[i] = True
+                prev = i
+    enters = (any(s[0] < wx0 - 1.0 for s in mid), any(s[1] > wx1 + 1.0 for s in mid))
+    return _struck_span(txt, struck, cov, exact=exact, enters=enters), cov
 
 
 def native_page_strikes(page, page_index, words=None, _chars=None):
@@ -374,99 +526,84 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
     the dominant contributing stroke — pen-color conventions (red = opposing counsel) are evidence
     in legal review.
 
+    Characters followed by U+0336 overlays are struck too, and ``text`` leaves out the overlays on
+    the characters ``char_span`` reports. A record holds one span, so where a word has more than
+    one struck run it reports the drawn strike's span merged with any overlay run it touches, else
+    the longest overlay run; overlays on the other runs stay in ``text`` and ``markdown`` so that
+    text still reads as struck (``detect_pdf``'s ``clean_text`` drops it). A word struck by
+    overlays alone has no stroke, so its record carries no ``stroke_color`` or ``stroke_width``.
+
     ``words`` optionally supplies this page's ``get_text("words")`` output so a caller running
     several detectors on the same page extracts it once instead of per detector (default None =
     extract here).
     """
     if words is None:
         words = page.get_text("words")
-    # below the 3 pt width floor, gridlines crossing glyphs outnumber real strikes
-    words = [w for w in words
-             if w[4].strip() and (w[3] - w[1]) >= 4 and (w[2] - w[0]) >= 3]
-    if not words:
-        return []
-    strokes = _strokes(page)
-    if not strokes:
+    items = []                                # (word, text, overlay mask, kept indices, sized)
+    for w in words:
+        txt, over, keep = _split_overlay(w[4])
+        if not txt.strip():
+            continue
+        # below the 3 pt width floor, gridlines crossing glyphs outnumber real strikes
+        sized = (w[3] - w[1]) >= 4 and (w[2] - w[0]) >= 3
+        if sized or any(over):
+            items.append((w, txt, over, keep, sized))
+    strokes = _strokes(page) if any(it[4] for it in items) else []
+    if not strokes and not any(any(it[2]) for it in items):
         return []
     chars = _chars if _chars is not None else _PageChars(page)
 
     out = []
-    for word in words:
-        wx0, wy0, wx1, wy1, txt = word[:5]
+    for word, txt, over, keep, sized in items:
+        wx0, wy0, wx1, wy1 = word[:4]
         wh = wy1 - wy0
         max_wid = max(MAX_RECT_H, MAX_STROKE_FRAC * wh)
         mid = [s for s in strokes
                if wy0 + MID_BAND * wh <= s[2] <= wy1 - MID_BAND * wh
-               and min(s[1], wx1) > max(s[0], wx0) and s[4] <= max_wid]
-        if not mid:
+               and min(s[1], wx1) > max(s[0], wx0) and s[4] <= max_wid] if sized else []
+        overlaid = any(over)
+        if not mid and not overlaid:
             continue
         found = chars.lookup(word)
-        if found is not None:
-            if found.vertical:
-                continue    # vertical text: a horizontal line crosses it, it does not strike it
-            under = chars.visible_under(word) if found.hidden else []
-            if under:
-                # an invisible word laid over visible text follows it: a short stroke counts only
-                # through the middle of the visible characters beneath, not as their underline
-                mid = [s for s in mid if s[5] >= DASH_MAX_SEG or any(
-                    min(s[1], v.x1) > max(s[0], v.x0)
-                    and v.y0 + MID_BAND * v.height <= s[2] <= v.y1 - MID_BAND * v.height
-                    for v in under)]
-            if found.tilted:
-                mid = [s for s in mid if not s[6]]     # a slanted line along slanted text
-        boxes = found.boxes if found is not None else _even_char_boxes(word)
-        # a stroke shorter than DASH_MAX_SEG (a fraction bar, a root's bar) counts only on a
-        # character whose own middle band it crosses: in a word mixing sizes, the word's band
-        # also takes in rules above or below the small characters
-        bands = [(by0 + MID_BAND * (by1 - by0), by1 - MID_BAND * (by1 - by0))
-                 for _, by0, _, by1 in boxes]
-
-        def fits(s, i, bands=bands):
-            return s[5] >= DASH_MAX_SEG or bands[i][0] <= s[2] <= bands[i][1]
-
-        mid = [s for s in mid if s[5] >= DASH_MAX_SEG or any(
-            fits(s, i) and min(s[1], b[2]) > max(s[0], b[0]) for i, b in enumerate(boxes))]
-        if not mid:
-            continue
-        merged, covered = _merged_intervals(wx0, wx1, [s[:2] for s in mid])
-        cov = covered / max(wx1 - wx0, 1e-6)
-        struck = []
-        for i, (bx0, _, bx1, _) in enumerate(boxes):
-            own = merged
-            if not all(fits(s, i) for s in mid):
-                own = _merged_intervals(wx0, wx1, [s[:2] for s in mid if fits(s, i)])[0]
-            if bx1 - bx0 <= 1e-6:
-                # zero-width: the rest of a ligature ('fi' gives an 'f' spanning the glyph and an
-                # 'i' at its right edge) or a combining mark, so it goes with the character before
-                struck.append(struck[-1] if struck else any(a <= bx0 <= b for a, b in own))
-            else:
-                covered = sum(max(0.0, min(b, bx1) - max(a, bx0)) for a, b in own)
-                struck.append(covered >= CHAR_STRUCK_COV * (bx1 - bx0))
-        if found is not None:
-            # a sub/superscript next to a struck character is struck with it: redline tools strike
-            # it at its own height with a stub too short to pass as a stroke
-            tall = max(b[3] - b[1] for b in boxes)
-            for order in (range(len(boxes)), range(len(boxes) - 1, -1, -1)):
-                prev = None
-                for i in order:
-                    if (not struck[i] and boxes[i][3] - boxes[i][1] <= 0.8 * tall
-                            and prev is not None and struck[prev]):
-                        struck[i] = True
-                    prev = i
-        enters = (any(s[0] < wx0 - 1.0 for s in mid), any(s[1] > wx1 + 1.0 for s in mid))
-        span = _struck_span(txt, struck, cov, exact=found is not None, enters=enters)
+        vertical = found is not None and found.vertical
+        if vertical and not overlaid:
+            continue        # vertical text: a horizontal line crosses it, it does not strike it
+        boxes = ([found.boxes[i] for i in keep] if found is not None
+                 else _even_char_boxes((wx0, wy0, wx1, wy1, txt)))
+        mid = _through_strokes(word, mid, found, boxes, chars) if mid and not vertical else []
+        span, cov = (_stroke_span(word, txt, boxes, found is not None, mid)
+                     if mid else (None, 0.0))
+        stroked = span is not None
+        text = txt
+        if overlaid:
+            # an overlay is written into the text, so no grazing guard applies to it. It joins the
+            # stroke span in one mask, so a character both strike counts once. A record holds one
+            # span: the drawn strike's merged with any overlay run it touches, so overlays never
+            # displace it, else the longest overlaid run; overlays outside it stay in the text
+            mask = [o or (stroked and span[0] <= i < span[1]) for i, o in enumerate(over)]
+            runs = _runs(mask)
+            c0, c1 = (next(r for r in runs if r[0] <= span[0] and span[1] <= r[1]) if stroked
+                      else max(runs, key=lambda r: r[1] - r[0]))
+            # still a width share: the struck characters' boxes over the word's width
+            ivals = [(b[0], b[2]) for b, s in zip(boxes, mask) if s]
+            cov = _merged_intervals(wx0, wx1, ivals)[1] / max(wx1 - wx0, 1e-6)
+            text, t0, t1 = _overlay_text(word[4], c0, c1)
+            span = (t0, t1, (c0, c1) == (0, len(txt)))
         if span is None:
             continue
         c0, c1, full = span
-        # forensics: report the paint of the stroke that covers the most of this word's width
-        dom = max(mid, key=lambda s: min(s[1], wx1) - max(s[0], wx0))
-        out.append({
-            "page": page_index, "text": txt, "chars": txt[c0:c1], "char_span": (c0, c1),
+        rec = {
+            "page": page_index, "text": text, "chars": text[c0:c1], "char_span": (c0, c1),
             "partial": not full,
             "bbox_frac": _bbox_frac(page, wx0, wy0, wx1, wy1),
-            "coverage": round(cov, 3), "stroke_color": dom[3], "stroke_width": dom[4],
-            "tier": "vector", "verdict": "struck", "final": True,
-        })
+            "coverage": round(cov, 3),
+        }
+        if stroked:
+            # forensics: report the paint of the stroke that covers the most of this word's width
+            dom = max(mid, key=lambda s: min(s[1], wx1) - max(s[0], wx0))
+            rec["stroke_color"], rec["stroke_width"] = dom[3], dom[4]
+        rec.update(tier="vector", verdict="struck", final=True)
+        out.append(rec)
     out.sort(key=lambda h: (round(h["bbox_frac"][1], 3), h["bbox_frac"][0]))
     return out
 
@@ -671,9 +808,28 @@ def _covering_record(records, rec):
     return None
 
 
+def _bare_span(rec):
+    """A record's ``char_span`` counted in characters other than U+0336, so records whose text
+    keeps different overlays compare."""
+    t, (c0, c1) = rec["text"], rec["char_span"]
+    return len(t[:c0].replace(OVERLAY, "")), len(t[:c1].replace(OVERLAY, ""))
+
+
+def _displaces(rec, cov):
+    """Whether flag/annot record `rec` replaces `cov`, the record covering its word, in 'both':
+    when `cov` is a vector record struck by overlays alone (no stroke) and `rec` strikes characters
+    outside its span. One record per word can't hold both spans; `rec`'s text keeps every overlay,
+    so the overlaid characters still read as struck."""
+    if cov.get("tier") != "vector" or "stroke_color" in cov:
+        return False
+    (a0, a1), (b0, b1) = _bare_span(rec), _bare_span(cov)
+    return not (b0 <= a0 and a1 <= b1)
+
+
 def page_strikes(page, page_index, method="vector", words=None):
     """Struck-word records for one native page by `method`:
-      'vector' — this module's stroke-geometry detector (precise partial-char spans; default)
+      'vector' — this module's stroke-geometry detector (precise partial-char spans; default),
+                 which also reads U+0336 overlay characters; the others don't
       'flag'   — MuPDF's own FZ_STEXT_STRIKEOUT span flag (also catches font-attribute
                  strikethroughs the vector path can miss)
       'annot'  — explicit /StrikeOut markup annotations (Acrobat/Preview redlines), with
@@ -701,8 +857,11 @@ def page_strikes(page, page_index, method="vector", words=None):
     chars = _PageChars(page)                   # one character extraction for all three detectors
     out = native_page_strikes(page, page_index, words, _chars=chars)
     for r in native_flag_strikes(page, page_index, words, _chars=chars):
-        if _covering_record(out, r) is None:
+        cov = _covering_record(out, r)
+        if cov is None:
             out.append(r)
+        elif _displaces(r, cov):
+            out = [r if x is cov else x for x in out]
     # annotations: add the record where nothing covers it, else GRAFT its forensics onto the
     # covering record — a PDF annotation's appearance stream is also caught by the vector/flag
     # paths, so a union that merely dropped it would lose the author/date/color evidence.
@@ -710,6 +869,8 @@ def page_strikes(page, page_index, method="vector", words=None):
         cov = _covering_record(out, a)
         if cov is None:
             out.append(a)
+        elif _displaces(a, cov):
+            out = [a if x is cov else x for x in out]
         else:
             for k in _ANNOT_KEYS:
                 if k in a:
@@ -774,14 +935,21 @@ def native_markdown(doc):
 
 
 _STRIKE_SPAN = re.compile(r"~~(.*?)~~", re.S)
+# A struck span's stand-in while overlays are read, so an overlay right after the span strikes it
+# and not the text before it. A noncharacter: it never occurs in interchanged text.
+_SPAN_MARK = chr(0xFDD0)
+# An overlay right after emphasis markup ('**' or '_') sat on a space before it: it strikes nothing
+_OVERLAY_ON_MARKUP = re.compile(f"(?<=[*_]){OVERLAY}+")
 
 
 def strip_struck_markdown(md):
-    """Markdown with ~~struck~~ spans removed -> the surviving (non-deleted) text.
+    """Markdown with ~~struck~~ spans removed -> the surviving (non-deleted) text. Characters
+    struck with U+0336 overlays go too, with the overlays.
 
     Caveat: '~~' is pymupdf4llm's encoding for struck spans; a document whose TEXT contains a
     literal '~~' is inherently ambiguous in that format and may strip incorrectly. detect_pdf's
     ``clean_text`` is assembled from word records instead and is immune."""
-    clean = _STRIKE_SPAN.sub("", md)
+    clean = _OVERLAY_ON_MARKUP.sub("", _STRIKE_SPAN.sub(_SPAN_MARK, md))
+    clean = _drop_overlaid(clean).replace(_SPAN_MARK, "")
     clean = re.sub(r"[ \t]{2,}", " ", clean)
     return re.sub(r"\n{3,}", "\n\n", clean)

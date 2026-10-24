@@ -57,18 +57,25 @@ print(st.clean_markdown("contract.pdf"))        # surviving text, deletions remo
 
 Each native record: `{page, text, chars, char_span, partial, bbox_frac, tier, coverage, verdict,
 final}` (`tier` is `"vector"`, `"flag"`, or `"annot"`). Vector records also carry
-`stroke_color`/`stroke_width` (the paint + thickness of the dominant stroke — red = opposing
-counsel is evidence); annotation records carry `annot_author`/`annot_created`/`annot_modified`/
-`annot_color`/`annot_id` (the redline's "who and when"). Scanned records replace `coverage` with
-the evidence that decided them — `score`, `cnn_prob`, `cnn_agrees`, `conf`, `geom_corroborated`
-(and `conf_veto: True` when the calibrated-confidence gate downgrades a high-confidence word) — and
-`tier` is `"auto"`/`"review"`. The keys are documented as `TypedDict`s in `pdf_strikethrough.types`
-(`StruckWord`, `DetectResult`, `Passage`); the package ships `py.typed`, so type checkers see them.
-Partial strikes (`semi-` of `semi-monthly`) are resolved to the characters the strike actually
-crosses, read from the PDF's own glyph boxes, and a word counts as fully struck only when every
-character is — so a replacement printed straight after a deletion (`~~December~~May`) survives in
-`clean_text`. `bbox_frac` is in fractions of the rendered page (rotation-aware), so it maps
-directly onto a rendered pixmap.
+`stroke_color`/`stroke_width` (when a drawn stroke strikes them), the paint + thickness of the
+dominant stroke (red = opposing counsel is evidence); annotation records carry
+`annot_author`/`annot_created`/`annot_modified`/`annot_color`/`annot_id` (the redline's "who and
+when"). Scanned records replace `coverage` with the evidence that decided them — `score`,
+`cnn_prob`, `cnn_agrees`, `conf`, `geom_corroborated` (and `conf_veto: True` when the
+calibrated-confidence gate downgrades a high-confidence word) — and `tier` is `"auto"`/`"review"`.
+The keys are documented as `TypedDict`s in `pdf_strikethrough.types` (`StruckWord`, `DetectResult`,
+`Passage`); the package ships `py.typed`, so type checkers see them. Partial strikes (`semi-` of
+`semi-monthly`) are resolved to the characters the strike actually crosses, read from the PDF's own
+glyph boxes, and a word counts as fully struck only when every character is — so a replacement
+printed straight after a deletion (`~~December~~May`) survives in `clean_text`. `bbox_frac` is in
+fractions of the rendered page (rotation-aware), so it maps directly onto a rendered pixmap.
+
+Text can also be struck in the text layer itself, the way online strikethrough generators write it:
+each character followed by U+0336 COMBINING LONG STROKE OVERLAY (`o̶f̶`). The `vector` detector
+(and so `both`) reads that too. Each character an overlay follows is struck, and the record's
+`text`, `markdown` and `clean_text` leave out the overlays on the characters it reports. A word
+struck by overlays alone has no stroke, so its record carries no `stroke_color`/`stroke_width`.
+The short overlays U+0335 and U+0337, which some generators emit, are not read.
 
 Three native detectors, all **base-PyMuPDF only** (no pymupdf4llm), selected by `method`:
 
@@ -302,8 +309,8 @@ python examples/rag_provenance.py         # clean_text vs provenance_text ([dele
 ## How it works
 
 - **Native**: merged horizontal vector strokes through a word's middle band (excludes under/over-
-  lines); a character is struck when a stroke crosses ≥ 50% of its glyph box, and a word is fully
-  struck only when every character is.
+  lines); a character is struck when a stroke crosses ≥ 50% of its glyph box or a U+0336 overlay
+  character follows it, and a word is fully struck only when every character is.
 - **Scanned geometry** (`lines.py`): per-angle morphological opening extracts stroke *fragments*,
   collinear fragments are stitched, then strict filters (spine fill, stroke run-thickness,
   angle/length) separate real strikes from bold crossbars and serif-glyph chains.

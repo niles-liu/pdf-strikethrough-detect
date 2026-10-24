@@ -27,6 +27,13 @@ All notable changes to this project are documented here. The format follows
   Face dataset.
 
 ### Changed
+- **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
+  word struck with overlay characters, `text` is `of`, not `o̶f̶`; `char_span` and `chars` index
+  that text, and `markdown`, `clean_text` and `passages` follow it. A word struck by overlays
+  alone has no stroke, so its record carries no `stroke_color` or `stroke_width`. On any word with
+  overlays, whether alone or with a drawn line, `coverage` is the share of the word's width its
+  struck characters span. `SCHEMA_VERSION` stays 1: only words carrying U+0336 change, and 0.12.1
+  reported those only under a drawn line.
 - **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub
   Release with another tag, such as the ones that timestamp the benchmark's pre-registration,
   builds and publishes nothing and asks for no approval. A version tag still has to match
@@ -82,6 +89,17 @@ All notable changes to this project are documented here. The format follows
   publishes to PyPI as before.
 
 ### Fixed
+- **The vector detector missed text struck with overlay characters.** Online strikethrough
+  generators strike text by writing U+0336 COMBINING LONG STROKE OVERLAY after each character
+  (`o̶f̶`), with no drawing, so the vector path found nothing and the struck letters stayed in
+  `clean_text`. It now strikes each character a U+0336 follows, with its accents, part of a word
+  included, so `both` reads them too; `flag` and `annot` don't, and their output is unchanged.
+  `clean_markdown()` drops overlaid characters. A record holds one span, so a word with a drawn
+  strike reports that span merged with any overlay run it touches. Overlays on characters outside
+  the reported span stay in the record's `text` and in `markdown`, and `clean_text` drops those
+  characters, as `clean_markdown()` does. Only U+0336 is read: U+0338 is the slash of a
+  decomposed ≠ and U+0334 is the IPA mark for velarization. The short overlays U+0335 and
+  U+0337, which some generators emit, are left out too, so text struck with them is still missed.
 - **The flag detector's version guard could not read PyMuPDF 2.0's version.** 2.0 reports `2.0`,
   with no patch number, so the guard read it as unknown. Unknown means unguarded, so 2.0 users were
   never blocked, but the test that the installed PyMuPDF clears the floor failed in every CI job
