@@ -32,7 +32,9 @@ content rotated by /Rotate); the flag and annotation paths read those. Vertical 
 non-Latin scripts whose strikes run along a different axis are otherwise out of scope. Horizontal
 CJK is regression-tested; vertical writing modes remain on the roadmap.
 """
+import bisect
 import contextlib
+import functools
 import math
 import re
 import sys
@@ -307,11 +309,11 @@ _Found = namedtuple("_Found", "vertical boxes tilted hidden baseline bands")
 
 
 class _PageChars:
-    """Per-character boxes and the baseline of a page's ``get_text("words")`` entries, so a strike
-    maps onto the characters it crosses and is measured from the glyph baseline, with each word's
-    text direction and visibility. Built lazily from one rawdict pass and shared by the detectors
-    in ``page_strikes(method='both')``. Entries are filed by text and a CHAR_BUCKET-pt band of
-    height, so a lookup scans one line's copies of a word, not the page's."""
+    """Per-character boxes, fonts and the baseline of a page's ``get_text("words")`` entries, so a
+    strike maps onto the characters it crosses and is measured from the glyph baseline, with each
+    word's text direction and visibility. Built lazily from one rawdict pass and shared by the
+    detectors in ``page_strikes(method='both')``. Entries are filed by text and a CHAR_BUCKET-pt
+    band of height, so a lookup scans one line's copies of a word, not the page's."""
 
     def __init__(self, page):
         self.page = page
@@ -337,23 +339,20 @@ class _PageChars:
                 for span in line.get("spans", []):
                     metrics = (span.get("ascender", 0.0), span.get("descender", 0.0))
                     hidden = span.get("alpha", 255) == 0    # render mode 3, or fully transparent
+                    font = span.get("font", "")
                     for ch in span.get("chars", []):
                         if ch["c"] in _WORD_DELIMITERS:
                             self._add(cur, line_dir)
                             cur = []
                         else:
-                            cur.append((ch, *metrics, hidden))
+                            cur.append((ch, *metrics, hidden, font))
                             if not hidden:
                                 self._visible.append((pymupdf.Rect(ch["bbox"]), (ch, *metrics),
                                                       line_dir))
                 self._add(cur, line_dir)
 
-    def lookup(self, word):
-        """A :data:`_Found` for one ``get_text("words")`` entry, or None when no extracted line
-        reproduces it (the caller then splits the word box evenly). ``tilted``: its line of text
-        leans more than LEVEL_SLOPE; ``hidden``: every character is invisible (render mode 3, or
-        fully transparent); ``baseline``: None for vertical text or a word with no one
-        baseline."""
+    def _find(self, word):
+        """The extracted run that reproduces one ``get_text("words")`` entry, or None."""
         if self._by_text is None:
             self._build()
         x0, y0, x1, y1, txt = word[:5]
@@ -364,15 +363,29 @@ class _PageChars:
             dist = abs(entry[0] - cx) + abs(entry[1] - cy)
             if dist <= 2.0 and len(entry[2]) == len(txt) and (best is None or dist < best[0]):
                 best = (dist, entry)
-        if best is None:
+        return None if best is None else best[1]
+
+    def lookup(self, word):
+        """A :data:`_Found` for one ``get_text("words")`` entry, or None when no extracted line
+        reproduces it (the caller then splits the word box evenly). ``tilted``: its line of text
+        leans more than LEVEL_SLOPE; ``hidden``: every character is invisible (render mode 3, or
+        fully transparent); ``baseline``: None for vertical text or a word with no one
+        baseline."""
+        found = self._find(word)
+        if found is None:
             return None
-        ecx, _ecy, boxes, chars, (dx, dy) = best[1]
+        ecx, _ecy, boxes, chars, (dx, dy) = found
         vertical = abs(dy) > abs(dx)
         hidden = all(c[3] for c in chars)
         if vertical:
             return _Found(True, boxes, False, hidden, None, [None] * len(boxes))
         return _Found(False, boxes, abs(dy) > LEVEL_SLOPE * abs(dx), hidden,
                       _word_baseline(chars, ecx, dx, dy), [_char_band(c[:3], dx, dy) for c in chars])
+
+    def fonts(self, word):
+        """The font name of each character of one ``get_text("words")`` entry, or None."""
+        found = self._find(word)
+        return None if found is None else [c[4] for c in found[3]]
 
     def visible_under(self, word):
         """``[(box, band), ...]`` for the visible characters the word's box overlaps (touching edges
@@ -629,6 +642,187 @@ def _even_char_boxes(word):
     return [(x0 + i * step, y0, x0 + (i + 1) * step, y1) for i in range(len(txt))]
 
 
+# Garbled text layers. A font whose glyph-to-Unicode map is wrong puts the wrong characters in the
+# text layer. The common case is an equation Word exported in Cambria Math: some glyphs (stretched
+# brackets, the minus sign) are mapped to their glyph numbers, which read as Ethiopic, Indic or
+# unassigned code points ('⋅ሺ0.955ሻെ' where the page shows '·(0.955) −'). Those scripts are real
+# scripts too, so a word is flagged only on evidence that real text in them never shows:
+#   - a noncharacter (U+FFFF, say), or a code point left unassigned inside one of the _SCRIPTS
+#     blocks (an unassigned one elsewhere may be a character newer than Python's Unicode tables,
+#     such as U+20C1 SAUDI RIYAL SIGN, so it is not judged);
+#   - a private-use code point in one word with a character of such a script or a mathematical
+#     letter (a private-use character beside Latin or CJK text is a symbol, icon or bullet font);
+#   - letters, marks or digits of two different scripts from _SCRIPTS in one word (Ethiopic beside
+#     Malayalam);
+#   - a character of such a script in one word with a mathematical letter (U+1D400-U+1D7FF);
+#   - a combining mark of such a script right after a letter, digit or mark of another script from
+#     _SCRIPTS, or right after any other character with no letter of its own script following
+#     (text extracted in visual order puts a vowel sign before its consonant, as in '(िक' or
+#     '2015िक', so that case is spared);
+#   - a character of such a script drawn in a math font (Cambria, Cambria Math, or a name ending a
+#     word in "Math"), which has no glyph for it.
+# Real text in these scripts, digits and Latin abbreviations included ('በ2015', 'UNDP-এর'), shows
+# none of them. A broken map that only yields letters of one script, next to digits or Latin, in
+# a font that is not a math font, is not caught: it reads like real text. Neither is one that
+# yields Latin, Greek or Cyrillic letters, or U+FFFD.
+_SCRIPTS = sorted([
+    (0x0590, 0x05FF, "Hebrew"), (0xFB1D, 0xFB4F, "Hebrew"), (0x0600, 0x06FF, "Arabic"),
+    (0x0750, 0x077F, "Arabic"), (0x0870, 0x08FF, "Arabic"), (0xFB50, 0xFDFF, "Arabic"),
+    (0xFE70, 0xFEFF, "Arabic"), (0x0700, 0x074F, "Syriac"), (0x0860, 0x086F, "Syriac"),
+    (0x0780, 0x07BF, "Thaana"), (0x07C0, 0x07FF, "NKo"), (0x0800, 0x083F, "Samaritan"),
+    (0x0840, 0x085F, "Mandaic"), (0x0900, 0x097F, "Devanagari"), (0xA8E0, 0xA8FF, "Devanagari"),
+    (0x0980, 0x09FF, "Bengali"), (0x0A00, 0x0A7F, "Gurmukhi"), (0x0A80, 0x0AFF, "Gujarati"),
+    (0x0B00, 0x0B7F, "Oriya"), (0x0B80, 0x0BFF, "Tamil"), (0x11FC0, 0x11FFF, "Tamil"),
+    (0x0C00, 0x0C7F, "Telugu"), (0x0C80, 0x0CFF, "Kannada"), (0x0D00, 0x0D7F, "Malayalam"),
+    (0x0D80, 0x0DFF, "Sinhala"), (0x0E00, 0x0E7F, "Thai"), (0x0E80, 0x0EFF, "Lao"),
+    (0x0F00, 0x0FFF, "Tibetan"), (0x1000, 0x109F, "Myanmar"), (0xA9E0, 0xA9FF, "Myanmar"),
+    (0xAA60, 0xAA7F, "Myanmar"), (0x10A0, 0x10FF, "Georgian"), (0x1C90, 0x1CBF, "Georgian"),
+    (0x1100, 0x11FF, "Hangul"), (0x1200, 0x139F, "Ethiopic"), (0x2D80, 0x2DDF, "Ethiopic"),
+    (0xAB00, 0xAB2F, "Ethiopic"), (0x1E7E0, 0x1E7FF, "Ethiopic"), (0x13A0, 0x13FF, "Cherokee"),
+    (0x1400, 0x167F, "Canadian"), (0x18B0, 0x18FF, "Canadian"), (0x1680, 0x169F, "Ogham"),
+    (0x16A0, 0x16FF, "Runic"), (0x1700, 0x177F, "Philippine"), (0x1780, 0x17FF, "Khmer"),
+    (0x19E0, 0x19FF, "Khmer"), (0x1800, 0x18AF, "Mongolian"), (0x1900, 0x194F, "Limbu"),
+    (0x1950, 0x19DF, "Tai"), (0x1A00, 0x1AAF, "Tai"), (0x1B00, 0x1B7F, "Balinese"),
+    (0x1B80, 0x1BBF, "Sundanese"), (0x1CC0, 0x1CCF, "Sundanese"), (0x1BC0, 0x1BFF, "Batak"),
+    (0x1C00, 0x1C4F, "Lepcha"), (0x1C50, 0x1C7F, "Ol Chiki"),
+])
+_SCRIPT_STARTS = [r[0] for r in _SCRIPTS]
+# characters several of those scripts share, so they belong to none: the Arabic tatweel, harakat,
+# digits and superscript alef (Syriac and Thaana write them too), the Devanagari stress signs and
+# dandas (Bengali and Gurmukhi sentences end in a danda), and the Myanmar digits (Tai Le's too)
+_SCRIPT_SHARED = frozenset([0x0640, *range(0x064B, 0x0656), *range(0x0660, 0x066A), 0x0670,
+                            0x0951, 0x0952, 0x0953, 0x0954, 0x0964, 0x0965, *range(0x1040, 0x104A)])
+# skipped when looking for the character a combining mark attaches to: the joiners, the combining
+# grapheme joiner, the dotted circle that stands in for a base, and the Vedic signs
+_MARK_SKIP = frozenset([0x200C, 0x200D, 0x034F, 0x25CC, *_SCRIPT_SHARED, *range(0x1CD0, 0x1D00)])
+# assigned in Unicode 14 to 18 inside those blocks: an older Python's tables call them unassigned
+_SCRIPT_RECENT = frozenset([
+    0x061D, *range(0x0870, 0x0892), *range(0x0897, 0x08A0), 0x08B5,
+    *range(0x08C8, 0x08D3), 0x0B53, 0x0B54, 0x0C3C, 0x0C5C, 0x0C5D, 0x0CDC, 0x0CDD, 0x0CF3, 0x0ECE,
+    0x170D, 0x1715, 0x171F, 0x180F, 0x1B4C, 0x1B4E, 0x1B4F, 0x1B7D, 0x1B7E, 0x1B7F,
+    *range(0xFBC2, 0xFBD3), *range(0xFD40, 0xFD50), 0xFD90, 0xFD91, *range(0xFDC8, 0xFDD0),
+    0xFDFE, 0xFDFF])
+# a math font has no glyph in those scripts; a subset font's name may carry a 'ABCDEF+' tag
+_MATH_FONT = re.compile(r"(?i)^(?:[a-z]{6}\+)?cambria|math(?![a-z])")
+
+
+def _script(c):
+    """The _SCRIPTS name of a character, or None for any other character."""
+    o = ord(c)
+    if o < 0x0590 or o in _SCRIPT_SHARED:
+        return None
+    i = bisect.bisect_right(_SCRIPT_STARTS, o) - 1
+    return _SCRIPTS[i][2] if i >= 0 and o <= _SCRIPTS[i][1] else None
+
+
+def _unassigned(c, cat):
+    """A noncharacter, or a code point unassigned inside a _SCRIPTS block of the BMP."""
+    o = ord(c)
+    if 0xFDD0 <= o <= 0xFDEF or o & 0xFFFE == 0xFFFE:
+        return True
+    return cat == "Cn" and o <= 0xFFFF and o not in _SCRIPT_RECENT and _script(c) is not None
+
+
+@functools.lru_cache(maxsize=8192)
+def _text_verdict(text):
+    """1 when `text`, one extracted word, is garbled by its characters alone; 2 when it is not but
+    holds a _SCRIPTS character, which a math font would garble; else 0."""
+    if all(ord(c) < 0x0370 for c in text):
+        return 0                            # Latin, IPA and spacing marks: nothing to judge
+    cats = [unicodedata.category(c) for c in text]
+    if any(_unassigned(c, k) for c, k in zip(text, cats)):
+        return 1
+    scripts = [_script(c) for c in text]
+    math_letter = any(0x1D400 <= ord(c) <= 0x1D7FF for c in text)
+    if "Co" in cats and (math_letter or any(scripts)):
+        return 1
+    if not any(scripts):
+        return 0
+    if math_letter or len({s for s, k in zip(scripts, cats) if s and k[0] in "LMN"}) >= 2:
+        return 1
+    for i, (s, k) in enumerate(zip(scripts, cats)):
+        if s is None or k not in ("Mn", "Mc"):
+            continue
+        j = i - 1
+        while j >= 0 and ord(text[j]) in _MARK_SKIP:
+            j -= 1
+        if j < 0 or scripts[j] == s:
+            continue
+        n = i + 1
+        while n < len(text) and ord(text[n]) in _MARK_SKIP:
+            n += 1
+        own_letter_next = n < len(text) and scripts[n] == s and cats[n][0] == "L"
+        if own_letter_next and scripts[j] is None:
+            continue                        # visual order: '(िक', '2015िक', 'UNDPைய'
+        if cats[j][0] in "LMN" or not own_letter_next:
+            return 1                        # after a digit, or an Ethiopic letter: '20െ', 'ሻെx'
+    return 2
+
+
+def _garbled_text(text, fonts=None):
+    """True when `text`, one extracted word, carries a broken character map's output (the signals
+    are listed above _SCRIPTS). `fonts` is the font name of each character, or None to judge the
+    text alone."""
+    verdict = _text_verdict(text)
+    if verdict != 2 or fonts is None:
+        return verdict == 1
+    return any(f and _MATH_FONT.search(f) and _script(c) for c, f in zip(text, fonts))
+
+
+def _math_font_draws_scripts(page):
+    """Whether a span in a math font on the page holds a _SCRIPTS character: a page-fonts check,
+    then one span-level pass (much cheaper than the per-character one)."""
+    if not any(_MATH_FONT.search(f[3]) for f in page.get_fonts()):
+        return False
+    for block in page.get_text("dict", flags=pymupdf.TEXTFLAGS_WORDS).get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if _MATH_FONT.search(span.get("font", "")) and any(
+                        _script(c) for c in span.get("text", "")):
+                    return True
+    return False
+
+
+def _garbled_words(page, words=None, chars=None):
+    """The page's ``get_text("words")`` entries whose text a broken character map produced (see
+    _garbled_text). Character fonts are read, from the rawdict pass `chars` (a _PageChars the
+    detectors share) makes, only when a math font on the page draws a character of _SCRIPTS and a
+    word holds one that nothing else flags."""
+    if words is None:
+        words = page.get_text("words")
+    out, math_font = [], None
+    for w in words:
+        verdict = _text_verdict(w[4])
+        if verdict == 1:
+            out.append(w)
+        elif verdict == 2:
+            if math_font is None:
+                math_font = _math_font_draws_scripts(page)
+            if not math_font:
+                continue
+            if chars is None:
+                chars = _PageChars(page)
+            fonts = chars.fonts(w)
+            if fonts is not None and _garbled_text(w[4], fonts):
+                out.append(w)
+    return out
+
+
+def _mark_garbled(page, out, words, chars=None, garbled=None):
+    """Set ``garbled: True`` on the records in `out` whose word a broken character map garbled.
+    `garbled` optionally supplies the page's garbled ``get_text("words")`` entries; else they are
+    found here, and only when there is a record to mark. Returns `out`."""
+    if out:
+        if garbled is None:
+            garbled = _garbled_words(page, words, chars)
+        # compared without U+0336: a vector record's text drops the overlays its span strikes
+        keys = {(_bbox_frac(page, *w[:4]), w[4].replace(OVERLAY, "")) for w in garbled}
+        for r in out:
+            if (r["bbox_frac"], r["text"].replace(OVERLAY, "")) in keys:
+                r["garbled"] = True
+    return out
+
+
 def _struck_span(txt, struck, cov, exact, enters=(False, False)):
     """``(c0, c1, full)`` from a word's per-character struck mask, or None when the marks are not a
     deletion. Full only when every character is struck; otherwise the longest struck run is the
@@ -730,7 +924,7 @@ def _stroke_span(word, txt, boxes, bands, exact, mid):
     return _struck_span(txt, struck, cov, exact=exact, enters=enters), cov
 
 
-def native_page_strikes(page, page_index, words=None, _chars=None):
+def native_page_strikes(page, page_index, words=None, _chars=None, _garbled=None):
     """Struck-word records for one native page, top to bottom then left to right (``markdown`` and
     ``passages`` read multi-column pages column by column instead).
 
@@ -750,6 +944,10 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
     ``words`` optionally supplies this page's ``get_text("words")`` output so a caller running
     several detectors on the same page extracts it once instead of per detector (default None =
     extract here).
+
+    A record whose word comes from a broken character map also carries ``garbled: True``: its
+    ``text`` and ``chars`` are not what the page shows (see :func:`_garbled_text`). ``_garbled``
+    optionally supplies the page's garbled ``get_text("words")`` entries, when the caller has them.
     """
     if words is None:
         words = page.get_text("words")
@@ -825,7 +1023,7 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
         rec.update(tier="vector", verdict="struck", final=True)
         out.append(rec)
     out.sort(key=lambda h: (round(h["bbox_frac"][1], 3), h["bbox_frac"][0]))
-    return out
+    return _mark_garbled(page, out, words, chars, _garbled)
 
 
 def _snap_rects_to_words(page, page_index, page_words, rects, tier, extra=None, chars=None):
@@ -892,7 +1090,7 @@ def _snap_rects_to_words(page, page_index, page_words, rects, tier, extra=None, 
     return out
 
 
-def native_flag_strikes(page, page_index, words=None, _chars=None):
+def native_flag_strikes(page, page_index, words=None, _chars=None, _garbled=None):
     """Struck words from MuPDF's own strikeout detection — the FZ_STEXT_STRIKEOUT char flag,
     enabled by extracting with COLLECT_STYLES|COLLECT_VECTORS (base PyMuPDF >= 1.26.6, no
     pymupdf4llm needed; this is the same signal pymupdf4llm renders as ``~~``).
@@ -912,6 +1110,10 @@ def native_flag_strikes(page, page_index, words=None, _chars=None):
     ``words`` optionally supplies this page's ``get_text("words")`` output (see
     :func:`native_page_strikes`); the ``get_text("dict", ...)`` styled-span pass this detector
     also needs is separate and always runs.
+
+    A record whose word comes from a broken character map also carries ``garbled: True``: its
+    ``text`` and ``chars`` are not what the page shows (see :func:`_garbled_text`). ``_garbled``
+    optionally supplies the page's garbled ``get_text("words")`` entries, when the caller has them.
     """
     if _PYMUPDF_VERSION is not None and _PYMUPDF_VERSION < FLAG_MIN_PYMUPDF:
         have, want = (".".join(map(str, v)) for v in (_PYMUPDF_VERSION, FLAG_MIN_PYMUPDF))
@@ -943,10 +1145,11 @@ def native_flag_strikes(page, page_index, words=None, _chars=None):
                 rects.append(tuple(span["bbox"]))
     if not rects:
         return []
-    return _snap_rects_to_words(page, page_index, page_words, rects, "flag", chars=_chars)
+    out = _snap_rects_to_words(page, page_index, page_words, rects, "flag", chars=_chars)
+    return _mark_garbled(page, out, page_words, _chars, _garbled)
 
 
-def native_annot_strikes(page, page_index, words=None, _chars=None):
+def native_annot_strikes(page, page_index, words=None, _chars=None, _garbled=None):
     """Struck words from explicit ``/StrikeOut`` markup annotations — the redlines Acrobat, Preview,
     and other editors write as annotation objects (QuadPoints over the struck text), distinct from
     the vector drawings the geometry path reads and from the font-attribute flag path.
@@ -959,6 +1162,10 @@ def native_annot_strikes(page, page_index, words=None, _chars=None):
 
     Hidden annotations (the /Hidden or /NoView flag) paint no ink, so they are skipped. ``words``
     optionally supplies this page's ``get_text("words")`` output (see :func:`native_page_strikes`).
+
+    A record whose word comes from a broken character map also carries ``garbled: True``: its
+    ``text`` and ``chars`` are not what the page shows (see :func:`_garbled_text`). ``_garbled``
+    optionally supplies the page's garbled ``get_text("words")`` entries, when the caller has them.
     """
     if words is None:
         words = page.get_text("words")
@@ -994,7 +1201,7 @@ def native_annot_strikes(page, page_index, words=None, _chars=None):
                 records[key] = rec
     out = list(records.values())
     out.sort(key=lambda h: (round(h["bbox_frac"][1], 3), h["bbox_frac"][0]))
-    return out
+    return _mark_garbled(page, out, page_words, chars, _garbled)
 
 
 def _annot_quad_rects(annot):
@@ -1046,7 +1253,7 @@ def _displaces(rec, cov):
     return not (b0 <= a0 and a1 <= b1)
 
 
-def page_strikes(page, page_index, method="vector", words=None):
+def page_strikes(page, page_index, method="vector", words=None, _garbled=None, _chars=None):
     """Struck-word records for one native page by `method`:
       'vector' — this module's stroke-geometry detector (precise partial-char spans; default),
                  which also reads U+0336 overlay characters; the others don't
@@ -1061,22 +1268,29 @@ def page_strikes(page, page_index, method="vector", words=None):
     typically marks additional words on top — 'both' captures them. Reproduce with
     ``benchmarks/confirmation_rate.py``.
 
+    A record whose word comes from a broken character map carries ``garbled: True``: its ``text``
+    and ``chars`` are not what the page shows (see :func:`_garbled_text`).
+
     ``words`` optionally supplies this page's ``get_text("words")`` output; passing it means
     'both' extracts the word list once instead of once per detector (default None = extract here).
+    ``_garbled`` and ``_chars`` optionally supply the page's garbled entries of it and its
+    _PageChars, when the caller has them.
     """
-    if method == "vector":
-        return native_page_strikes(page, page_index, words)
-    if method == "flag":
-        return native_flag_strikes(page, page_index, words)
-    if method == "annot":
-        return native_annot_strikes(page, page_index, words)
-    if method != "both":
-        raise ValueError(f"unknown native method {method!r} (use one of {', '.join(METHODS)})")
     if words is None:
         words = page.get_text("words")
-    chars = _PageChars(page)                   # one character extraction for all three detectors
-    out = native_page_strikes(page, page_index, words, _chars=chars)
-    for r in native_flag_strikes(page, page_index, words, _chars=chars):
+    chars = _chars if _chars is not None else _PageChars(page)   # one character extraction
+    if method == "vector":
+        return native_page_strikes(page, page_index, words, _chars=chars, _garbled=_garbled)
+    if method == "flag":
+        return native_flag_strikes(page, page_index, words, _chars=chars, _garbled=_garbled)
+    if method == "annot":
+        return native_annot_strikes(page, page_index, words, _chars=chars, _garbled=_garbled)
+    if method != "both":
+        raise ValueError(f"unknown native method {method!r} (use one of {', '.join(METHODS)})")
+    if _garbled is None:
+        _garbled = _garbled_words(page, words, chars)
+    out = native_page_strikes(page, page_index, words, _chars=chars, _garbled=_garbled)
+    for r in native_flag_strikes(page, page_index, words, _chars=chars, _garbled=_garbled):
         cov = _covering_record(out, r)
         if cov is None:
             out.append(r)
@@ -1085,7 +1299,7 @@ def page_strikes(page, page_index, method="vector", words=None):
     # annotations: add the record where nothing covers it, else GRAFT its forensics onto the
     # covering record — a PDF annotation's appearance stream is also caught by the vector/flag
     # paths, so a union that merely dropped it would lose the author/date/color evidence.
-    for a in native_annot_strikes(page, page_index, words, _chars=chars):
+    for a in native_annot_strikes(page, page_index, words, _chars=chars, _garbled=_garbled):
         cov = _covering_record(out, a)
         if cov is None:
             out.append(a)

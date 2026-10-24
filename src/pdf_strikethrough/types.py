@@ -44,6 +44,8 @@ class StruckWord(TypedDict, total=False):
     coverage: float              # vector: fraction of the word's width the stroke spans (with
                                  # U+0336 overlays, that its struck characters' boxes span);
                                  # flag/annot: fraction of its characters that are struck
+    garbled: bool                # present (True) when a broken character map garbled the word:
+                                 # `text` and `chars` are not what the page shows
     # native 'vector' only: forensics from the dominant contributing stroke (absent when
     # U+0336 overlays alone strike the word)
     stroke_color: Tuple[float, float, float]   # RGB in [0, 1]; unset paint reads as black
@@ -83,6 +85,14 @@ class Passage(TypedDict, total=False):
     bbox_frac: List[float]       # union box of the passage's words, page fractions (x0, y0, x1, y1)
 
 
+class GarbledWord(TypedDict, total=False):
+    """A word, struck or not, whose text a broken character map garbled: a font that maps its
+    glyphs to the wrong characters, so ``text`` is not what the page shows."""
+    page: int
+    text: str                    # the word as extracted
+    bbox_frac: BBoxFrac
+
+
 class DetectResult(TypedDict, total=False):
     """The dict returned by :func:`pdf_strikethrough.detect_pdf`. The last three keys are present
     only when ``include_markdown=True`` (the default); ``pages`` is present only when a ``pages=``
@@ -95,6 +105,7 @@ class DetectResult(TypedDict, total=False):
     words: List[StruckWord]
     n_struck_final: int
     warnings: List[str]
+    garbled_words: List[GarbledWord]   # every word a broken character map garbled, page order
     markdown: str
     clean_text: str
     passages: List[Passage]
@@ -102,6 +113,6 @@ class DetectResult(TypedDict, total=False):
 
 # Re-exported so ``from pdf_strikethrough.types import ...`` covers the whole surface.
 __all__ = [
-    "StruckWord", "Passage", "DetectResult", "SCHEMA_VERSION",
+    "StruckWord", "Passage", "GarbledWord", "DetectResult", "SCHEMA_VERSION",
     "BBoxFrac", "CharSpan", "Tier", "Verdict",
 ]

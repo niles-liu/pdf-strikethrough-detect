@@ -32,6 +32,7 @@ import contextlib
 import json
 import os
 import sys
+import warnings
 
 from ._batch import (SCHEMA_VERSION, _batch_worker, _build_ocr, _check_ocr_available,
                      _detect_payload, _JSON_EVIDENCE)
@@ -279,11 +280,13 @@ def _cmd_detect_single(args, path):
     have_words = di_result is not None or words_by_page is not None
     on_missing_ocr = "skip" if (args.ocr == "none" and not have_words) else "raise"
     try:
-        res = st.detect_pdf(doc, ocr=ocr, scan_config=scan_config,
-                            dpi=args.dpi if args.dpi is not None else 200,
-                            method=args.method, di_result=di_result, words_by_page=words_by_page,
-                            pages=page_subset, progress=progress,
-                            on_missing_ocr=on_missing_ocr)
+        with warnings.catch_warnings():      # its pages are in res["warnings"], printed below
+            warnings.simplefilter("ignore", st.GarbledTextWarning)
+            res = st.detect_pdf(doc, ocr=ocr, scan_config=scan_config,
+                                dpi=args.dpi if args.dpi is not None else 200,
+                                method=args.method, di_result=di_result,
+                                words_by_page=words_by_page, pages=page_subset,
+                                progress=progress, on_missing_ocr=on_missing_ocr)
     except st.OcrRequiredError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -327,6 +330,7 @@ def _emit_result(args, res, overlay_source):
                        "page_count": res["page_count"], "page_sources": res["page_sources"],
                        "n_struck_final": len(final), "warnings": res.get("warnings", []),
                        "passages": res.get("passages", []),
+                       "garbled_words": res.get("garbled_words", []),
                        "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
             if "pages" in res:
                 payload["pages"] = res["pages"]

@@ -36,7 +36,7 @@ from . import (active, calibration, cnn, detect, docx, lines, markdown, native, 
 from .active import dump_crops
 from .cnn import (ensure_model, get_model_meta, score_crops, score_word, std_crop, verdict_of,
                   word_crop_px)
-from .detect import (EncryptedPdfError, OcrRequiredError, apply_cnn_verdict,
+from .detect import (EncryptedPdfError, GarbledTextWarning, OcrRequiredError, apply_cnn_verdict,
                      classify_page_source, detect_image_file, detect_pdf, detect_scanned_image)
 from .docx import strikethroughs_in_docx
 from .lines import ink_mask, strike_lines, to_gray_u8
@@ -46,7 +46,7 @@ from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di
                   words_from_docai, words_from_textract)
 from .overlay import render_overlay, save_overlays
 from .scanned import ScanConfig, analyze_scanned_page
-from .types import DetectResult, Passage, StruckWord
+from .types import DetectResult, GarbledWord, Passage, StruckWord
 
 # Library logging etiquette: attach a NullHandler so importing the package never emits records on
 # its own. Diagnostics (page routing, per-page record counts, OCR/CNN timing) are logged at DEBUG
@@ -68,8 +68,8 @@ __all__ = [
     # scanned geometry + classifier
     "strike_lines", "ink_mask", "to_gray_u8", "analyze_scanned_page", "ScanConfig",
     "classify_page_source", "apply_cnn_verdict",
-    # errors
-    "OcrRequiredError", "EncryptedPdfError",
+    # errors and warnings
+    "OcrRequiredError", "EncryptedPdfError", "GarbledTextWarning",
     # OCR (backends + pre-fetched cloud-result adapters)
     "Word", "rapidocr_backend", "tesseract_backend", "words_from_azure_di",
     "words_from_textract", "words_from_docai",
@@ -79,7 +79,7 @@ __all__ = [
     # active learning + calibration
     "dump_crops",
     # typing
-    "StruckWord", "DetectResult", "Passage",
+    "StruckWord", "DetectResult", "Passage", "GarbledWord",
     # submodules
     "active", "calibration", "cnn", "docx", "lines", "native", "ocr", "overlay", "scanned",
     "detect", "markdown", "types",

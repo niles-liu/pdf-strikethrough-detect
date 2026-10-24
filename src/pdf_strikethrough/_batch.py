@@ -11,13 +11,14 @@ builders from here too, so the shared payload shape has one home (the version is
 from __future__ import annotations
 
 import os
+import warnings
 
 from .types import SCHEMA_VERSION  # one version for the Python result and the CLI payloads
 
 # evidence fields surfaced in --json/--jsonl — present-when-set, so a consumer sees *why* a word was
 # flagged (native coverage/forensics, scanned score/cnn, docx change/author), not just that it was.
 _JSON_EVIDENCE = ("page", "para", "text", "chars", "char_span", "partial", "bbox_frac", "tier",
-                  "verdict", "coverage", "stroke_color", "stroke_width",
+                  "verdict", "coverage", "garbled", "stroke_color", "stroke_width",
                   "annot_author", "annot_created", "annot_modified", "annot_color", "annot_id",
                   "docx_change", "docx_double", "docx_author", "docx_date", "docx_id",
                   "score", "cnn_prob", "cnn_agrees", "conf", "line_support")
@@ -93,14 +94,17 @@ def _detect_payload(path, opts):
         if ext in st.detect.IMAGE_SUFFIXES:
             res = st.detect_image_file(path, ocr=ocr, scan_config=sc, dpi=opts["dpi"])
         else:
-            res = st.detect_pdf(path, ocr=ocr, scan_config=sc,
-                                dpi=opts["dpi"] if opts["dpi"] is not None else 200,
-                                method=opts["method"],
-                                on_missing_ocr="skip" if opts["ocr"] == "none" else "raise")
+            with warnings.catch_warnings():  # its pages are in the payload's "warnings"
+                warnings.simplefilter("ignore", st.GarbledTextWarning)
+                res = st.detect_pdf(path, ocr=ocr, scan_config=sc,
+                                    dpi=opts["dpi"] if opts["dpi"] is not None else 200,
+                                    method=opts["method"],
+                                    on_missing_ocr="skip" if opts["ocr"] == "none" else "raise")
         final = [w for w in res["words"] if w.get("final")]
         return {"schema_version": SCHEMA_VERSION, "source": path,
                 "page_count": res["page_count"], "page_sources": res["page_sources"],
                 "n_struck_final": len(final), "warnings": res.get("warnings", []),
+                "garbled_words": res.get("garbled_words", []),
                 "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
     except Exception as e:               # batch resilience: report it, don't abort the run
         return {"schema_version": SCHEMA_VERSION, "source": path,
