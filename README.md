@@ -338,6 +338,12 @@ live text as if deleted (RAG / indexing). Calibrate the threshold from your own 
 `conformal_threshold` for a distribution-free recall floor) and pass it as
 `recall_first(cnn_p_hi=…)`.
 
+**Underlines on table rules.** A line below a word's middle band counts as a strike only with glyph
+ink on both sides of it. That ink is measured with the page's horizontal runs of 0.25 in or more
+(table rules, underlines) left out, so an underlined number sitting on a table rule is not read as
+struck, and ruled text is judged like unruled text; `pdf_strikethrough.lines.rule_mask` finds those
+runs. `ScanConfig(glyph_ink=False)` measures on all ink, as earlier releases did.
+
 **Degraded ruled forms (provisional).** On faint, heavily-ruled scans — printed forms, dense
 tables — a printed rule crossing text is hard to tell from a pen strike, and the classifier
 over-fires on it. Two switches address it, both **off by default** and opted into separately:

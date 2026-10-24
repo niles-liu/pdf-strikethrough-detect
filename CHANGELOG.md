@@ -25,6 +25,10 @@ All notable changes to this project are documented here. The format follows
   config and its pinned environment, committed as their history from `prereg-2` on, with a README
   on checking the code against the pre-registration's pins and re-scoring the run from the Hugging
   Face dataset.
+- **`lines.rule_mask(ink, min_len_px, tolerance_px=0)` finds horizontal ruling in an ink mask:**
+  the pixels on horizontal runs at least `min_len_px` long (a 1 x `min_len_px` opening), with
+  `tolerance_px` rows of vertical slack for a thin rule a skewed scan has broken into steps. The
+  scanned path uses it for the underline fix below.
 
 ### Changed
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
@@ -129,6 +133,17 @@ All notable changes to this project are documented here. The format follows
   than the stitching accepts, and is then still lost. `lines.STEM_RATIO = 0` turns the stem test
   off but keeps the 9 px cap; 0.12.1's behavior also needs `lines.MAX_STROKE_RUN_PX = 4` and
   `lines.RUN_SLACK_PX = 0`.
+- **The scanned path marked underlined text sitting on a table rule as struck.** A line below a
+  word's middle band is kept only with ink on both sides of it, and under an underline the ink
+  below was the table's rule, so underlined numbers in ruled tables became candidates that the CNN
+  then confirmed. The test of the ink above and below a line now reads glyph ink: the page's ink
+  without its horizontal runs of 0.25 in or more (50 px at 200 dpi, scaled with the dpi). A strike
+  low in the glyphs, or a short strike, on ruled or underlined text is now treated as it would be
+  on unruled text, since the rule no longer counts as ink. A long solid line through a word's
+  middle with no glyph ink on either side is judged on all ink, so one of a double rule is still
+  taken for a rule. `ScanConfig(glyph_ink=False)` measures on all ink, as before.
+  `scanned.classify_lines` takes the raster's `dpi=` for the scaling, and `glyph_ink=` to supply
+  the mask.
 - **The flag detector's version guard could not read PyMuPDF 2.0's version.** 2.0 reports `2.0`,
   with no patch number, so the guard read it as unknown. Unknown means unguarded, so 2.0 users were
   never blocked, but the test that the installed PyMuPDF clears the floor failed in every CI job

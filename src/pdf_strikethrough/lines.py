@@ -151,6 +151,33 @@ def line_kernel(length, angle_deg):
     return k
 
 
+def rule_mask(ink, min_len_px, tolerance_px=0):
+    """The pixels of the bool mask `ink` lying on a horizontal run at least `min_len_px` long:
+    table rules, underlines, form lines. A morphological opening with a 1 x `min_len_px` line, the
+    same as ``ndimage.binary_opening(ink, structure=line_kernel(min_len_px, 0))`` but done with 1-D
+    min/max filters, which is much faster on a full page. A run touching the image edge counts in
+    full. A non-integer `min_len_px` is truncated (``int``); <= 0 returns no pixels.
+
+    `tolerance_px` lets a run drift that many rows up or down (a skewed scan breaks a thin rule
+    into steps): the opening runs on `ink` thickened vertically by that much, and only `ink` under
+    it is kept. Any ink within `tolerance_px` rows of a long run goes with it, so a stem crossing
+    the rule loses those rows too. Thickening also merges neighboring glyphs of plain text into
+    long runs (bold 8 pt Courier loses about 3% of its glyph ink at 1 and 5% at 2), so keep the
+    default 0, a plain opening, unless the rules are soft-edged or skewed."""
+    ink = np.asarray(ink, dtype=bool)
+    n = int(min_len_px)
+    if n <= 0 or ink.size == 0:
+        return np.zeros_like(ink)
+    src = ink.view(np.uint8)
+    if tolerance_px > 0:
+        src = ndimage.maximum_filter1d(src, 2 * int(tolerance_px) + 1, axis=0, mode="constant")
+    eroded = ndimage.minimum_filter1d(src, n, axis=1, mode="constant")
+    # the dilation's origin mirrors the erosion's, which an even window places off center
+    opened = ndimage.maximum_filter1d(eroded, n, axis=1, mode="constant",
+                                      origin=-1 if n % 2 == 0 else 0)
+    return opened.astype(bool) & ink
+
+
 def _spine_fill(ink, center, u, length, halfwidth=2):
     """Fraction of steps along the major axis with raw ink within +/-halfwidth px perpendicular."""
     n = max(int(length), 2)
