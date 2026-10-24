@@ -8,7 +8,9 @@ Strikes over typed text SHATTER: hyphen-overtype strikes break at every char gap
 sloped pen strokes straddle two angle bins. So the pipeline extracts fragments PERMISSIVELY,
 stitches collinear ones, and only then applies the strict filters to the stitched line:
   spine fill >= MIN_FILL              kills chains stitched from sparse glyph bits
-  run-thickness p25 <= MAX_STROKE_RUN_PX kills bold display-font crossbars
+  run-thickness p25 <= MAX_STROKE_RUN_PX kills solid fills and heavy bars
+  a line thicker than THIN_STROKE_RUN_PX must be >= STEM_RATIO x the stems
+  of the glyph ink beside it          kills bold display-font crossbars
   MIN_LINE_LEN_IN / angle             geometric sanity on the stitched line
 
 Attributing lines to words (which word was struck, char spans, partial strikes) needs word
@@ -28,7 +30,13 @@ MAX_LINE_THICK_PX = 10            # pre-stitch PCA thickness cap
 DEDUP_IOU         = 0.30          # merge near-duplicates from adjacent angles, keep the longest
 OTSU_OFFSET       = 15            # recall knob: ink if gray < otsu()+this (recovers faint strokes)
 MIN_FILL          = 0.65          # fraction of the stitched spine that must be RAW ink
-MAX_STROKE_RUN_PX = 4             # stroke thickness: p25 of vertical ink runs along the spine
+MAX_STROKE_RUN_PX = 9             # stroke thickness: p25 of vertical ink runs along the spine
+RUN_SLACK_PX      = 1             # whole-pixel slack on the scaled cap (a run counts whole px)
+THIN_STROKE_RUN_PX = 4            # at or below this a line passes on thickness alone
+STEM_RATIO        = 1.4           # a thicker line must be >= this x the stems beside it (0 = off)
+STEM_GAP_PX       = 1             # stems are measured from this far past the line's edges...
+STEM_BAND_PX      = 8             # ...over this many rows on each side
+STEM_MIN_RUNS     = 3             # fewer stem runs than this: no glyph ink beside the line
 STITCH_GAP_PX     = 26            # max x-gap between fragments to stitch (~a word space + slack)
 STITCH_DY_PX      = 6.0           # max |y| between endpoints at the junction
 STITCH_DY_TIGHT   = 2.5           # fallback tolerance for re-stitching poisoned groups
@@ -155,10 +163,8 @@ def _spine_fill(ink, center, u, length, halfwidth=2):
     return float(ink[ys, xs].any(axis=0).mean())
 
 
-def _spine_run_thickness(ink, center, u, length, max_k=20):
-    """p25 of vertical ink-run lengths sampled along the major axis, in the RAW ink mask.
-    Real strikes give short runs (2-3px) in inter-glyph gaps; bold-title crossbars are >=5px
-    thick everywhere, so their p25 is high."""
+def _spine_samples(ink, center, u, length):
+    """Pixel samples along the major axis, each snapped up to 1 px onto ink: (xs, ys, on_ink)."""
     n = max(int(length), 2)
     ts = np.linspace(-length / 2.0, length / 2.0, n)
     H, W = ink.shape
@@ -171,18 +177,60 @@ def _spine_run_thickness(ink, center, u, length, max_k=20):
         snap = miss & ink[yy, xs]
         ys = np.where(snap, yy, ys)
         base |= snap
-    if not base.any():
-        return np.inf
-    runs = np.ones(n)
+    return xs, ys, base
+
+
+def _side_runs(ink, xs, ys, base, max_k=20):
+    """(up, down): per sample, how many ink pixels continue straight up resp. down from it."""
+    H = ink.shape[0]
+    sides = []
     for sign in (-1, 1):
         alive = base.copy()
+        ext = np.zeros(len(xs))
         for k in range(1, max_k + 1):
             yy = np.clip(ys + sign * k, 0, H - 1)
             alive = alive & ink[yy, xs]
             if not alive.any():
                 break
-            runs += alive
-    return float(np.percentile(runs[base], 25))
+            ext += alive
+        sides.append(ext)
+    return sides
+
+
+def _spine_run_thickness(ink, center, u, length, max_k=20):
+    """p25 of vertical ink-run lengths sampled along the major axis, in the RAW ink mask.
+    A strike reads its own thickness in the gaps between glyphs, where nothing else is attached
+    (2-3 px for a pen line, 5-9 px for a 2-3 pt marker); a bold-title crossbar is thick
+    everywhere, so its p25 is high."""
+    xs, ys, base = _spine_samples(ink, center, u, length)
+    if not base.any():
+        return np.inf
+    up, down = _side_runs(ink, xs, ys, base, max_k)
+    return float(np.percentile((1 + up + down)[base], 25))
+
+
+def _stem_width(ink, center, u, length, gap_px, band_px, max_k=20):
+    """Median width of the glyph strokes beside a line, or None when there are fewer than
+    STEM_MIN_RUNS of them (no glyph ink beside it). Read in the `band_px` rows above and below
+    the line, starting `gap_px` past its edges (the p25 of how far ink runs up, resp. down, from
+    the spine), as the lengths of the ink runs along the line: a stem crossing those rows is a run
+    as wide as the stem. A bold glyph's bar is about as thick as its stems; a strike through text
+    is clearly thicker than the stems of the text it crosses."""
+    xs, ys, base = _spine_samples(ink, center, u, length)
+    if not base.any():
+        return None
+    H = ink.shape[0]
+    runs = []
+    for sign, ext in zip((-1, 1), _side_runs(ink, xs, ys, base, max_k)):
+        k0 = int(np.percentile(ext[base], 25)) + gap_px + 1
+        yy = ys[None, :] + sign * np.arange(k0, k0 + band_px)[:, None]
+        ok = (yy >= 0) & (yy < H)
+        rows = np.zeros(yy.shape, dtype=bool)
+        rows[ok] = ink[yy[ok], np.broadcast_to(xs, yy.shape)[ok]]
+        d = np.diff(np.pad(rows, ((0, 0), (1, 1))).astype(np.int8), axis=1).ravel()
+        runs.append(np.flatnonzero(d == -1) - np.flatnonzero(d == 1))   # row by row, in order
+    runs = np.concatenate(runs)
+    return float(np.median(runs)) if runs.size >= STEM_MIN_RUNS else None
 
 
 STRAIGHTNESS_MIN_SAMPLES = 3     # fewer ink-bearing samples than this: wobble is not measurable
@@ -339,6 +387,10 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     scale = dpi / float(RENDER_DPI)
     min_len = int(MIN_LINE_LEN_IN * dpi)
     fill_halfwidth = max(2, int(round(2 * scale)))
+    # floored: unfloored, a 2-px strike at 72 dpi faces a "> 1.44 px" gate and is rejected
+    max_run = max(2.0, MAX_STROKE_RUN_PX * scale) + RUN_SLACK_PX
+    thin_run = max(2.0, THIN_STROKE_RUN_PX * scale)
+    stem_gap, stem_band = int(round(STEM_GAP_PX * scale)), max(2, int(round(STEM_BAND_PX * scale)))
 
     groups = _stitch_fragments(_collect_fragments(ink, dpi, scale), scale=scale)
 
@@ -356,9 +408,16 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
         if fill < MIN_FILL:
             return None, True
         run_px = _spine_run_thickness(ink, center, u, length)
-        # floored: unfloored, a 2-px strike at 72 dpi faces a "> 1.44 px" gate and is rejected
-        if run_px > max(2.0, MAX_STROKE_RUN_PX * scale):
+        if run_px > max_run:
             return None, True
+        # A thick line (a 2-3 pt pen or marker strike) is kept only when it is clearly thicker than
+        # the stems of the glyph ink beside it. A bold glyph's bars, and a chain of them stitched
+        # along a bold heading, are about as thick as its stems, so they stay out. A line with no
+        # glyph ink beside it crosses no text and is kept.
+        if run_px > thin_run and STEM_RATIO > 0:
+            stem = _stem_width(ink, center, u, length, stem_gap, stem_band)
+            if stem is not None and run_px < STEM_RATIO * stem:
+                return None, True
         # perpendicular wobble, normalized to RENDER_DPI so the scanned-path printed-rule veto's
         # threshold is dpi-independent (issue #7). Reported as None, never a number, when it is not
         # measurable: the veto reads LOW as "drawn rule", and None keeps the field JSON-safe.

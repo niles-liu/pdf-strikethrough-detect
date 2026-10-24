@@ -115,6 +115,20 @@ All notable changes to this project are documented here. The format follows
   text; the strike-free PDFs get 252 marks, down from 270, none new. Reading character data for
   every word a stroke crosses adds a few milliseconds per page, up to 3 times the detector's time
   on a page of underlined text.
+- **The scanned path dropped strikes thicker than about 1.4 pt.** A line more than 4 px thick at
+  200 dpi was taken for a bold glyph's bar, so a 2 or 3 pt pen or marker strike (5.6 to 8.3 px)
+  was lost. The cap is now 9 px, plus 1 px of slack because a thickness is counted in whole pixels
+  while the cap scales with the dpi. A line thicker than 4 px is kept only when it is at least 1.4
+  times as thick as the stems of the glyph ink just above and below it. A bold glyph's bars, and
+  the chains of them stitched along a bold heading, are about as thick as its stems, so they stay
+  out: on bold headings in nine fonts at 10 to 24 pt, the cap alone would have sent 2.7 times as
+  many words to the CNN, and with the stem test it sends about 10% more. The same test drops a
+  real strike less than 1.4 times as thick as the stems it crosses: at 2 pt, that is a strike
+  through bold text above about 10 pt or regular text above about 18 pt, which 0.12.1 lost as
+  well. On a soft scan a 3 pt strike can merge with the glyphs it crosses into a piece thicker
+  than the stitching accepts, and is then still lost. `lines.STEM_RATIO = 0` turns the stem test
+  off but keeps the 9 px cap; 0.12.1's behavior also needs `lines.MAX_STROKE_RUN_PX = 4` and
+  `lines.RUN_SLACK_PX = 0`.
 - **The flag detector's version guard could not read PyMuPDF 2.0's version.** 2.0 reports `2.0`,
   with no patch number, so the guard read it as unknown. Unknown means unguarded, so 2.0 users were
   never blocked, but the test that the installed PyMuPDF clears the floor failed in every CI job
