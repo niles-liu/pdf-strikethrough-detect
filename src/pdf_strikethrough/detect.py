@@ -6,7 +6,9 @@ struck-aware markdown, the surviving clean text, and grouped deletion passages.
 
 The CNN verdict layer mirrors the corpus-validated gate: 'auto' words are kept only when the
 CNN confirms at p_hi (crops too small to score are kept — no counter-evidence); on 'review'
-words (the geometry can't decide) the CNN is the decider.
+words (the geometry can't decide) the CNN is the decider. With ScanConfig.line_support, a short
+word the CNN leaves unconfirmed is kept when it has a stroke of its own and the line through it
+strikes confirmed words on both sides of it.
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ import pymupdf
 
 from . import cnn, markdown as _md, native
 from .ocr import words_from_azure_di
-from .scanned import ScanConfig, analyze_scanned_page
+from .scanned import ScanConfig, _glyph_ink, _own_stroke, analyze_scanned_page
 from .types import SCHEMA_VERSION
 
 log = logging.getLogger(__name__)   # "pdf_strikethrough.detect"; DEBUG diagnostics, opt-in
@@ -30,6 +32,9 @@ IMG_COVER_SCANNED = 0.70    # raster images cover >= this frac of the page -> sc
 RENDER_DPI = 200
 HIGH_DPI_CAP = 300          # scanned rasters above this are worked at RENDER_DPI (see _working_dpi)
 MAX_RENDER_MPIX = 128       # hard per-page raster ceiling; a bigger page is downsampled to fit
+LINE_SUPPORT_MAX_CHARS = 3     # ScanConfig.line_support (see _line_support): a word this short
+LINE_SUPPORT_MIN_RUN = 0.65    # may ride its stroke's confirmed neighbors when the stroke's band
+                               # holds one unbroken stretch of ink across this much of the word
 # Standalone raster inputs detect_image_file (and the CLI) accept — a photo/scan/fax that never
 # was a PDF. Multi-page TIFFs are one frame per page.
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
@@ -268,16 +273,72 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     return kept
 
 
+def _line_support(recs, tagged, ink, config, dpi=RENDER_DPI):
+    """ScanConfig.line_support: keep a short word the CNN leaves unconfirmed when it has a stroke of
+    its own and the line through it strikes confirmed words on both sides of it. A word of
+    LINE_SUPPORT_MAX_CHARS characters or fewer is padded with blank columns to the CNN's input
+    width, so a struck "of" or "a" scores low even where the longer words around it are confirmed.
+
+    Two words struck one by one can be stitched into a single line that only passes over the live
+    word between them, and that word's glyphs give it ink on both sides of the line. So the word
+    must show strike geometry on the supporting line itself, and a stroke of its own
+    (:func:`pdf_strikethrough.scanned._own_stroke`): the line's band holds one unbroken stretch of
+    ink across LINE_SUPPORT_MIN_RUN of its columns, and more ink than the same band just above and
+    below it. Word spaces are no evidence either way, since many documents strike each word on its
+    own. On the calibrated-confidence path a word OCR'd above ``max_clean_conf`` is clean text and
+    is never kept. Only words confirmed before this pass count as support, so it never chains. A
+    word kept is struck whole: its line strikes confirmed words on both sides, so it crosses all of
+    it. `tagged` are the lines the records' ``line_idx`` index, `ink` the page's ink mask at
+    `dpi`; with ``ScanConfig.glyph_ink`` the ink beside the stroke is read on glyph ink."""
+    confirmed = [h for h in recs if h.get("final")]
+    gating = getattr(config, "confidence_gating", False)
+    max_clean = getattr(config, "max_clean_conf", 1.0)
+    W = ink.shape[1]
+    beside = None
+    for h in recs:
+        if (h.get("final") or not h.get("geom_corroborated")
+                or len(h["text"].strip(".,;:()")) > LINE_SUPPORT_MAX_CHARS):
+            continue
+        if gating and h.get("conf") is not None and h["conf"] > max_clean:
+            continue
+        x0, x1 = h["bbox_frac"][0], h["bbox_frac"][2]
+        for li in h.get("line_idx") or ():
+            ln = tagged[li]
+            if not any(s.get("strike_geom") and s["text"] == h["text"]
+                       and s["bbox_frac"] == h["bbox_frac"] for s in ln.get("struck", ())):
+                continue
+            on_line = [f["bbox_frac"] for f in confirmed if li in (f.get("line_idx") or ())]
+            if not (any(b[2] <= x0 + 1e-3 for b in on_line)
+                    and any(b[0] >= x1 - 1e-3 for b in on_line)):
+                continue
+            bx0, by0, bx1, by1 = ln["bbox_px"]
+            ends = ln.get("ends_px") or ((bx0, (by0 + by1) / 2), (bx1, (by0 + by1) / 2))
+            if beside is None:      # the ink beside the stroke is judged without the rules
+                beside = _glyph_ink(ink, dpi) if getattr(config, "glyph_ink", False) else ink
+            run, excess = _own_stroke(ink, ends, ln.get("run_px", 3.0), x0 * W, x1 * W,
+                                      beside_ink=beside)
+            if run >= LINE_SUPPORT_MIN_RUN and excess > 0:
+                h["final"], h["verdict"], h["line_support"] = True, "struck", True
+                # the line strikes confirmed words on both sides: it crosses the whole word
+                h["char_span"], h["chars"], h["partial"] = (0, len(h["text"])), h["text"], False
+                break
+
+
 def detect_scanned_image(gray, words, config=ScanConfig(), meta=None, dpi=RENDER_DPI,
                          crop_sink=None):
     """Struck-word records for a single scanned page image + its OCR words. `gray` is a HxW
     grayscale array (RGB / float inputs are coerced); `dpi` must be the resolution the image
-    was rendered/scanned at (positive). Runs layer-1 classification then the CNN verdict."""
-    from .lines import to_gray_u8
+    was rendered/scanned at (positive). Runs layer-1 classification, the CNN verdict, then (with
+    ``config.line_support``) the short-word line rule."""
+    from .lines import ink_mask, to_gray_u8
     _check_dpi(dpi)
     gray = to_gray_u8(gray)
-    _tagged, struck = analyze_scanned_page(gray, words, config=config, dpi=dpi)
-    return apply_cnn_verdict(struck, gray, meta, config=config, crop_sink=crop_sink)
+    ink = ink_mask(gray)
+    tagged, struck = analyze_scanned_page(gray, words, ink=ink, config=config, dpi=dpi)
+    recs = apply_cnn_verdict(struck, gray, meta, config=config, crop_sink=crop_sink)
+    if getattr(config, "line_support", False):
+        _line_support(recs, tagged, ink, config, dpi)
+    return recs
 
 
 MIN_META_DPI = 100   # image-metadata resolutions below this are placeholders, not measurements

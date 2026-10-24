@@ -60,15 +60,16 @@ final}` (`tier` is `"vector"`, `"flag"`, or `"annot"`). Vector records also carr
 `stroke_color`/`stroke_width` (when a drawn stroke strikes them), the paint + thickness of the
 dominant stroke (red = opposing counsel is evidence); annotation records carry
 `annot_author`/`annot_created`/`annot_modified`/`annot_color`/`annot_id` (the redline's "who and
-when"). Scanned records replace `coverage` with the evidence that decided them — `score`,
-`cnn_prob`, `cnn_agrees`, `conf`, `geom_corroborated` (and `conf_veto: True` when the
-calibrated-confidence gate downgrades a high-confidence word) — and `tier` is `"auto"`/`"review"`.
-The keys are documented as `TypedDict`s in `pdf_strikethrough.types` (`StruckWord`, `DetectResult`,
-`Passage`); the package ships `py.typed`, so type checkers see them. Partial strikes (`semi-` of
-`semi-monthly`) are resolved to the characters the strike actually crosses, read from the PDF's own
-glyph boxes, and a word counts as fully struck only when every character is — so a replacement
-printed straight after a deletion (`~~December~~May`) survives in `clean_text`. `bbox_frac` is in
-fractions of the rendered page (rotation-aware), so it maps directly onto a rendered pixmap.
+when"). Scanned records replace `coverage` with the evidence that decided them: `score`, `cnn_prob`,
+`cnn_agrees`, `conf`, `geom_corroborated` (and `conf_veto: True` when the calibrated-confidence gate
+downgrades a high-confidence word, or `line_support: True` when a short word is kept on its stroke's
+confirmed neighbors). Their `tier` is `"auto"`/`"review"`. The keys are documented as `TypedDict`s
+in `pdf_strikethrough.types` (`StruckWord`, `DetectResult`, `Passage`); the package ships
+`py.typed`, so type checkers see them. Partial strikes (`semi-` of `semi-monthly`) are resolved to
+the characters the strike actually crosses, read from the PDF's own glyph boxes, and a word counts
+as fully struck only when every character is — so a replacement printed straight after a deletion
+(`~~December~~May`) survives in `clean_text`. `bbox_frac` is in fractions of the rendered page
+(rotation-aware), so it maps directly onto a rendered pixmap.
 
 Text can also be struck in the text layer itself, the way online strikethrough generators write it:
 each character followed by U+0336 COMBINING LONG STROKE OVERLAY (`o̶f̶`). The `vector` detector
@@ -345,6 +346,16 @@ ink on both sides of it. That ink is measured with the page's horizontal runs of
 (table rules, underlines) left out, so an underlined number sitting on a table rule is not read as
 struck, and ruled text is judged like unruled text; `pdf_strikethrough.lines.rule_mask` finds those
 runs. `ScanConfig(glyph_ink=False)` measures on all ink, as earlier releases did.
+
+**Short words.** A word of three characters or fewer, not counting surrounding punctuation, fills
+little of the CNN's input, so a struck "of" or "a" often scores below the struck threshold even when
+the words around it are confirmed. `ScanConfig.line_support` (on by default) keeps such a word when
+the line through it strikes confirmed words on both sides of it and the word has a stroke of its
+own: one unbroken stretch of ink at the line's height across at least 65% of the word, with more ink
+there than just above or below it. A live word between two words struck one by one, which the
+detector can join into one line, has glyph ink at that height but no such stroke, so it is normally
+not kept. On the calibrated-confidence path a word read above `max_clean_conf` is never kept.
+`precision_first()` turns it off, since it reports CNN-confirmed strikes only.
 
 **Degraded ruled forms (provisional).** On faint, heavily-ruled scans — printed forms, dense
 tables — a printed rule crossing text is hard to tell from a pen strike, and the classifier
