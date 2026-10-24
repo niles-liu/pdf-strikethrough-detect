@@ -100,6 +100,21 @@ All notable changes to this project are documented here. The format follows
   characters, as `clean_markdown()` does. Only U+0336 is read: U+0338 is the slash of a
   decomposed ≠ and U+0334 is the IPA mark for velarization. The short overlays U+0335 and
   U+0337, which some generators emit, are left out too, so text struck with them is still missed.
+- **The vector detector struck words underlined at the baseline in Courier and other fonts.** The
+  strike test used the middle share of the word's box, which in Courier and many other fonts holds
+  the baseline. The stroke is now measured in ems from the glyph baseline, read from the
+  characters' origins: it counts where its center is more than 0.03 em above the baseline
+  (`STRIKE_BAND_LO`) and at most 0.58 em (`STRIKE_BAND_HI_LEVEL`), or 0.65 em for a stroke leaning
+  more than 2 degrees (`STRIKE_BAND_HI`). A word with no usable baseline keeps the old box-share
+  band. The character pass turns PyMuPDF's quad corrections on for itself, so the output is the
+  same after pymupdf4llm turns them off. The edges were picked on newly generated pages from the
+  frontier benchmark's synthetic redline generator and on strike-free LaTeX and plotting PDFs. On
+  200 such pages, the 687 words with a Courier baseline underline are no longer marked, and nothing
+  else changes; 208 pages of Senate bills published before the benchmark's cutoff are unchanged; on
+  the dev pages of the benchmark's public redline corpus 16 words change, 14 of them invisible
+  text; the strike-free PDFs get 252 marks, down from 270, none new. Reading character data for
+  every word a stroke crosses adds a few milliseconds per page, up to 3 times the detector's time
+  on a page of underlined text.
 - **The flag detector's version guard could not read PyMuPDF 2.0's version.** 2.0 reports `2.0`,
   with no patch number, so the guard read it as unknown. Unknown means unguarded, so 2.0 users were
   never blocked, but the test that the installed PyMuPDF clears the floor failed in every CI job
@@ -160,16 +175,17 @@ All notable changes to this project are documented here. The format follows
   letter of a relettered item (`(ba)`, `(iv)`), stayed in `clean_text`. The floor is now 3 pt.
   A short mark must also be flat: a tick across one character (3 pt across, 1.5 pt up), drawn as
   a line, a curve or a filled shape, is still not a strike, nor is a box or bar under 6 pt wide
-  and over 1.5 pt tall. A stroke under 6 pt counts only on a character whose own middle band it
-  crosses, so the bar of a small fraction or a root beside full-size text is not a strike. A
-  character extracted with no width, such as the 'i' of an 'fi' ligature, is struck with the
-  character before it. Segments under 6 pt are still chained across the gaps of a dashed strike
-  before the floor applies.
+  and over 1.5 pt tall. A stroke under 6 pt counts only on a character whose own strike band it
+  crosses (the band above the baseline, measured from that character's own origin and em, or the
+  middle of its box when it has no usable baseline), so the bar of a small fraction or a root
+  beside full-size text is not a strike. A character extracted with no width, such as the 'i' of
+  an 'fi' ligature, is struck with the character before it. Segments under 6 pt are still chained
+  across the gaps of a dashed strike before the floor applies.
 - **Invisible text over an inserted letter could be marked struck.** Some redline tools lay a
   hidden glyph a little low over a letter, so the underline of an inserted letter crossed the
-  hidden word's middle band. On an invisible word (render mode 3, or fully transparent) that
-  overlaps visible text, a stroke under 6 pt now counts only through the middle of the visible
-  characters beneath it, so the hidden word is struck with a struck letter and not by an
+  hidden word's strike band. On an invisible word (render mode 3, or fully transparent) that
+  overlaps visible text, a stroke under 6 pt now counts only through the strike band of the
+  visible characters beneath it, so the hidden word is struck with a struck letter and not by an
   underline. A strike over a text layer that is all invisible, such as an OCR'd scan with its
   markup flattened, still counts.
 

@@ -373,6 +373,202 @@ def test_strike_over_an_invisible_only_text_layer_is_kept():
         ("shall", "shall")]
 
 
+# ----------------------------------------------------------------------- the strike band
+
+def _marked_line(font, heights, size=FS, base=200, width=0.6):
+    """'alpha bravo charlie' in `font`, with a line under or through 'bravo' at each height in
+    `heights` (ems of the font size above the baseline; 'x' is the middle of the x-height)."""
+    xmid = pymupdf.Font(font).glyph_bbox(ord("x")).y1 / 2
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, base), "alpha bravo charlie", fontname=font, fontsize=size)
+    r = _words(page)["bravo"]
+    for h in heights:
+        y = base - size * (xmid if h == "x" else h)
+        page.draw_line((r.x0, y), (r.x1, y), width=width)
+    return _reopen(doc)
+
+
+# Courier's word box, and bold Times' and Helvetica's, put the baseline inside the box-share band
+@pytest.mark.parametrize("font", ["cour", "cobo", "tiro", "tibo", "helv", "hebo"])
+@pytest.mark.parametrize("heights", [[0.0], [0.0, -0.12], [-0.12]],
+                         ids=["at-baseline", "double", "under-baseline"])
+def test_underline_is_not_a_strike_in_any_font(font, heights):
+    assert st.strikethroughs_in_pdf(_marked_line(font, heights)) == []
+
+
+@pytest.mark.parametrize("font", ["cour", "cobo", "tiro", "tibo", "helv", "hebo"])
+@pytest.mark.parametrize("height", ["x", 0.15, 0.40], ids=["mid-x-height", "low", "high"])
+def test_strike_through_the_letters_counts_in_any_font(font, height):
+    (rec,) = st.strikethroughs_in_pdf(_marked_line(font, [height]))
+    assert (rec["text"], rec["chars"], rec["partial"]) == ("bravo", "bravo", False)
+
+
+def test_overline_above_the_capitals_is_not_a_strike():
+    assert st.strikethroughs_in_pdf(_marked_line("cour", [0.9])) == []
+
+
+def _superscript_word(strike_y=None, underline=False):
+    """'see note' + a raised 7 pt '12' joined to 'note', in Courier: one word, 'note12'."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    x, y = 72, 200
+    page.insert_text((x, y), "see note", fontname="cour", fontsize=FS)
+    x += pymupdf.get_text_length("see note", fontname="cour", fontsize=FS)
+    page.insert_text((x, y - 4.5), "12", fontname="cour", fontsize=7)
+    r = _words(page)["note12"]
+    if underline:
+        page.draw_line((r.x0, y), (r.x1, y), width=0.6)
+    if strike_y is not None:
+        page.draw_line((r.x0, y - strike_y), (r.x1, y - strike_y), width=0.6)
+    return _reopen(doc)
+
+
+def test_superscript_does_not_move_the_baseline():
+    # an underline at the main baseline under a word ending in a superscript stays live, and a
+    # strike through the main letters strikes the superscript with them
+    assert st.strikethroughs_in_pdf(_superscript_word(underline=True)) == []
+    (rec,) = st.strikethroughs_in_pdf(_superscript_word(strike_y=2.6, underline=True))
+    assert (rec["text"], rec["chars"], rec["partial"]) == ("note12", "note12", False)
+
+
+def test_strike_band_follows_text_set_upside_down():
+    # text upside down in unrotated space (/Rotate 180): its letters run below the baseline there
+    def doc_with(dy):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((300, 400), "keep gone here", fontname="cour", fontsize=FS, rotate=180)
+        g = _words(page)["gone"]
+        page.draw_line((g.x0, 400 + dy), (g.x1, 400 + dy), width=0.6)
+        page.set_rotation(180)
+        return _reopen(doc)
+    assert [r["text"] for r in st.strikethroughs_in_pdf(doc_with(2.6))] == ["gone"]
+    assert st.strikethroughs_in_pdf(doc_with(0.0)) == []
+
+
+def _content_page(ops):
+    """A page whose content stream is `ops` (PDF space, y up: MuPDF's y = 200 is 642; /helv is
+    Helvetica)."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_font(fontname="helv")
+    xref = doc.get_new_xref()
+    doc.update_object(xref, "<<>>")
+    doc.update_stream(xref, ops.encode())
+    page.set_contents(xref)
+    return _reopen(doc)
+
+
+def _struck_with_line(doc, target, y):
+    page = doc[0]
+    r = _words(page)[target]
+    page.draw_line((r.x0, y), (r.x1, y), width=0.6)
+    return [w["text"] for w in st.strikethroughs_in_pdf(_reopen(doc))]
+
+
+@pytest.fixture
+def quad_corrections(request):
+    """PyMuPDF's quad corrections on (or off, given False) for one test, restored after: importing
+    pymupdf4llm, as an earlier test may have, turns them off for the whole process."""
+    prev = pymupdf.TOOLS.unset_quad_corrections()
+    pymupdf.TOOLS.unset_quad_corrections(not getattr(request, "param", True))
+    yield
+    pymupdf.TOOLS.unset_quad_corrections(prev)
+
+
+# Tz stretches text sideways only: the band is set by the glyphs' height, not the span's size
+@pytest.mark.parametrize("quad_corrections", [True, False], indirect=True, ids=["qc-on", "qc-off"])
+@pytest.mark.parametrize("tz, height, struck", [(25, 0.36, True), (25, 0.0, False),
+                                                (200, 0.30, True), (200, 0.82, False)])
+def test_band_follows_the_height_of_stretched_text(quad_corrections, tz, height, struck):
+    doc = _content_page(f"BT /helv 12 Tf {tz} Tz 72 642 Td (alpha BRAVO charlie) Tj ET")
+    assert _struck_with_line(doc, "BRAVO", 200 - 12 * height) == (["BRAVO"] if struck else [])
+
+
+# mirrored left to right (letters stand above the baseline) and upside down (they hang below it)
+@pytest.mark.parametrize("matrix, up", [("-12 0 0 12 400 642", 1), ("12 0 0 -12 72 642", -1)])
+@pytest.mark.parametrize("height, struck", [(0.22, True), (0.0, False), (-0.1, False)])
+def test_band_follows_mirrored_text(matrix, up, height, struck):
+    doc = _content_page(f"BT /helv 1 Tf {matrix} Tm (alpha bravo charlie) Tj ET")
+    assert _struck_with_line(doc, "bravo", 200 - up * 12 * height) == (["bravo"] if struck else [])
+
+
+def test_output_is_the_same_with_quad_corrections_off():
+    # importing pymupdf4llm turns them off for the process; the character pass turns them back on
+    # for itself and restores the caller's setting
+    stretched = _content_page("BT /helv 12 Tf 25 Tz 72 642 Td (alpha BRAVO charlie) Tj ET")
+    r = _words(stretched[0])["BRAVO"]
+    stretched[0].draw_line((r.x0, 200 - 12 * 0.5), (r.x1, 200 - 12 * 0.5), width=0.6)
+    docs = [_marked_line("cour", [0.0]), _marked_line("helv", [0.75]), _marked_line("cour", ["x"]),
+            _marked_line("tibo", [0.4]), _reopen(stretched)]
+    prev, out = pymupdf.TOOLS.unset_quad_corrections(), {}
+    try:
+        for off in (False, True):
+            pymupdf.TOOLS.unset_quad_corrections(off)
+            out[off] = [[(w["text"], w["char_span"]) for w in st.strikethroughs_in_pdf(d)]
+                        for d in docs]
+            assert bool(pymupdf.TOOLS.unset_quad_corrections()) == off
+    finally:
+        pymupdf.TOOLS.unset_quad_corrections(prev)
+    assert out[True] == out[False] == [[], [], [("bravo", (0, 5))], [("bravo", (0, 5))],
+                                       [("BRAVO", (0, 5))]]
+
+
+def test_em_of_a_font_shorter_than_one_em():
+    # ZapfDingbats' ascender minus descender is 0.963 em; PyMuPDF draws its boxes 1 em tall
+    from pdf_strikethrough import native
+
+    def struck_at(h):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 200), "alpha bravo charlie", fontname="zadb", fontsize=FS)
+        w = page.get_text("words")[1]
+        page.draw_line((w[0], 200 - FS * h), (w[2], 200 - FS * h), width=0.6)
+        return [r["text"] for r in st.strikethroughs_in_pdf(_reopen(doc))], w[4]
+    top = native.STRIKE_BAND_HI_LEVEL
+    (inside, word), (above, _w) = struck_at(top - 0.03), struck_at(top + 0.012)
+    assert inside == [word] and above == []
+
+
+def test_combining_mark_does_not_set_the_em():
+    # a math font's U+0338 slash, taller than the digits it crosses, is part of the word '66\u0338'
+    from pdf_strikethrough.native import _word_baseline
+
+    def char(c, x, size):
+        return ({"c": c, "origin": (x, 200.0), "bbox": (x, 200 - size, x + 6, 200 + size / 4)},
+                1.0, -0.25)
+    base = _word_baseline([char("6", 72, 12), char("6", 78, 12), char("\u0338", 84, 20)],
+                          80.0, 1.0, 0.0)
+    assert base[1] == 200.0 and base[4] == pytest.approx(12)
+
+
+def test_word_on_two_baselines_uses_the_box_band():
+    # an equation's '=|', denominator and '|=' that MuPDF joins into one word, struck line by line:
+    # one strike through the main line, one through the denominator
+    doc = pymupdf.open()
+    page = doc.new_page()
+    tw, xs = pymupdf.TextWriter(page.rect), [72]
+    for text, y in (("=|", 200), ("14.67", 208), ("|=", 200)):
+        xs.append(tw.append((xs[-1], y), text, fontsize=FS)[1].x)
+    tw.write_text(page)
+    page.draw_line((xs[0], 200 - 3.1), (xs[3], 200 - 3.1), width=0.6)
+    page.draw_line((xs[1], 208 - 3.1), (xs[2], 208 - 3.1), width=0.6)
+    (rec,) = st.strikethroughs_in_pdf(_reopen(doc))
+    assert (rec["text"], rec["chars"], rec["partial"]) == ("=|14.67|=", "=|14.67|=", False)
+
+
+def test_untrusted_origins_fall_back_to_the_box_band():
+    from pdf_strikethrough.native import _through_text
+    word = (0.0, 100.0, 50.0, 112.0, "word")          # a 12 pt box, baseline at its bottom
+    low, high = 110.5, 103.0                           # 0.125 and 0.75 em over the baseline
+    through = _through_text(word, (25.0, 112.0, 0.0, 1.0, 12.0))
+    assert through(0, 50, low) and not through(0, 50, high) and not through(0, 50, 112.0)
+    # no origins, a baseline off the box, an em the box does not fit: the box-share band
+    for base in (None, (25.0, 130.0, 0.0, 1.0, 12.0), (25.0, 112.0, 0.0, 1.0, 30.0)):
+        through = _through_text(word, base)
+        assert not through(0, 50, low) and through(0, 50, high)
+
+
 # ----------------------------------------------------------------------- rotated content
 
 def _landscape_page():
