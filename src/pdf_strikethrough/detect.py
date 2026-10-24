@@ -45,6 +45,12 @@ class OcrRequiredError(ValueError):
     `di_result`, and no `words` or `words_by_page` entry for it."""
 
 
+class GarbledTextWarning(UserWarning):
+    """Some words' text comes from a broken character map (see ``detect_pdf``'s ``on_garbled``):
+    issued once per document, naming the pages; each page also has an entry in the result's
+    ``warnings``."""
+
+
 class EncryptedPdfError(ValueError):
     """The PDF is password-protected; decrypt or authenticate before processing."""
 
@@ -514,6 +520,7 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         "words": all_words,
         "n_struck_final": sum(1 for w in all_words if w.get("final")),
         "warnings": warns,
+        "garbled_words": [],                    # an image has no text layer to garble
     }
     if include_markdown:
         result["markdown"] = "\n\n".join(page_md)
@@ -670,10 +677,43 @@ def _check_words_by_page(wbp, count, unit="page"):
             raise TypeError(f"words_by_page[{k}] must be a list of pdf_strikethrough.ocr.Word")
 
 
+def _note_garbled(page, pno, garb, seq, on_garbled, garbled, warns):
+    """Record a page's garbled words (``get_text("words")`` entries) in `garbled` and a note in
+    `warns`, and return the page's reading-order `seq` without them when `on_garbled` is
+    'drop'."""
+    boxes = [native._bbox_frac(page, *w[:4]) for w in garb]
+    garbled.extend({"page": pno, "text": w[4], "bbox_frac": b} for w, b in zip(garb, boxes))
+    n = len(garb)
+    warns.append(f"page {pno}: the text of {n} word{'s' if n > 1 else ''} comes from a broken "
+                 f"character map and is not what the page shows (for example {garb[0][4]!r}); "
+                 f"garbled_words lists {'them' if n > 1 else 'it'}")
+    if on_garbled == "drop":
+        # compared without U+0336: a matched vector record's text drops the overlays it strikes
+        keys = {(b, w[4].replace(native.OVERLAY, "")) for w, b in zip(garb, boxes)}
+        seq = [it for it in seq if (it[1], it[0].replace(native.OVERLAY, "")) not in keys]
+    return seq
+
+
+def _warn_garbled(garbled, on_garbled, include_markdown):
+    """One GarbledTextWarning for the document, naming the pages that hold garbled words."""
+    pages = sorted({g["page"] for g in garbled})
+    shown = ", ".join(str(p) for p in pages[:10]) + (f" (+{len(pages) - 10} more)"
+                                                       if len(pages) > 10 else "")
+    n = len(garbled)
+    msg = (f"the text of {n} word{'s' if n > 1 else ''} on page{'s' if len(pages) > 1 else ''} "
+           f"{shown} comes from a broken character map (a font that maps its glyphs to the wrong "
+           f"characters) and is not what the page shows; garbled_words lists them")
+    if include_markdown:
+        msg += ("; markdown, clean_text and passages leave them out" if on_garbled == "drop"
+                else "; markdown and clean_text keep them as extracted (on_garbled='drop' leaves "
+                     "them out)")
+    _warnings.warn(msg, GarbledTextWarning, stacklevel=3)
+
+
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
                include_markdown=True, method=None, on_missing_ocr="raise",
                pages=None, progress=None, words_by_page=None, native_method=None,
-               _crop_sink=None):
+               on_garbled="keep", _crop_sink=None):
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
@@ -716,10 +756,16 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             page is processed (`completed` counts from 1, `total` is the number of pages being
             processed, `page_index` is the just-finished 0-based page). Long OCR+CNN runs are
             otherwise silent and read as hangs; use this to drive a progress bar / stderr line.
+        on_garbled: what to do with words whose text a broken character map garbled (a math
+            font's equations read as Ethiopic or Indic characters, say): 'keep' (default) keeps
+            them in ``markdown``, ``clean_text`` and ``passages`` as extracted; 'drop' leaves them
+            out of all three. Either way they are listed in ``garbled_words``, their struck
+            records carry ``garbled: True``, each page holding any gets an entry in
+            ``warnings``, and one ``GarbledTextWarning`` names those pages.
 
     Returns a dict:
         {schema_version, source, page_count, page_sources, words, n_struck_final, warnings,
-         markdown, clean_text, passages}   (last three only if include_markdown;
+         garbled_words, markdown, clean_text, passages}   (last three only if include_markdown;
          plus ``pages`` when a subset was requested). See ``pdf_strikethrough.types.DetectResult``.
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
@@ -731,6 +777,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         raise ValueError(f"unknown method {method!r} (use one of {', '.join(native.METHODS)})")
     if on_missing_ocr not in ("raise", "skip"):
         raise ValueError(f"on_missing_ocr must be 'raise' or 'skip', got {on_missing_ocr!r}")
+    if on_garbled not in ("keep", "drop"):
+        raise ValueError(f"on_garbled must be 'keep' or 'drop', got {on_garbled!r}")
     _check_dpi(dpi)
     if di_result is not None and words_by_page is not None:
         raise ValueError("pass only one of di_result= / words_by_page= (each supplies the words "
@@ -755,18 +803,21 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                    "missing, so a page with no strikes found is not proof that it has none")
             _warnings.warn(msg, stacklevel=2)
             warns.append(msg)
-        page_md, page_clean, passages = [], [], []
+        page_md, page_clean, passages, garbled = [], [], [], []
         total = len(page_indices)
         for done, pno in enumerate(page_indices, start=1):
             page = doc[pno]
-            recs, seq = [], []
+            recs, seq, garb = [], [], []
             # on native pages, the detectors that read U+0336 overlays ('vector', 'both') also
             # drop from clean_text the overlaid characters a record's one span leaves out
             overlays = False
             log.debug("page %d/%d (index %d): source=%s", done, total, pno, sources[pno])
             if sources[pno] == "native":
                 nat_words = page.get_text("words")   # extract once; threaded through both detectors
-                recs = native.page_strikes(page, pno, method, words=nat_words)
+                chars = native._PageChars(page)
+                garb = native._garbled_words(page, nat_words, chars)
+                recs = native.page_strikes(page, pno, method, words=nat_words, _garbled=garb,
+                                           _chars=chars)
                 for r in recs:
                     r["final"], r["verdict"] = True, "struck"
                 if include_markdown:
@@ -815,7 +866,10 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                            f"native detector on it (no OCR backend / di_result was provided)")
                     _warnings.warn(msg, stacklevel=2)
                     warns.append(msg)
-                    recs = native.page_strikes(page, pno, method, words=nat_words)
+                    chars = native._PageChars(page)
+                    garb = native._garbled_words(page, nat_words, chars)
+                    recs = native.page_strikes(page, pno, method, words=nat_words,
+                                               _garbled=garb, _chars=chars)
                     for r in recs:
                         r["final"], r["verdict"] = True, "struck"
                     if include_markdown:
@@ -837,6 +891,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         f"or use on_missing_ocr='skip'")
 
             words.extend(recs)
+            if garb:
+                seq = _note_garbled(page, pno, garb, seq, on_garbled, garbled, warns)
             if include_markdown:
                 page_md.append(_md.page_markdown(seq))
                 page_clean.append(_md.page_clean_text(seq, drop_overlaid=overlays))
@@ -846,6 +902,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             if progress is not None:
                 progress(done, total, pno)
 
+        if garbled:
+            _warn_garbled(garbled, on_garbled, include_markdown)
         if isinstance(source, (str, os.PathLike)):
             src_name = str(source)
         else:                                  # bytes -> None; an open file or doc -> its name
@@ -859,6 +917,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             "words": words,
             "n_struck_final": sum(1 for w in words if w.get("final")),
             "warnings": warns,
+            "garbled_words": garbled,
         }
         if pages is not None:
             result["pages"] = page_indices

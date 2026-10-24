@@ -56,7 +56,8 @@ print(st.clean_markdown("contract.pdf"))        # surviving text, deletions remo
 ```
 
 Each native record: `{page, text, chars, char_span, partial, bbox_frac, tier, coverage, verdict,
-final}` (`tier` is `"vector"`, `"flag"`, or `"annot"`). Vector records also carry
+final}` (`tier` is `"vector"`, `"flag"`, or `"annot"`), plus `garbled: True` when a broken
+character map garbled the word ([below](#garbled-text-layers)). Vector records also carry
 `stroke_color`/`stroke_width` (when a drawn stroke strikes them), the paint + thickness of the
 dominant stroke (red = opposing counsel is evidence); annotation records carry
 `annot_author`/`annot_created`/`annot_modified`/`annot_color`/`annot_id` (the redline's "who and
@@ -132,6 +133,20 @@ everything from the native pages. Password-protected PDFs raise `EncryptedPdfErr
 > `clean_markdown()` remains a separate, higher-fidelity **native-only** path that borrows
 > pymupdf4llm's layout (headings, paragraphs). `detect_pdf`'s `markdown` is layout-plain but works
 > uniformly on scanned pages too.
+
+### Garbled text layers
+
+Some PDFs map a font's glyphs to the wrong characters, so the text layer says something other than
+the page. Equations Word exports in Cambria Math are the common case: `·(0.955) −` reads
+`⋅ሺ0.955ሻെ`. `detect_pdf` lists such words in `res["garbled_words"]` (`page`, `text`,
+`bbox_frac`; the CLI's `--json` and `--jsonl` carry it too), marks a struck record of one with
+`garbled: True`, adds an entry to `res["warnings"]` for each page that holds any, and issues one
+`GarbledTextWarning` naming those pages. `markdown` and `clean_text` keep them as extracted;
+`on_garbled="drop"` leaves them out. Real text in the scripts these maps fall into (Ethiopic, the
+Indic scripts, Arabic, Hebrew, Thai and others), digits and Latin abbreviations included, is not
+flagged. Not caught: a broken map that only gives letters of one such script, in a font that is
+not a math font, since it reads like real text, and one that gives Latin, Greek or Cyrillic
+letters or U+FFFD.
 
 ### Choosing an OCR backend
 
@@ -444,8 +459,8 @@ The top-level package (`import pdf_strikethrough as st`) exports ~37 names; the 
 | CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta`, `ensure_model` |
 | Active learning + calibration | `dump_crops`, `pdf_strikethrough.calibration` (`threshold_for_recall`, `threshold_for_precision`, `conformal_threshold`, `pr_curve`) |
 | OCR (backends + cloud-result adapters) | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di`, `words_from_textract`, `words_from_docai` |
-| Errors | `OcrRequiredError`, `EncryptedPdfError` |
-| Types | `StruckWord`, `DetectResult`, `Passage` (in `pdf_strikethrough.types`) |
+| Errors and warnings | `OcrRequiredError`, `EncryptedPdfError`, `GarbledTextWarning` |
+| Types | `StruckWord`, `DetectResult`, `Passage`, `GarbledWord` (in `pdf_strikethrough.types`) |
 
 Every `detect_pdf` / `detect_image_file` result and every CLI `--json` / `--jsonl` payload carries
 `schema_version` (`pdf_strikethrough.types.SCHEMA_VERSION`, currently `1`). It is bumped when a

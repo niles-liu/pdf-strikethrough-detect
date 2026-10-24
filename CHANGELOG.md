@@ -31,6 +31,24 @@ All notable changes to this project are documented here. The format follows
   scanned path uses it for the underline fix below.
 - **`ScanConfig.line_support`, on by default, and a `line_support: True` key on the scanned
   records it keeps,** also in the CLI's JSON output and the `dump_crops` manifest. See Changed.
+- **Words a broken character map garbled are flagged, and their page gets a warning.** Some PDFs
+  map a font's glyphs to the wrong characters, so the text layer, and `clean_text` with it, says
+  something other than the page. Equations Word exports in Cambria Math are the common case:
+  `·(0.955) −` reads `⋅ሺ0.955ሻെ`. `detect_pdf` lists such words in a new `garbled_words` key
+  (`page`, `text`, `bbox_frac`; type `GarbledWord`), also in the CLI's `--json` and `--jsonl`. A
+  struck record of such a word carries `garbled: True`, whichever native detector made it. Each
+  page holding any gets an entry in `warnings`, and one `GarbledTextWarning` (a `UserWarning`)
+  names those pages. The text is unchanged by default; the new `on_garbled="drop"` leaves those
+  words out of `markdown`, `clean_text` and `passages`. A word is flagged for a noncharacter or a
+  code point unassigned inside the blocks of Ethiopic, the Indic scripts and similar scripts,
+  letters, marks or digits of two of those scripts (Ethiopic beside Malayalam), one of their
+  characters beside a mathematical letter or a private-use character, a vowel sign after a
+  character of another script with no letter of its own following, or one of their characters
+  drawn in a math font. Real Ethiopic, Indic, Arabic, Hebrew and Thai text, digits and Latin
+  abbreviations included, is not flagged, nor are letters assigned in Unicode 14 to 18 that an
+  older Python calls unassigned. On the dev pages of the frontier benchmark's public redline corpus
+  it flags the same 957 words the benchmark's own check flags, and none on newly generated
+  synthetic pages or on Senate bills published before the benchmark's cutoff.
 
 ### Changed
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
