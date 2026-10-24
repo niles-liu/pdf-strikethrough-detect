@@ -29,6 +29,8 @@ All notable changes to this project are documented here. The format follows
   the pixels on horizontal runs at least `min_len_px` long (a 1 x `min_len_px` opening), with
   `tolerance_px` rows of vertical slack for a thin rule a skewed scan has broken into steps. The
   scanned path uses it for the underline fix below.
+- **`ScanConfig.line_support`, on by default, and a `line_support: True` key on the scanned
+  records it keeps,** also in the CLI's JSON output and the `dump_crops` manifest. See Changed.
 
 ### Changed
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
@@ -55,6 +57,22 @@ All notable changes to this project are documented here. The format follows
   (real redlined documents). The character error rate of the live text, which also counts a whole
   struck word now left with a character live, falls from 6.36% to 6.06% on the synthetic pages,
   from 11.29% to 10.96% on the redlined documents and from 3.18% to 3.17% on Senate bills.
+- **The scanned path keeps short struck words that StrikeNet leaves unsure.** A word of three
+  characters or fewer, not counting surrounding punctuation, is mostly padding at StrikeNet's input
+  width, so a struck "of" or "a" often scored below the 0.85 struck threshold inside a run of
+  confirmed struck words and stayed live. Such a word is now kept, struck whole, when the line
+  through it strikes confirmed words on both sides of it, it shows strike geometry on that line,
+  and it has a stroke of its own: one unbroken stretch of ink at the line's height across at least
+  65% of the word (`detect.LINE_SUPPORT_MIN_RUN`), with more ink there than in the glyph ink just
+  above and below it. Two words struck one by one can be joined into one line across the live word
+  between them, whose glyph ink at that height ("a", "&", a crossbar) is not one such stroke. On
+  the calibrated-confidence path a word read above `max_clean_conf` is never kept.
+  `precision_first()` turns the rule off, and `line_support=False` gives the previous output.
+  Measured on its own against 0.12.1: on scanned pages of Senate bills published before the
+  benchmark's cutoff (the half not used to pick the rule), struck words found rose from 89.2% to
+  96.7% of those read, with no new live words marked; on synthetic redlines that strike each word
+  on its own, live words marked stayed at 88 (112 without the own-stroke test). A lower `cnn_p_hi`
+  is not a substitute: it marks far more live words.
 - **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub
   Release with another tag, such as the ones that timestamp the benchmark's pre-registration,
   builds and publishes nothing and asks for no approval. A version tag still has to match

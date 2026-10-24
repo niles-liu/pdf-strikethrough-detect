@@ -115,7 +115,15 @@ class ScanConfig:
     the rule is ink below the underline. Ruled text is then judged like unruled text. A long solid
     line through a word's middle band with no glyph ink on either side is judged on all ink, so
     one of a double rule stays a rule. ``ScanConfig(glyph_ink=False)``, or
-    ``dataclasses.replace(preset, glyph_ink=False)``, measures on all ink, as before."""
+    ``dataclasses.replace(preset, glyph_ink=False)``, measures on all ink, as before.
+
+    ``line_support`` (on by default; off in ``precision_first()``) keeps a word of three characters
+    or fewer, not counting surrounding punctuation, that StrikeNet leaves unconfirmed when the line
+    through it strikes confirmed words on both sides of it and the word has a stroke of its own.
+    Such a crop is mostly padding at the CNN's input width, so a struck "of" or "a" scores low
+    inside a confirmed struck run. With ``confidence_gating``, a word read above ``max_clean_conf``
+    is never kept. Kept records carry ``line_support: True``. See
+    :func:`pdf_strikethrough.detect._line_support`."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # fill<FILL_STRONG: some struck word must OCR at or below this
     inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued at OCR conf <= this
@@ -125,6 +133,8 @@ class ScanConfig:
     veto_printed_rules: bool = False  # drop solid/dead-straight lines as drawn rules (issue #7)
     rescue_clean_chains: bool = True  # let an EDITED page's clean-OCR glyph chain reach the CNN
     glyph_ink: bool = True            # ink tests ignore long horizontal runs (rules, underlines)
+    line_support: bool = True         # keep a short unconfirmed word inside a confirmed struck run
+                                      # (detect._line_support)
 
     def __post_init__(self):
         # every number here is a confidence, a page fraction or a probability: a float in [0, 1]
@@ -181,11 +191,11 @@ class ScanConfig:
         return cls(cnn_p_hi=cnn_p_hi, **kw)
 
     @classmethod
-    def precision_first(cls, cnn_p_hi=0.97, **kw):
+    def precision_first(cls, cnn_p_hi=0.97, line_support=False, **kw):
         """Precision-first operating point (RAG / indexing): bias toward never dropping live text
         as if it were deleted. Only high-confidence CNN strikes are reported; an uncertain strike
-        falls back to 'unsure'/clean rather than being removed."""
-        return cls(cnn_p_hi=cnn_p_hi, **kw)
+        falls back to 'unsure'/clean rather than being removed, so ``line_support`` is off."""
+        return cls(cnn_p_hi=cnn_p_hi, line_support=line_support, **kw)
 
 
 def _glyph_ink(ink, dpi=RENDER_DPI):
@@ -327,6 +337,47 @@ def _stroke_reach(ink, line_ends_px, line_run_px, line_x_px, word_bbox_px, min_r
             j -= 1
         lo = min(lo, s[j])
     return float(c0 + lo), float(c0 + hi)
+
+
+def _band_ink(ink, line_ends_px, line_run_px, x0_px, x1_px, dy=0.0, pad=1):
+    """Per column from x0_px to x1_px (inside the line's x-extent): does the stroke's band hold
+    ink? The band is the stroke's thickness plus `pad` px each side, its y interpolated from the
+    LINE ENDPOINTS per column and moved down by `dy` px. Empty when no column is left."""
+    (sx, sy), (ex, ey) = line_ends_px
+    H, W = ink.shape
+    x0 = max(int(x0_px), int(min(sx, ex)), 0)
+    x1 = min(int(x1_px), int(max(sx, ex)), W - 1)
+    if x1 <= x0:
+        return np.zeros(0, bool)
+    half = line_run_px / 2.0 + pad
+    xs = np.arange(x0, x1 + 1)
+    t = (xs - sx) / (ex - sx) if ex != sx else np.zeros(len(xs))
+    ys = sy + t * (ey - sy) + dy
+    top = np.clip((ys - half).astype(int), 0, H)
+    bot = np.clip((ys + half).astype(int) + 1, 0, H)
+    return np.array([ink[r0:r1, x].any() for x, r0, r1 in zip(xs, top, bot)], bool)
+
+
+def _own_stroke(ink, line_ends_px, line_run_px, x0_px, x1_px, beside_ink=None):
+    """(run, excess) for a word under a line. `run` is the longest unbroken stretch of band ink as
+    a fraction of the word's columns: a stroke through the word is one stretch, while glyph ink at
+    that height breaks between letters. `excess` is the band's ink fraction minus the larger of the
+    same band one stroke height plus 3 px above and below: a stroke adds ink at its own height, a
+    glyph's crossbar or bowl has as much just beside it. The bands beside it are read on
+    `beside_ink` when given (glyph ink, :func:`_glyph_ink`, so a rule or underline just above or
+    below is not taken for a glyph's ink), else on `ink`."""
+    band = _band_ink(ink, line_ends_px, line_run_px, x0_px, x1_px)
+    if not len(band):
+        return 0.0, 0.0
+    best = cur = 0
+    for v in band:
+        cur = cur + 1 if v else 0
+        best = max(best, cur)
+    d = line_run_px + 3
+    beside_ink = ink if beside_ink is None else beside_ink
+    beside = max(_band_ink(beside_ink, line_ends_px, line_run_px, x0_px, x1_px, dy=s * d).mean()
+                 for s in (-1, 1))
+    return best / len(band), float(band.mean() - beside)
 
 
 def _is_printed_rule(ln):

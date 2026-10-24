@@ -20,7 +20,7 @@ _JSON_EVIDENCE = ("page", "para", "text", "chars", "char_span", "partial", "bbox
                   "verdict", "coverage", "stroke_color", "stroke_width",
                   "annot_author", "annot_created", "annot_modified", "annot_color", "annot_id",
                   "docx_change", "docx_double", "docx_author", "docx_date", "docx_id",
-                  "score", "cnn_prob", "cnn_agrees", "conf")
+                  "score", "cnn_prob", "cnn_agrees", "conf", "line_support")
 
 
 def _check_ocr_available(name):

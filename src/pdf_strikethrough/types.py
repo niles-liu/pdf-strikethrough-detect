@@ -70,6 +70,9 @@ class StruckWord(TypedDict, total=False):
                                  # i.e. real-strike geometry, which the DI-confidence veto spares
     conf_veto: bool              # True when the DI-confidence veto downgraded this record
                                  # (OCR conf > max_clean_conf AND no corroborating geometry)
+    line_support: bool           # True when ScanConfig.line_support kept this short word: the CNN
+                                 # left it unconfirmed, but it has a stroke of its own and its line
+                                 # strikes confirmed words on both sides of it
 
 
 class Passage(TypedDict, total=False):
