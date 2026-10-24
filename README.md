@@ -148,14 +148,23 @@ keeps 91%: its confidence gates, built for degraded ruled forms, drop some crisp
 DI still reads with high confidence. On a clean scan of a printed redline, pass
 `scan_config=ScanConfig.confidence_free()` with `di_result`.
 
-`rapidocr_backend()` passes its keyword arguments to `RapidOCR(...)` and builds the engine with
-RapidOCR's text-line orientation classifier off (`params={"Global.use_cls": False}`): RapidOCR
+`rapidocr_backend()` passes its other keyword arguments to `RapidOCR(...)` and builds the engine
+with RapidOCR's text-line orientation classifier off (`params={"Global.use_cls": False}`): RapidOCR
 turns it on by default, and it turns struck and underlined lines upside down, which then read as
-stray letters. Your `params` keys override that default, so `params={"Global.use_cls": True}`
-turns the classifier back on. An engine passed as `engine=` is used as is; build it with
+stray letters. Your `params` keys override that default, so `params={"Global.use_cls": True}` turns
+the classifier back on. An engine passed as `engine=` is used as is; build it with
 `RapidOCR(params={"Global.use_cls": False})`. With the classifier off, a page scanned upside down
 reads as stray letters: turn it upright first, or turn the classifier back on. Word boxes RapidOCR
 places past the edge of the page are clamped to it.
+
+RapidOCR's default recognizer reads Chinese and Japanese as well as English, and on an English page
+it can read a small mark as a CJK character (a footnote marker `(a)` as `(斗)`). On a page where no
+two CJK characters come one right after the other in reading order (inside a word, or the last of
+one word and the first of the next, across a line break too; a digit in between breaks the run),
+the backend removes each one. Real CJK goes too when it stands alone like that: `100 円`, `5 個` and
+`7 元` lose the unit, and `Article 1 (第1条)` reads `(1)`. A page with CJK text is left as read. Pass
+`rapidocr_backend(drop_lone_cjk=False)` to keep them. The CLI's `--ocr rapidocr` always removes
+them; to keep them, call `detect_pdf(path, ocr=rapidocr_backend(drop_lone_cjk=False))` from Python.
 
 ## Against frontier models
 
@@ -381,8 +390,11 @@ column-aware (two-column pages read down each column; tables read across rows).
 | **Vertical** writing modes (CJK/Mongolian), RTL strike axes | out of scope (roadmap) |
 | Handwritten / freehand strikes | untested (geometry assumes near-straight strokes) |
 
-RapidOCR (the recommended scanned backend) is strongest on Chinese, so horizontal-CJK scans work
-end to end today; full vertical-text support is future work.
+RapidOCR's default model (the recommended scanned backend) reads Chinese and Japanese, so
+horizontal Chinese and Japanese scans work end to end. It has no Hangul, so for Korean pass
+RapidOCR's Korean recognizer: `rapidocr_backend(params={"Rec.lang_type": LangRec.KOREAN,
+"Rec.ocr_version": OCRVersion.PPOCRV5, "Rec.model_type": ModelType.MOBILE})`, with the three enums
+from `rapidocr` (its model downloads on first use). Full vertical-text support is future work.
 
 **Handwritten strikes** are the main known gap: the geometry gate looks for a near-straight,
 near-horizontal stroke, and nothing records that the CNN saw handwritten strikes in training, so a

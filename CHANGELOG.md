@@ -59,6 +59,21 @@ All notable changes to this project are documented here. The format follows
   `use_cls` set in a `config_path` file. A page scanned upside down now reads as stray letters:
   turn it upright first, or turn the classifier back on. An engine passed as `engine=` is used as
   is, so build it with `RapidOCR(params={"Global.use_cls": False})`; the Gradio demo now does.
+- **`rapidocr_backend()` removes lone CJK characters from a page without CJK text.** RapidOCR's
+  default recognizer reads Chinese and Japanese as well as English, and on English redlines it read
+  small marks as CJK characters, which reached `clean_text` as inserted text: a table's footnote
+  marker `(a)` as `(斗)`, an `=` in an equation as `二`. On a page where no two CJK characters (Han,
+  kana, Hangul, bopomofo) come one right after the other in reading order (inside a word, or the
+  last of one word and the first of the next, across a line break too; a digit in between breaks
+  the run), the backend now removes each one: a word left empty is dropped, and one inside a word
+  becomes a space. Real CJK goes too when it stands alone like that: `100 円`, `5 個` and `7 元` lose
+  the unit, and `Article 1 (第1条)` reads `(1)`. A page with CJK text, where the characters come in
+  runs, is returned as read, and CJK punctuation and fullwidth forms are kept.
+  `drop_lone_cjk=False` keeps every character; it applies to an engine passed as `engine=` too. The
+  CLI's `--ocr rapidocr` always removes them; to keep them, call `detect_pdf()` from Python with
+  `ocr=rapidocr_backend(drop_lone_cjk=False)`.
+- **CI's extras job now runs the RapidOCR adapter's tests** against the real engine. The test jobs
+  don't install RapidOCR, so its one real-engine test was always skipped there.
 
 ### Removed
 - **The TestPyPI rehearsal.** A manual run of `publish.yml` tried to publish to TestPyPI, where this
@@ -112,6 +127,8 @@ All notable changes to this project are documented here. The format follows
   box to the page, so a word placed wholly off it keeps its text on a zero-width box at the edge; a
   box only slightly past the edge, which `Word` accepted before, is clamped too. `Word` still
   refuses a box past 1.5 from any other source.
+- **The README said RapidOCR reads every CJK script.** Its default model reads Chinese and
+  Japanese but has no Hangul. The README now gives the params for RapidOCR's Korean recognizer.
 
 ## [0.12.1] — 2026-10-08
 
