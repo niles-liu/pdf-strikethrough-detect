@@ -50,6 +50,15 @@ All notable changes to this project are documented here. The format follows
   OCR backend got the page sideways, and supplied word boxes drew a spurious EXIF warning. CI's
   `lowest-bounds` job installed 9.0, which is not affected, so it never showed.
 - **The Gradio demo no longer installs the `[markdown]` extra,** which it never used.
+- **`rapidocr_backend()` builds its engine with RapidOCR's text-line orientation classifier
+  off.** RapidOCR turns it on by default, and it turned struck, underlined and some plain lines
+  upside down, which then read as stray letters or not at all: struck text could reach
+  `clean_text`, and live text could go missing from it. The default goes in as
+  `params={"Global.use_cls": False}` under any `params` you pass, so
+  `params={"Global.use_cls": True}` turns the classifier back on; the default also overrides a
+  `use_cls` set in a `config_path` file. A page scanned upside down now reads as stray letters:
+  turn it upright first, or turn the classifier back on. An engine passed as `engine=` is used as
+  is, so build it with `RapidOCR(params={"Global.use_cls": False})`; the Gradio demo now does.
 
 ### Removed
 - **The TestPyPI rehearsal.** A manual run of `publish.yml` tried to publish to TestPyPI, where this
@@ -95,6 +104,14 @@ All notable changes to this project are documented here. The format follows
 - **A test pinned the wrong switch.** The chain-gate escape test ran `ScanConfig.ruled_forms()`,
   whose printed-rule veto removes the line before the escape is reached, so nothing tested
   `rescue_clean_chains=False`; now one test does, and another pins the veto's order.
+- **One RapidOCR word box off the page no longer loses the whole document.** RapidOCR can place a
+  word partly or wholly past the edge of the page (the last word of one equation line ran from
+  0.78 to 1.57 of the page width). `Word` refuses a box past 1.5, its guard against pixel
+  coordinates, so `rapidocr_backend()` raised `ValueError` inside `detect_pdf()` or
+  `detect_image_file()` and the call returned nothing. The backend now clamps each word box to the
+  page, so a word placed wholly off it keeps its text on a zero-width box at the edge; a box only
+  slightly past the edge, which `Word` accepted before, is clamped too. `Word` still refuses a box
+  past 1.5 from any other source.
 
 ## [0.12.1] — 2026-10-08
 

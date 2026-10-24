@@ -148,6 +148,15 @@ keeps 91%: its confidence gates, built for degraded ruled forms, drop some crisp
 DI still reads with high confidence. On a clean scan of a printed redline, pass
 `scan_config=ScanConfig.confidence_free()` with `di_result`.
 
+`rapidocr_backend()` passes its keyword arguments to `RapidOCR(...)` and builds the engine with
+RapidOCR's text-line orientation classifier off (`params={"Global.use_cls": False}`): RapidOCR
+turns it on by default, and it turns struck and underlined lines upside down, which then read as
+stray letters. Your `params` keys override that default, so `params={"Global.use_cls": True}`
+turns the classifier back on. An engine passed as `engine=` is used as is; build it with
+`RapidOCR(params={"Global.use_cls": False})`. With the classifier off, a page scanned upside down
+reads as stray letters: turn it upright first, or turn the classifier back on. Word boxes RapidOCR
+places past the edge of the page are clamped to it.
+
 ## Against frontier models
 
 On 45 US Senate bills published after the tested models' training cutoffs, asked only to transcribe

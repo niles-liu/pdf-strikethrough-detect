@@ -241,13 +241,41 @@ def _require_rapidocr_3_2(version):
             "changed in 3.2. Upgrade: pip install 'rapidocr>=3.2'")
 
 
+# Merged under the caller's `params` by rapidocr_backend(). RapidOCR's orientation classifier (on
+# by default) turns struck, underlined and some plain lines upside down, and they then read as stray
+# letters or not at all.
+_RAPIDOCR_DEFAULT_PARAMS = {"Global.use_cls": False}
+
+
+def _clip_to_page(bbox):
+    """A word box (page fractions) clamped to the page, or None when it is not finite. A box wholly
+    past an edge becomes a zero-width or zero-height box on that edge, so the word's text, which
+    RapidOCR read from pixels on the page, is kept."""
+    if not all(math.isfinite(v) for v in bbox):
+        return None
+    return tuple(min(max(v, 0.0), 1.0) for v in bbox)
+
+
 def rapidocr_backend(engine=None, **engine_kwargs):
     """Return an OCR backend using RapidOCR (ONNX, no system binary). Requires the `rapidocr`
-    extra (``>=3.2``). `engine` may be a preconstructed ``rapidocr.RapidOCR``; otherwise one is
-    built lazily.
+    extra (``>=3.2``). The engine is built lazily as ``RapidOCR(**engine_kwargs)``, with
+    ``params={"Global.use_cls": False}`` merged under any ``params`` you pass: RapidOCR's
+    text-line orientation classifier is off, since it turns struck and underlined lines upside
+    down. Your ``params`` keys win, so ``params={"Global.use_cls": True}`` turns it back on. The
+    default goes in as a param, so it also overrides ``use_cls`` in a ``config_path`` file. With
+    the classifier off, a page scanned upside down reads as stray letters: turn it upright first,
+    or turn the classifier back on.
 
-    RapidOCR detection is phrase/line-grained, so its word boxes run coarser than a true
-    word-level engine — good for locating struck regions, weaker for per-word char spans."""
+    `engine` may be a preconstructed ``rapidocr.RapidOCR``, used as is: the default above does not
+    apply to it, so build it with ``RapidOCR(params={"Global.use_cls": False})``.
+
+    A word box that runs past the edge of the page is clamped to it; a word placed wholly off the
+    page keeps its text, on a zero-width box at the edge. RapidOCR detection is phrase/line-grained, so its word boxes run
+    coarser than a true word-level engine — good for locating struck regions, weaker for per-word
+    char spans."""
+    if engine is None:
+        engine_kwargs["params"] = {**_RAPIDOCR_DEFAULT_PARAMS,
+                                   **(engine_kwargs.get("params") or {})}
     holder = {"eng": engine}
 
     def backend(image) -> list[Word]:
@@ -274,8 +302,13 @@ def rapidocr_backend(engine=None, **engine_kwargs):
             if line and isinstance(line[0], str):     # a bare triple: rapidocr's "no text"
                 line = (line,)
             for (text, score, box) in line:
-                if text and str(text).strip():
-                    out.append(Word(str(text), _bbox_from_points(box, w, h),
+                if not (text and str(text).strip()):
+                    continue
+                # RapidOCR can place a word partly or wholly off the page (seen at x 0.78-1.57);
+                # Word would refuse that box and, with it, the whole document
+                bbox = _clip_to_page(_bbox_from_points(box, w, h))
+                if bbox is not None:
+                    out.append(Word(str(text), bbox,
                                     float(score) if score is not None else None))
         return out
 
