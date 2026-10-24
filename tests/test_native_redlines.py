@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 
 import pdf_strikethrough as st
-from pdf_strikethrough import detect, markdown as md
+from pdf_strikethrough import detect, markdown as md, native
 
 FS = 12
 
@@ -105,6 +105,48 @@ def test_struck_subscript_is_struck_with_its_word(struck_part, chars):
     assert (rec["text"], rec["chars"]) == ("CO2", chars)
 
 
+def test_short_strike_through_a_lowered_subscript_strikes_it():
+    # the 2 of CO2 set 3 pt low, struck on its own by a 3.4 pt line through its middle
+    doc = pymupdf.open()
+    page = doc.new_page()
+    x, y = 72, 200
+    w = pymupdf.get_text_length("CO", fontsize=FS)
+    page.insert_text((x, y), "CO", fontsize=FS)
+    page.insert_text((x + w, y + 3), "2", fontsize=7)
+    r = [c for b in page.get_text("rawdict")["blocks"] for ln in b["lines"]
+         for s in ln["spans"] for c in s["chars"] if c["c"] == "2"][0]["bbox"]
+    page.draw_line((r[0] + 0.2, (r[1] + r[3]) / 2), (r[0] + 3.6, (r[1] + r[3]) / 2), width=0.5)
+    (rec,) = st.strikethroughs_in_pdf(_reopen(doc))
+    assert (rec["text"], rec["chars"]) == ("CO2", "2")
+
+
+def test_rest_of_a_ligature_is_struck_with_its_first_letter():
+    # a PDF that maps an 'fi' ligature to the letters 'f' and 'i' extracts as an 'f' box spanning
+    # the glyph and a zero-width 'i' at its right edge: a strike stopping short of that edge must
+    # take the 'i' with the 'f', not leave 'ile'
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), "keep the file now", fontsize=FS)
+    word = _words(page)["file"]
+    f, i = native._PageChars(page).lookup((*word, "file")).boxes[:2]
+    page.draw_line((f[0], (f[1] + f[3]) / 2), (i[2] - 0.6, (f[1] + f[3]) / 2), width=0.6)
+    page = _reopen(doc)[0]
+    chars = native._PageChars(page)
+    real = chars.lookup
+
+    def as_ligature(w):
+        found = real(w)
+        if w[4] == "file":
+            f, i, *rest = found.boxes
+            found = found._replace(boxes=[(f[0], f[1], i[2], f[3]), (i[2], i[1], i[2], i[3]),
+                                          *rest])
+        return found
+
+    chars.lookup = as_ligature
+    recs = native.native_page_strikes(page, 0, _chars=chars)
+    assert [(r["text"], r["chars"]) for r in recs] == [("file", "fi")]
+
+
 def test_flag_and_annot_spans_snap_to_characters():
     doc = _redline("December", "May")
     flag = st.strikethroughs_in_pdf(doc, method="flag")[0]
@@ -173,10 +215,162 @@ def test_slightly_slanted_strike_strikes_every_word(deg):
     assert len(st.strikethroughs_in_pdf(_reopen(doc))) == len(ws)
 
 
-def test_steep_line_is_not_a_strike():
+def _leaning(deg, slack=0.0):
+    """'bravo' crossed through its middle by a line leaning `deg` degrees, its rise `slack` pt
+    short of that angle's."""
     r, y = _bravo_mid()
-    doc = _line_with(lambda p: p.draw_line((r.x0, y - 3), (r.x1, y + 3), width=0.8))
+    rise = math.tan(math.radians(deg)) * (r.x1 - r.x0) - slack
+    return _line_with(lambda p: p.draw_line((r.x0, y + rise / 2), (r.x1, y - rise / 2), width=0.8))
+
+
+@pytest.mark.parametrize("deg", [4, 8, 12])
+def test_leaning_strike_strikes_the_word(deg):
+    # 12 degrees is the cap: drawn a hair inside it, so rounding in the written PDF can't tip it over
+    res = st.detect_pdf(_leaning(deg, slack=0.02))
+    assert [(r["text"], r["chars"]) for r in res["words"]] == [("bravo", "bravo")]
+    assert res["clean_text"] == "alpha charlie"
+
+
+@pytest.mark.parametrize("deg", [13, 15, 25])
+def test_line_leaning_past_the_cap_is_not_a_strike(deg):
+    assert st.strikethroughs_in_pdf(_leaning(deg)) == []
+
+
+def _digit_with(draw):
+    """'5' (9 pt, 5 pt wide) with a mark `draw(page, x, y)` centred on its middle."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), "item 5 and 7 more", fontsize=9)
+    r = _words(page)["5"]
+    draw(page, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)
+    return _reopen(doc)
+
+
+def _tick(rise):
+    """A 3.2 pt line rising `rise` pt."""
+    return lambda p, x, y: p.draw_line((x - 1.6, y + rise / 2), (x + 1.6, y - rise / 2), width=0.6)
+
+
+def test_short_strike_over_one_digit_is_a_strike():
+    res = st.detect_pdf(_digit_with(_tick(0.0)))
+    assert [(r["text"], r["chars"]) for r in res["words"]] == [("5", "5")]
+    assert res["clean_text"] == "item and 7 more"
+
+
+def test_short_steep_tick_over_one_digit_is_not_a_strike(monkeypatch):
+    # rising 1.45 pt over 3.2 (24 degrees): inside the 1.5 pt allowance for a level line, so only
+    # the slope cap keeps the digit live
+    assert st.strikethroughs_in_pdf(_digit_with(_tick(1.45))) == []
+    monkeypatch.setattr(native, "MAX_STROKE_SLOPE", math.tan(math.radians(30)))
+    assert [r["text"] for r in st.strikethroughs_in_pdf(_digit_with(_tick(1.45)))] == ["5"]
+
+
+def _curve_tick(p, x, y):
+    a, b = pymupdf.Point(x - 1.6, y + 0.725), pymupdf.Point(x + 1.6, y - 0.725)
+    sh = p.new_shape()
+    sh.draw_bezier(a, a + (b - a) / 3, a + (b - a) * 2 / 3, b)
+    sh.finish(width=0.6)
+    sh.commit()
+
+
+@pytest.mark.parametrize("draw", [
+    _curve_tick,
+    lambda p, x, y: p.draw_polyline([(x - 1.6, y + 0.725), (x + 1.6, y - 0.725),
+                                     (x + 1.6, y - 0.125), (x - 1.6, y + 1.325)],
+                                    color=None, fill=(0, 0, 0), closePath=True),
+    lambda p, x, y: p.draw_rect((x - 1.6, y - 1.6, x + 1.6, y + 1.6), color=None, fill=(0, 0, 0)),
+    lambda p, x, y: p.draw_rect((x - 1.7, y - 1.7, x + 1.7, y + 1.7), color=(0, 0, 0), width=0.4),
+], ids=["curve-tick", "filled-tick", "filled-square", "stroked-box"])
+def test_short_tick_or_box_of_any_kind_over_one_digit_is_not_a_strike(draw):
+    # the cap covers curves too, and a bar under 6 pt wide must be as flat as a short line
+    assert st.strikethroughs_in_pdf(_digit_with(draw)) == []
+
+
+def test_fraction_bar_beside_a_full_size_character_is_not_a_strike():
+    # TeX sets '(0, 3/2, 2]' with a small 3 over a small 2 and the comma at full size, and the
+    # extractor reads '2,' as one word: the 4.5 pt bar crosses that word's middle band, but it sits
+    # above the small 2's own middle band
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), "over (0, ", fontsize=10)
+    x = 72 + pymupdf.get_text_length("over (0, ", fontsize=10)
+    tw = pymupdf.TextWriter(page.rect)
+    tw.append((x + 0.3, 195.8), "3", fontsize=7)
+    tw.append((x + 0.3, 203.5), "2", fontsize=7)
+    tw.append((x + 4.8, 200), ", 2] then", fontsize=10)
+    tw.write_text(page)
+    page.draw_line((x, 197), (x + 4.5, 197), width=0.4)
+    doc = _reopen(doc)
+    assert "2," in [w[4] for w in doc[0].get_text("words")]
     assert st.strikethroughs_in_pdf(doc) == []
+
+
+def test_hand_drawn_strike_with_jitter_strikes_the_whole_word():
+    # a pen stroke sampled every 1.5 pt, wobbling up to 0.45 pt: some of its pieces lean past the
+    # cap, but they chain with the level ones into one run
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), "the parties shall indemnify", fontsize=12)
+    r = _words(page)["indemnify"]
+    y = (r.y0 + r.y1) / 2 + 1
+    wobble = [0, 0.4, 0.1, -0.35, 0.05, 0.45, -0.1, -0.4, 0.2, 0.0, 0.35, -0.2, 0.25, -0.3, 0.1]
+    n = math.ceil((r.x1 - r.x0 + 2) / 1.5) + 1
+    page.draw_polyline([(r.x0 - 1 + 1.5 * i, y + wobble[i % len(wobble)]) for i in range(n)],
+                       width=0.8, color=(1, 0, 0))
+    res = st.detect_pdf(_reopen(doc))
+    assert [(r["text"], r["chars"]) for r in res["words"]] == [("indemnify", "indemnify")]
+
+
+@pytest.mark.parametrize("deg", [5, 8, 11])
+def test_underline_of_slanted_text_is_not_a_strike(deg):
+    # text set at a slant has an upright box taller than its line, so a line along its baseline
+    # crosses the box's middle band
+    doc = pymupdf.open()
+    page = doc.new_page()
+    org = pymupdf.Point(100, 300)
+    page.insert_text(org, "Approved for release", fontsize=12, morph=(org, pymupdf.Matrix(-deg)))
+    length = pymupdf.get_text_length("Approved for release", fontsize=12)
+    m = pymupdf.Matrix(-deg)
+    page.draw_line(org + pymupdf.Point(0, 1.5) * m, org + pymupdf.Point(length, 1.5) * m,
+                   width=0.6, color=(0, 0, 1))
+    assert st.strikethroughs_in_pdf(_reopen(doc)) == []
+
+
+def _hidden_dash_over(text, letter, mark):
+    """`text` with an invisible '-' laid 2 pt low over its `letter`, as some redline tools do,
+    and a 3.3 pt line across that letter: through its middle (`mark='strike'`) or under it."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), text, fontsize=12)
+    chars = page.get_text("rawdict")["blocks"][0]["lines"][0]["spans"][0]["chars"]
+    c = pymupdf.Rect(next(ch["bbox"] for ch in chars if ch["c"] == letter))
+    page.insert_text((c.x0, 202), "-", fontsize=12.4, render_mode=3)
+    y = (c.y0 + c.y1) / 2 if mark == "strike" else 201
+    page.draw_line((c.x0, y), (c.x0 + 3.3, y), width=0.6, color=(0, 0, 1))
+    doc = _reopen(doc)
+    assert "-" in [w[4] for w in doc[0].get_text("words")]
+    return doc
+
+
+def test_invisible_text_over_an_inserted_letter_is_not_struck_by_its_underline():
+    # the underline of the inserted 't' runs through the lower, invisible '-' box's middle band
+    assert st.strikethroughs_in_pdf(_hidden_dash_over("add Ttest now", "t", "underline")) == []
+
+
+def test_invisible_text_over_a_struck_letter_is_struck_with_it():
+    recs = st.strikethroughs_in_pdf(_hidden_dash_over("and Llight duty", "l", "strike"))
+    assert sorted((r["text"], r["chars"]) for r in recs) == [("-", "-"), ("Llight", "l")]
+
+
+def test_strike_over_an_invisible_only_text_layer_is_kept():
+    # an OCR'd scan with its markup flattened to vectors: the text layer is all invisible
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), "the parties shall indemnify", fontsize=11, render_mode=3)
+    r = _words(page)["shall"]
+    page.draw_line((r.x0, (r.y0 + r.y1) / 2), (r.x1, (r.y0 + r.y1) / 2), width=0.8)
+    assert [(r["text"], r["chars"]) for r in st.strikethroughs_in_pdf(_reopen(doc))] == [
+        ("shall", "shall")]
 
 
 # ----------------------------------------------------------------------- rotated content
