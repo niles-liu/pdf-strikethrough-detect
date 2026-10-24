@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .lines import RENDER_DPI, ink_mask, strike_lines, to_gray_u8
+from .lines import RENDER_DPI, ink_mask, rule_mask, strike_lines, to_gray_u8
 
 # --- per-word classification tunables (geometry; engine-independent) ---
 STRIKE_TOL          = 0.16   # half-width of the strike band (fraction of word-box height)
@@ -28,6 +28,12 @@ INK_MAX_OFF         = 0.40   # pixel test still considered up to this |off| (box
 INK_MIN_FRAC        = 0.35   # min fraction of covered columns with glyph ink above resp. below
 INK_ONESIDE_MAX     = 0.15   # a side with less ink than this is "empty"; an underline or table
                              # rule has ink on ONE side and ~none on the other (issue #4·B)
+GLYPH_INK_RULE_LEN_IN = 0.25 # the INK_* tests read glyph ink: horizontal runs at least this long
+                             # (50 px @200 dpi) are rules or underlines and are left out, so the
+                             # rule under an underlined word is not its "ink below". TRIED 1/6 in
+                             # on scanned ruled redlines: fewer over-marks (-18 on the confirming
+                             # half) but 2 struck words lost, as it also cuts the stair-step pieces
+                             # of a long, slightly sloped strike, which skewed scans make worse
 INK_SHORT_LEN_IN    = 0.50   # pixel test REQUIRED only for lines shorter than this (+ rescues)
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
@@ -74,7 +80,15 @@ class ScanConfig:
     4 FPs and each costs recall on its own terms. ⚠ Unlike the veto it needs calibrated
     confidences, so it is **inert when ``confidence_gating`` is off**. Rationale and per-switch
     measurements: the ``rescue_clean_chains`` entry in ``CHANGELOG.md``, reproducible with
-    ``benchmarks/confidence_veto.py --switches``."""
+    ``benchmarks/confidence_veto.py --switches``.
+
+    ``glyph_ink`` (on by default) measures the ink-on-both-sides test on glyph ink only: the
+    page's ink without its horizontal runs of ``GLYPH_INK_RULE_LEN_IN`` or more (table rules,
+    underlines). Without it, an underlined word sitting on a table rule reads as struck, because
+    the rule is ink below the underline. Ruled text is then judged like unruled text. A long solid
+    line through a word's middle band with no glyph ink on either side is judged on all ink, so
+    one of a double rule stays a rule. ``ScanConfig(glyph_ink=False)``, or
+    ``dataclasses.replace(preset, glyph_ink=False)``, measures on all ink, as before."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # fill<FILL_STRONG: some struck word must OCR at or below this
     inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued at OCR conf <= this
@@ -83,6 +97,7 @@ class ScanConfig:
     cnn_p_lo: float | None = None     # override the CNN clean threshold; None = the model's
     veto_printed_rules: bool = False  # drop solid/dead-straight lines as drawn rules (issue #7)
     rescue_clean_chains: bool = True  # let an EDITED page's clean-OCR glyph chain reach the CNN
+    glyph_ink: bool = True            # ink tests ignore long horizontal runs (rules, underlines)
 
     def __post_init__(self):
         # every number here is a confidence, a page fraction or a probability: a float in [0, 1]
@@ -146,11 +161,19 @@ class ScanConfig:
         return cls(cnn_p_hi=cnn_p_hi, **kw)
 
 
+def _glyph_ink(ink, dpi=RENDER_DPI):
+    """`ink` without its horizontal runs of GLYPH_INK_RULE_LEN_IN or more at `dpi`: the glyph ink
+    the two-sided ink test reads."""
+    ink = np.asarray(ink, dtype=bool)
+    return ink & ~rule_mask(ink, max(1, int(round(GLYPH_INK_RULE_LEN_IN * dpi))))
+
+
 def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):
     """Fractions of covered columns with glyph ink above resp. below the stroke. A strike runs
     THROUGH glyphs -> ink both sides; an underline has ink above only; a glyph chain has ~none
     above. The stroke y is interpolated from the LINE ENDPOINTS at the center of the word's
-    overlap with the line."""
+    overlap with the line. `ink` is the mask to measure: glyph ink (:func:`_glyph_ink`) unless
+    ``ScanConfig.glyph_ink`` is off."""
     (sx, sy), (ex, ey) = line_ends_px
     wx0, wy0, wx1, wy1 = word_bbox_px
     x0, x1 = max(sx, wx0), min(ex, wx1)
@@ -169,6 +192,11 @@ def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):
     return float(above), float(below)
 
 
+def _one_sided(above, below):
+    """The underline / table-rule signature: well inked on one side, about empty on the other."""
+    return max(above, below) >= INK_MIN_FRAC and min(above, below) < INK_ONESIDE_MAX
+
+
 def _is_printed_rule(ln):
     """A detected line whose appearance is a drawn rule (solid and/or dead-straight), not a strike.
     Keyed on stored line geometry only (no raster access). See the PRINTED_RULE_* constants.
@@ -182,13 +210,20 @@ def _is_printed_rule(ln):
             or (wobble is not None and wobble < PRINTED_RULE_STRAIGHT_MAX))
 
 
-def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
+def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER_DPI,
+                   glyph_ink=None):
     """(tagged_lines, struck_words) from detected strokes + OCR words.
     `words`: list of ocr.Word (bbox in [0,1] fractions). `gray`: the page raster the lines were
-    detected on (uint8 HxW). Returns per-WORD struck records with tier in auto/review/weak."""
+    detected on (uint8 HxW), at `dpi`. Returns per-WORD struck records with tier in
+    auto/review/weak. With ``config.glyph_ink`` on, the ink tests read `glyph_ink`, a bool mask;
+    None builds it from `ink` at `dpi`."""
     pix_h, pix_w = gray.shape
     if ink is None:
         ink = ink_mask(gray)
+    if config.glyph_ink:
+        side_ink = _glyph_ink(ink, dpi) if glyph_ink is None else glyph_ink
+    else:
+        side_ink = ink
     ws = [(w.bbox, w.text, w.confidence) for w in words if (w.text or "").strip()]
     confs = [c for (_, _, c) in ws if c is not None]
     edit_prior = (sum(1 for c in confs if c <= 0.90) / len(confs)) if confs else 0.0
@@ -248,10 +283,15 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
             # is kept distinct so a real strike over SPARSE text still reads as two-sided, not one.
             wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
             ends = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
-            above, below = _ink_above_below(ink, ends, ln.get("run_px", 3.0), wpx)
+            above, below = _ink_above_below(side_ink, ends, ln.get("run_px", 3.0), wpx)
             both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
-            one_sided = max(above, below) >= INK_MIN_FRAC and min(above, below) < INK_ONESIDE_MAX
+            one_sided = _one_sided(above, below)
             line_fill = ln.get("fill", 1.0)
+            long_solid = line_fill >= FILL_STRONG and ln.get("len_in", 0.0) >= TABLE_RULE_MIN_LEN_IN
+            if long_solid and config.glyph_ink and max(above, below) < INK_ONESIDE_MAX:
+                # No glyph ink on either side: judge it on all ink, where the partner of a double
+                # rule, which glyph ink leaves out, is the ink on its one side.
+                one_sided = _one_sided(*_ink_above_below(ink, ends, ln.get("run_px", 3.0), wpx))
             if (not in_band) or short_line:
                 if not both_ink:
                     # OCR damage is the tiebreaker — only meaningful when confidences are
@@ -260,8 +300,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig()):
                               and conf is not None and conf <= config.inkfail_max_conf)
                     if not rescue:
                         continue
-            elif (line_fill >= FILL_STRONG and ln.get("len_in", 0.0) >= TABLE_RULE_MIN_LEN_IN
-                  and one_sided):
+            elif long_solid and one_sided:
                 # Issue #4·B (0.9.1): a long, solid (high-fill) in-band line with ink on only ONE
                 # side is a table rule / underline, not a strike. Previously in-band long lines
                 # skipped the ink test entirely and rode high fill straight to 'auto'. Real strikes
@@ -458,6 +497,6 @@ def analyze_scanned_page(gray, words, ink=None, config=ScanConfig(), dpi=RENDER_
     if ink is None:
         ink = ink_mask(gray)
     lines = strike_lines(gray, dpi=dpi, ink=ink)
-    tagged, struck = classify_lines(lines, words, gray, ink=ink, config=config)
+    tagged, struck = classify_lines(lines, words, gray, ink=ink, config=config, dpi=dpi)
     struck = promote_context_orphans(struck, words)
     return tagged, struck
