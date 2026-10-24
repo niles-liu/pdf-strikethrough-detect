@@ -308,9 +308,12 @@ python examples/rag_provenance.py         # clean_text vs provenance_text ([dele
 
 ## How it works
 
-- **Native**: merged horizontal vector strokes through a word's middle band (excludes under/over-
-  lines); a character is struck when a stroke crosses ≥ 50% of its glyph box or a U+0336 overlay
-  character follows it, and a word is fully struck only when every character is.
+- **Native**: merged horizontal vector strokes through a word's letters, measured from the glyph
+  baseline in ems of the text's height, so an underline at or under the baseline and an overline
+  above the capitals are not strikes, whatever the font (a word whose text layer gives no usable
+  baseline is measured against the middle share of its box instead); a character is struck when a
+  stroke crosses ≥ 50% of its glyph box or a U+0336 overlay character follows it, and a word is
+  fully struck only when every character is.
 - **Scanned geometry** (`lines.py`): per-angle morphological opening extracts stroke *fragments*,
   collinear fragments are stitched, then strict filters (spine fill, stroke run-thickness,
   angle/length) separate real strikes from bold crossbars and serif-glyph chains.

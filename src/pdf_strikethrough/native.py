@@ -4,11 +4,15 @@ ground truth (no OCR, no model, no guessing).
 In born-digital documents a strikethrough is a DRAWING: a thin horizontal vector line ("l"
 item), a thin filled bar ("re"/"qu" item, or a thin fill-only path), or — dashed or curve-drawn — a
 run of short segments / a flat cubic bezier ("c" item), all painted over the text. A word is struck
-when the merged stroke coverage through its MIDDLE BAND (0.22h..0.78h — excludes underlines and
-overlines) reaches half its width; smaller mid-band coverage that still spans >= 2 characters is
-a genuine partial strike ('semi-' of 'semi-monthly', '19' of '192012'). The struck characters are
-the ones the strike crosses, read from MuPDF's per-character boxes; a word is a FULL strike only
-when every character is struck.
+when the merged stroke coverage through its STRIKE BAND reaches half its width; smaller coverage
+that still spans >= 2 characters is a genuine partial strike ('semi-' of 'semi-monthly', '19' of
+'192012'). The band is measured from the glyph baseline (the characters' origins) in ems of the
+height the glyphs are drawn at: STRIKE_BAND_LO..STRIKE_BAND_HI above the baseline (to
+STRIKE_BAND_HI_LEVEL for a level stroke), so an underline drawn at or under the baseline and an
+overline or rule above the letters are not strikes, in every font. A word whose character origins
+are missing, on more than one baseline, or at odds with its box uses the box-share band instead
+(see :func:`_through_text`). The struck characters are the ones the strike crosses, read from
+MuPDF's per-character boxes; a word is a FULL strike only when every character is struck.
 
 Text can also be struck in the text layer itself, as online strikethrough generators write it: each
 character followed by U+0336 COMBINING LONG STROKE OVERLAY (``o̶f̶``). The vector detector reads
@@ -38,7 +42,7 @@ from collections import namedtuple
 
 import pymupdf  # (formerly imported as the deprecated `fitz` alias)
 
-# word-level strike thresholds (fractions of word width covered by mid-band strokes)
+# word-level strike thresholds (fractions of word width covered by strike-band strokes)
 STRUCK_COV = 0.50        # >= this: struck (full when every character is struck, else partial)
 PARTIAL_COV = 0.25       # >= this AND >= 2 chars: partial strike; below = grazing stroke end
 CHAR_STRUCK_COV = 0.50   # a character is struck when the strike covers this much of its width
@@ -48,7 +52,29 @@ MAX_STROKE_DY = 1.5      # pt; ...and one rising more is tested in level pieces 
 LEVEL_SLOPE = math.tan(math.radians(2.0))  # a line leaning more strikes only level lines of text
 MAX_RECT_H = 3.5         # pt; a strike drawn as a filled rect is thin
 MAX_STROKE_FRAC = 0.30   # a line wider than this share of the word's height is a highlighter
-MID_BAND = 0.22          # strokes within [y0 + f*h, y1 - f*h] count as through-text
+# A stroke runs through the text when its center is more than STRIKE_BAND_LO and at most
+# STRIKE_BAND_HI ems (see _char_em) above the glyph baseline: an underline sits at or under the
+# baseline, a strike crosses the x-height band (about 0.42-0.54 em tall in Latin fonts), and an
+# overline or a ruled line clears the capitals (0.56-0.73 em). A level stroke stops at
+# STRIKE_BAND_HI_LEVEL instead: a leaning one (over LEVEL_SLOPE) climbs across a long word, so its
+# ends need the room, while a level one that high runs along the tops of the letters. LO and HI
+# are each the middle of the range that scored best on synthetic redline pages (0-0.055 em,
+# 0.45-0.85 em), with strokes allowed to lean 2, 10 and 12 degrees. Any HI_LEVEL from 0.30 to
+# 0.85 em scored the same there; from 0.55 up a strike leaning 1.5 degrees across a sentence
+# strikes every word, and up to 0.61 documents without strikes get the fewest false ones (a rule
+# through the ascenders sits at 0.62 em). HI_LEVEL is the middle of 0.55-0.61.
+STRIKE_BAND_LO = 0.03    # em; at or under this, the stroke is an underline
+STRIKE_BAND_HI = 0.65    # em; over this, a leaning stroke is an overline or a rule
+STRIKE_BAND_HI_LEVEL = 0.58  # em; over this, a level stroke is an overline or a rule
+# Fallback for a word (or, for a short stroke, a character) without trustworthy character origins:
+# strokes within [y0 + f*h, y1 - f*h] of its box count as through-text.
+MID_BAND = 0.22
+# Character origins are trusted only when the word box is BOX_EM_MIN..BOX_EM_MAX ems tall (the
+# base-14 fonts are 1.0-1.4): outside that, the font's metrics do not describe its glyphs at this
+# size (a Type3 font drawn at a scale of its own, broken metrics).
+BOX_EM_MIN, BOX_EM_MAX = 0.5, 3.0
+BASELINE_SPREAD = 0.1    # em; a word whose main characters' origins spread wider has no one baseline
+CHAR_BUCKET = 4.0        # pt; character data is filed by text and this band of height
 # Dashes / flat-bezier pieces are chained before the length gate (see _chain_short).
 DASH_MIN_SEG = 1.0       # pt; below this a segment is graphics noise, never a dash
 DASH_MAX_SEG = 6.0       # pt; a segment shorter than this may be a dash, so it is chained first
@@ -274,80 +300,256 @@ def _merged_intervals(wx0, wx1, ivals):
 _WORD_DELIMITERS = frozenset(map(chr, [*range(33), 0xA0, *range(0x202A, 0x202F)]))
 
 
-_Found = namedtuple("_Found", "vertical boxes tilted hidden")
+# Character data for one get_text("words") entry: its text direction, character boxes, whether its
+# line leans more than LEVEL_SLOPE, whether every character is invisible, the word's baseline
+# (:func:`_word_baseline`) and each character's own band (:func:`_char_band`)
+_Found = namedtuple("_Found", "vertical boxes tilted hidden baseline bands")
 
 
 class _PageChars:
-    """Per-character boxes for a page's ``get_text("words")`` entries, so a strike maps onto the
-    characters it crosses, with each word's text direction and visibility. Built lazily from one
-    rawdict pass and shared by the detectors in ``page_strikes(method='both')``."""
+    """Per-character boxes and the baseline of a page's ``get_text("words")`` entries, so a strike
+    maps onto the characters it crosses and is measured from the glyph baseline, with each word's
+    text direction and visibility. Built lazily from one rawdict pass and shared by the detectors
+    in ``page_strikes(method='both')``. Entries are filed by text and a CHAR_BUCKET-pt band of
+    height, so a lookup scans one line's copies of a word, not the page's."""
 
     def __init__(self, page):
         self.page = page
         self._by_text = None
-        self._visible = None                   # the boxes of the page's visible characters
+        self._visible = None                   # (box, (char, metrics), line dir) per visible char
 
-    def _add(self, chars, vertical, tilted):
+    def _add(self, chars, line_dir):
         if not chars:
             return
-        boxes = [tuple(c["bbox"]) for c, _ in chars]
-        cx = (min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2
-        cy = (min(b[1] for b in boxes) + max(b[3] for b in boxes)) / 2
-        text = "".join(c["c"] for c, _ in chars)
-        found = _Found(vertical, boxes, tilted, all(hidden for _, hidden in chars))
-        self._by_text.setdefault(text, []).append((cx, cy, found))
+        boxes = [tuple(c[0]["bbox"]) for c in chars]
+        x0s, y0s, x1s, y1s = zip(*boxes)
+        cy = (min(y0s) + max(y1s)) / 2
+        key = ("".join([c[0]["c"] for c in chars]), math.floor(cy / CHAR_BUCKET))
+        entry = ((min(x0s) + max(x1s)) / 2, cy, boxes, chars, line_dir)
+        self._by_text.setdefault(key, []).append(entry)
 
     def _build(self):
         self._by_text, self._visible = {}, []
-        raw = self.page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_WORDS)
-        for block in raw.get("blocks", []):
+        for block in _rawdict_corrected(self.page).get("blocks", []):
             for line in block.get("lines", []):
-                dx, dy = line.get("dir", (1.0, 0.0))
-                vertical = abs(dy) > abs(dx)
-                tilted = not vertical and abs(dy) > LEVEL_SLOPE * abs(dx)
+                line_dir = line.get("dir", (1.0, 0.0))
                 cur = []
                 for span in line.get("spans", []):
+                    metrics = (span.get("ascender", 0.0), span.get("descender", 0.0))
                     hidden = span.get("alpha", 255) == 0    # render mode 3, or fully transparent
                     for ch in span.get("chars", []):
                         if ch["c"] in _WORD_DELIMITERS:
-                            self._add(cur, vertical, tilted)
+                            self._add(cur, line_dir)
                             cur = []
                         else:
-                            cur.append((ch, hidden))
+                            cur.append((ch, *metrics, hidden))
                             if not hidden:
-                                self._visible.append(pymupdf.Rect(ch["bbox"]))
-                self._add(cur, vertical, tilted)
+                                self._visible.append((pymupdf.Rect(ch["bbox"]), (ch, *metrics),
+                                                      line_dir))
+                self._add(cur, line_dir)
 
     def lookup(self, word):
-        """``(vertical, [char bbox, ...], tilted, hidden)`` for one ``get_text("words")`` entry, or
-        None when no extracted line reproduces it (the caller then splits the word box evenly).
-        ``tilted``: its line of text leans more than LEVEL_SLOPE; ``hidden``: every character is
-        invisible (render mode 3, or fully transparent)."""
+        """A :data:`_Found` for one ``get_text("words")`` entry, or None when no extracted line
+        reproduces it (the caller then splits the word box evenly). ``tilted``: its line of text
+        leans more than LEVEL_SLOPE; ``hidden``: every character is invisible (render mode 3, or
+        fully transparent); ``baseline``: None for vertical text or a word with no one
+        baseline."""
         if self._by_text is None:
             self._build()
         x0, y0, x1, y1, txt = word[:5]
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         best = None
-        for ecx, ecy, found in self._by_text.get(txt, ()):
-            dist = abs(ecx - cx) + abs(ecy - cy)
-            if dist <= 2.0 and len(found.boxes) == len(txt) and (best is None or dist < best[0]):
-                best = (dist, found)
-        return None if best is None else best[1]
+        k = math.floor(cy / CHAR_BUCKET)
+        for entry in (e for kk in (k - 1, k, k + 1) for e in self._by_text.get((txt, kk), ())):
+            dist = abs(entry[0] - cx) + abs(entry[1] - cy)
+            if dist <= 2.0 and len(entry[2]) == len(txt) and (best is None or dist < best[0]):
+                best = (dist, entry)
+        if best is None:
+            return None
+        ecx, _ecy, boxes, chars, (dx, dy) = best[1]
+        vertical = abs(dy) > abs(dx)
+        hidden = all(c[3] for c in chars)
+        if vertical:
+            return _Found(True, boxes, False, hidden, None, [None] * len(boxes))
+        return _Found(False, boxes, abs(dy) > LEVEL_SLOPE * abs(dx), hidden,
+                      _word_baseline(chars, ecx, dx, dy), [_char_band(c[:3], dx, dy) for c in chars])
 
     def visible_under(self, word):
-        """The boxes of the visible characters the word's box overlaps (touching edges do not
-        count)."""
+        """``[(box, band), ...]`` for the visible characters the word's box overlaps (touching edges
+        do not count), each with its own band (:func:`_char_band`)."""
         if self._by_text is None:
             self._build()
         r = pymupdf.Rect(word[:4])
-        return [v for v in self._visible if r.intersects(v)]
+        return [(v, _char_band(ch, *line_dir)) for v, ch, line_dir in self._visible
+                if r.intersects(v)]
+
+
+# One character pass at a time while PyMuPDF's process-wide quad-corrections switch is flipped.
+_QUAD_LOCK = threading.Lock()
+
+
+def _rawdict_corrected(page):
+    """The page's rawdict with PyMuPDF's quad corrections on, whatever the caller's setting:
+    importing pymupdf4llm turns them off for the whole process, and every span then reports
+    MuPDF's default ascender and descender whatever its font. The caller's setting is restored
+    after; calls here run one at a time, though other threads' PyMuPDF calls still see the switch
+    while it is flipped (PyMuPDF is not thread-safe anyway)."""
+    with _QUAD_LOCK:
+        off = pymupdf.TOOLS.unset_quad_corrections()
+        if not off:
+            return page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_WORDS)
+        pymupdf.TOOLS.unset_quad_corrections(False)
+        try:
+            return page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_WORDS)
+        finally:
+            pymupdf.TOOLS.unset_quad_corrections(off)
 
 
 def _attaches(c):
     """A combining mark, or a format character (a joiner, a soft hyphen): part of the character
-    before it, never a base an overlay strikes on its own."""
+    before it, so it neither sets a word's em nor its baseline, and is never a base an overlay
+    strikes on its own."""
     cat = unicodedata.category(c)
     return cat[0] == "M" or cat == "Cf"
+
+
+def _char_em(ch, asc, desc, c, s, k, small):
+    """The em one character's glyph is drawn at, its vertical scale: its box height over the
+    box's height in ems. PyMuPDF makes the box ascender minus descender ems tall, or exactly 1 em
+    when that is under 1 (LaTeX's Type1 fonts), when the ascender is about 0, or with small glyph
+    heights on (``small``). The span's ``size`` is not this em when text is stretched (``Tz``, a
+    text matrix scaled unevenly). ``c`` and ``s`` are the absolute cosine and sine of the line's
+    direction, ``k`` is c*c - s*s."""
+    b = ch["bbox"]
+    # the glyph box's own height, undoing its axis-aligned box's growth on a sloped line
+    h = (b[3] - b[1]) if not s else ((b[3] - b[1]) * c - (b[2] - b[0]) * s) / k
+    span = asc - desc
+    if small or asc < 1e-3 or span + 1.2e-7 < 1:      # PyMuPDF's own test, FLT_EPSILON included
+        span = 1.0
+    return h / span
+
+
+def _word_baseline(chars, cx, dx, dy):
+    """``(cx, y, slope, up, em)``: a horizontal word's baseline, as its y at the word's center
+    ``cx``, its slope dy/dx, ``up`` (1.0 when the letters stand above the baseline in unrotated
+    space, -1.0 when they hang below it, so ``(y - stroke y) * up`` is the height above it), and
+    the em of its main characters. ``chars`` holds ``(rawdict char, ascender, descender, ...)``.
+
+    Each character's em is :func:`_char_em`; combining marks and format characters are left out.
+    The main characters are those within 10% of the word's largest em, so a sub- or superscript
+    (always the smaller) neither moves the baseline nor sets the em; the baseline is their median
+    origin, and ``up`` is the side of it their boxes lie on. None when no character has a usable
+    em, when the main characters sit on baselines more than BASELINE_SPREAD ems apart (MuPDF can
+    join an inline fraction's denominator to the symbols beside it into one word), or when their
+    boxes are centered on the baseline."""
+    c, s = abs(dx), abs(dy)                  # the line's direction is a unit vector
+    if c * c - s * s < 0.25:                 # steeper than about 35 degrees: no baseline to use
+        return None
+    slope, k = dy / dx, c * c - s * s
+    small = pymupdf.TOOLS.set_small_glyph_heights()
+    ems, chs = [], []
+    for ch, asc, desc, *_ in chars:
+        em = _char_em(ch, asc, desc, c, s, k, small)
+        if em > 0 and not _attaches(ch["c"]):
+            ems.append(em)
+            chs.append(ch)
+    if not ems:
+        return None
+    em = max(ems)
+    main = [ch for ch, e in zip(chs, ems) if e >= 0.9 * em]
+    ys = sorted([ch["origin"][1] + (cx - ch["origin"][0]) * slope for ch in main])
+    if ys[-1] - ys[0] > BASELINE_SPREAD * em:
+        return None
+    # each box's middle against its own origin, both taken at the origin's x
+    sides = sorted([(b[1] + b[3]) / 2 + (o[0] - (b[0] + b[2]) / 2) * slope - o[1]
+                    for b, o in [(ch["bbox"], ch["origin"]) for ch in main]])
+    side = sides[len(sides) // 2]
+    if abs(side) < 0.05 * em or not math.isfinite(em):
+        return None
+    return cx, ys[len(ys) // 2], slope, 1.0 if side < 0 else -1.0, em
+
+
+def _char_band(char, dx, dy):
+    """``(x, y, slope, up, em)``: one character's own baseline through its origin ``(x, y)``, read
+    as :func:`_word_baseline` reads a word's, from ``char`` = ``(rawdict char, ascender,
+    descender)`` on a line running ``(dx, dy)``. None, so its box-share band applies (see
+    :func:`_in_char_band`), when its line is steep, it has no usable em, its box is centered on its
+    origin, its origin falls outside its box, or its box is not BOX_EM_MIN..BOX_EM_MAX ems tall."""
+    ch, asc, desc = char
+    c, s = abs(dx), abs(dy)
+    if c * c - s * s < 0.25:
+        return None
+    slope, k = dy / dx, c * c - s * s
+    em = _char_em(ch, asc, desc, c, s, k, pymupdf.TOOLS.set_small_glyph_heights())
+    if not (em > 0 and math.isfinite(em)):
+        return None
+    b, (ox, oy) = ch["bbox"], ch["origin"]
+    h = b[3] - b[1]
+    side = (b[1] + b[3]) / 2 + (ox - (b[0] + b[2]) / 2) * slope - oy
+    if (abs(side) < 0.05 * em or not BOX_EM_MIN * em <= h <= BOX_EM_MAX * em
+            or not b[1] - 0.05 * h <= oy <= b[3] + 0.05 * h):
+        return None
+    return ox, oy, slope, 1.0 if side < 0 else -1.0, em
+
+
+def _in_char_band(band, box, a, b, y, leaning=False):
+    """Whether a level stroke piece over ``[a, b]`` at height ``y`` runs through one character's
+    own strike band: more than STRIKE_BAND_LO and at most STRIKE_BAND_HI_LEVEL of its own em above
+    its own baseline (``band``, see :func:`_char_band`), or STRIKE_BAND_HI for a piece of a
+    `leaning` stroke, judged where the piece crosses its box; with no trusted baseline (``band``
+    None), inside ``[y0 + MID_BAND*h, y1 - MID_BAND*h]`` of its ``box``. A word's band
+    (:func:`_through_text`) is the same test, taken from its main characters."""
+    if band is None:
+        h = box[3] - box[1]
+        return box[1] + MID_BAND * h <= y <= box[3] - MID_BAND * h
+    ox, oy, slope, up, em = band
+    x = (max(a, box[0]) + min(b, box[2])) / 2
+    height = (oy + (x - ox) * slope - y) * up
+    hi = STRIKE_BAND_HI if leaning else STRIKE_BAND_HI_LEVEL
+    return STRIKE_BAND_LO * em < height <= hi * em
+
+
+def _through_text(word, base):
+    """``f(x0, x1, y, leaning) -> (x0, x1) | None``: the part of a level stroke piece at height
+    ``y`` that runs through ``word``'s text, clipped to the word, or None. ``leaning`` says the
+    piece comes from a stroke leaning more than LEVEL_SLOPE.
+
+    With a baseline from the word's character origins (``base``, see :func:`_word_baseline`), the
+    stroke must lie more than STRIKE_BAND_LO and at most STRIKE_BAND_HI ems above the baseline
+    (STRIKE_BAND_HI_LEVEL for a level stroke),
+    judged at each x it crosses (on a sloped line the height changes along the word), and inside
+    the word box (the font's ascent and descent bound its glyphs). The origins are not used, and
+    the box-share band ``[y0 + MID_BAND*h, y1 - MID_BAND*h]`` is, when the word has no character
+    data or no one baseline (``base`` None), when the baseline falls outside the word box, or when
+    the box is not BOX_EM_MIN..BOX_EM_MAX ems tall (the font's metrics do not describe its glyphs
+    at this size)."""
+    wx0, wy0, wx1, wy1 = word[:4]
+    wh = wy1 - wy0
+    if base is not None:
+        bx, by, slope, up, em = base
+        tol = 0.05 * wh
+        if BOX_EM_MIN * em <= wh <= BOX_EM_MAX * em and wy0 - tol <= by <= wy1 + tol:
+            lo, k = STRIKE_BAND_LO * em, slope * up
+
+            def through(a, b, y, leaning=False):
+                a, b = max(a, wx0), min(b, wx1)
+                if not (wy0 <= y <= wy1 and b > a):
+                    return None
+                hi = (STRIKE_BAND_HI if leaning else STRIKE_BAND_HI_LEVEL) * em
+                h0 = (by - y) * up                     # height above the baseline at x = bx
+                if not k:
+                    return (a, b) if lo < h0 <= hi else None
+                # the height h0 + k * (x - bx) is in (lo, hi] over one interval of x
+                xa, xb = sorted((bx + (lo - h0) / k, bx + (hi - h0) / k))
+                a, b = max(a, xa), min(b, xb)
+                return (a, b) if b > a else None
+            return through
+    lo, hi = wy0 + MID_BAND * wh, wy1 - MID_BAND * wh
+
+    def through_box(a, b, y, _leaning=False):
+        a, b = max(a, wx0), min(b, wx1)
+        return (a, b) if lo <= y <= hi and b > a else None
+    return through_box
 
 
 def _split_overlay(txt):
@@ -446,54 +648,66 @@ def _struck_span(txt, struck, cov, exact, enters=(False, False)):
     return c0, c1, False
 
 
-def _in_char_band(box, y):
-    """Whether height `y` lies in one character's own middle band, ``[y0 + MID_BAND*h,
-    y1 - MID_BAND*h]`` of its `box`."""
-    h = box[3] - box[1]
-    return box[1] + MID_BAND * h <= y <= box[3] - MID_BAND * h
+# One stroke piece through a word's text: ``(a, b)`` the part of it in the word's band, clipped to
+# the word, ``y`` its height, ``color`` and ``width`` its paint, ``(x0, x1)`` the whole stroke's
+# extent (whether it enters the word from outside), ``extent`` the length of the mark it comes
+# from and ``leaning`` whether that mark leans more than LEVEL_SLOPE (see :func:`_strokes`)
+_Piece = namedtuple("_Piece", "a b y color width x0 x1 extent leaning")
 
 
-def _fits(s, box):
-    """Whether stroke `s` (a :func:`_strokes` tuple) counts on the character with this `box`: a
-    stroke at least DASH_MAX_SEG long counts wherever the word's middle band takes it; a shorter
-    one (a fraction bar, a root's bar) only through the character's own middle band, since in a
-    word mixing sizes the word's band also takes in rules above or below the small characters."""
-    return s[5] >= DASH_MAX_SEG or _in_char_band(box, s[2])
+def _fits(m, box, band):
+    """Whether stroke piece `m` counts on the character with this `box` and `band`: a stroke at
+    least DASH_MAX_SEG long counts wherever the word's band takes it; a shorter one (a fraction
+    bar, a root's bar) only through the character's own band (see :func:`_in_char_band`), since in
+    a word mixing sizes the word's band also takes in rules above or below the small
+    characters."""
+    return m.extent >= DASH_MAX_SEG or _in_char_band(band, box, m.a, m.b, m.y, m.leaning)
 
 
-def _through_strokes(word, mid, found, boxes, chars):
-    """The strokes in `mid` (:func:`_strokes` tuples through the word's middle band) that strike
-    its text: on an invisible word laid over visible text, a short stroke only through the middle
-    of a visible character beneath, not as its underline; on a tilted line, no leaning stroke (a
-    slanted line along slanted text crosses its upright box); and a short stroke only through some
-    character's own middle band (:func:`_fits`). `boxes` are the word's characters' (overlays left
-    out)."""
-    if found is not None:
+def _through_strokes(word, near, found, boxes, bands, chars):
+    """The :data:`_Piece` of each stroke in `near` (``_strokes`` tuples crossing the word box) that
+    runs through the word's text: a stroke at least DASH_MAX_SEG long through its band
+    (:func:`_through_text`), a shorter one through some character's own band alone
+    (:func:`_fits`); on an invisible word laid over visible text, a short stroke only through the
+    band of a visible character beneath, not as its underline; and on a tilted line, no leaning
+    stroke (a slanted line along slanted text crosses its upright box). `boxes` and `bands` are the
+    word's characters' (overlays left out)."""
+    through = _through_text(word, found.baseline if found is not None else None)
+    wx0, wx1 = word[0], word[2]
+    mid = []
+    for a, b, sy, col, wid, ext, lean in near:
+        # a short stroke answers to its characters' own bands alone: one through a lowered
+        # subscript runs under the band of the word's main characters
+        part = through(a, b, sy, lean) if ext >= DASH_MAX_SEG else (max(a, wx0), min(b, wx1))
+        if part is not None:
+            mid.append(_Piece(*part, sy, col, wid, a, b, ext, lean))
+    if found is not None and mid:
         under = chars.visible_under(word) if found.hidden else []
         if under:
-            mid = [s for s in mid if s[5] >= DASH_MAX_SEG or any(
-                min(s[1], v.x1) > max(s[0], v.x0) and _in_char_band(v, s[2]) for v in under)]
+            mid = [m for m in mid if m.extent >= DASH_MAX_SEG or any(
+                min(m.x1, v.x1) > max(m.x0, v.x0)
+                and _in_char_band(band, v, m.x0, m.x1, m.y, m.leaning) for v, band in under)]
         if found.tilted:
-            mid = [s for s in mid if not s[6]]
-    return [s for s in mid if s[5] >= DASH_MAX_SEG or any(
-        _fits(s, b) and min(s[1], b[2]) > max(s[0], b[0]) for b in boxes)]
+            mid = [m for m in mid if not m.leaning]
+    return [m for m in mid if m.extent >= DASH_MAX_SEG or any(
+        _fits(m, bx, bd) and min(m.b, bx[2]) > max(m.a, bx[0]) for bx, bd in zip(boxes, bands))]
 
 
-def _stroke_span(word, txt, boxes, exact, mid):
-    """``(span, cov)`` for the strokes in `mid` (:func:`_strokes` tuples, already through the
-    word's text): `span` as :func:`_struck_span` gives it for `txt` (the word's text without
-    overlays) from its character `boxes` (`exact` when MuPDF's, not an even split), `cov` the
-    share of the word's width the strokes cover. A character is struck by the strokes that
+def _stroke_span(word, txt, boxes, bands, exact, mid):
+    """``(span, cov)`` for the stroke pieces in `mid` (:data:`_Piece`, already through the word's
+    text): `span` as :func:`_struck_span` gives it for `txt` (the word's text without overlays)
+    from its character `boxes` and `bands` (`exact` when MuPDF's, not an even split), `cov` the
+    share of the word's width the strokes cover. A character is struck by the pieces that
     :func:`_fits` it."""
     wx0, wx1 = word[0], word[2]
-    merged, covered = _merged_intervals(wx0, wx1, [s[:2] for s in mid])
+    merged, covered = _merged_intervals(wx0, wx1, [(m.a, m.b) for m in mid])
     cov = covered / max(wx1 - wx0, 1e-6)
     struck = []
-    for bx in boxes:
+    for bx, bd in zip(boxes, bands):
         bx0, bx1 = bx[0], bx[2]
         own = merged
-        if not all(_fits(s, bx) for s in mid):
-            own = _merged_intervals(wx0, wx1, [s[:2] for s in mid if _fits(s, bx)])[0]
+        if not all(_fits(m, bx, bd) for m in mid):
+            own = _merged_intervals(wx0, wx1, [(m.a, m.b) for m in mid if _fits(m, bx, bd)])[0]
         if bx1 - bx0 <= 1e-6:
             # zero-width: the rest of a ligature ('fi' gives an 'f' spanning the glyph and an
             # 'i' at its right edge) or a combining mark, so it goes with the character before
@@ -512,7 +726,7 @@ def _stroke_span(word, txt, boxes, exact, mid):
                         and prev is not None and struck[prev]):
                     struck[i] = True
                 prev = i
-    enters = (any(s[0] < wx0 - 1.0 for s in mid), any(s[1] > wx1 + 1.0 for s in mid))
+    enters = (any(m.x0 < wx0 - 1.0 for m in mid), any(m.x1 > wx1 + 1.0 for m in mid))
     return _struck_span(txt, struck, cov, exact=exact, enters=enters), cov
 
 
@@ -558,20 +772,26 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
         wx0, wy0, wx1, wy1 = word[:4]
         wh = wy1 - wy0
         max_wid = max(MAX_RECT_H, MAX_STROKE_FRAC * wh)
-        mid = [s for s in strokes
-               if wy0 + MID_BAND * wh <= s[2] <= wy1 - MID_BAND * wh
-               and min(s[1], wx1) > max(s[0], wx0) and s[4] <= max_wid] if sized else []
+        # strokes across the word box: either band lies inside it, and the character data is
+        # read only for a word some stroke crosses or overlays strike
+        near = [s for s in strokes
+                if wy0 <= s[2] <= wy1 and min(s[1], wx1) > max(s[0], wx0)
+                and s[4] <= max_wid] if sized else []
         overlaid = any(over)
-        if not mid and not overlaid:
+        if not near and not overlaid:
             continue
         found = chars.lookup(word)
         vertical = found is not None and found.vertical
         if vertical and not overlaid:
             continue        # vertical text: a horizontal line crosses it, it does not strike it
-        boxes = ([found.boxes[i] for i in keep] if found is not None
-                 else _even_char_boxes((wx0, wy0, wx1, wy1, txt)))
-        mid = _through_strokes(word, mid, found, boxes, chars) if mid and not vertical else []
-        span, cov = (_stroke_span(word, txt, boxes, found is not None, mid)
+        if found is not None:
+            boxes, bands = [found.boxes[i] for i in keep], [found.bands[i] for i in keep]
+        else:
+            boxes = _even_char_boxes((wx0, wy0, wx1, wy1, txt))
+            bands = [None] * len(boxes)
+        mid = (_through_strokes(word, near, found, boxes, bands, chars)
+               if near and not vertical else [])
+        span, cov = (_stroke_span(word, txt, boxes, bands, found is not None, mid)
                      if mid else (None, 0.0))
         stroked = span is not None
         text = txt
@@ -600,8 +820,8 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
         }
         if stroked:
             # forensics: report the paint of the stroke that covers the most of this word's width
-            dom = max(mid, key=lambda s: min(s[1], wx1) - max(s[0], wx0))
-            rec["stroke_color"], rec["stroke_width"] = dom[3], dom[4]
+            dom = max(mid, key=lambda m: m.b - m.a)
+            rec["stroke_color"], rec["stroke_width"] = dom.color, dom.width
         rec.update(tier="vector", verdict="struck", final=True)
         out.append(rec)
     out.sort(key=lambda h: (round(h["bbox_frac"][1], 3), h["bbox_frac"][0]))
