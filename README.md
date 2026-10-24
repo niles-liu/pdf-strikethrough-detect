@@ -321,8 +321,10 @@ python examples/rag_provenance.py         # clean_text vs provenance_text ([dele
 - **CNN** (`cnn.py`, StrikeNet, 79k params): resolves pixel-ambiguous cases — a thin strike over
   an ascender-less word is pixel-identical to a glyph chain, and only a learned model tells them
   apart. Ships as ONNX; set `PDF_STRIKETHROUGH_MODEL_DIR` to use your own weights.
-- **Attribution** (`scanned.py`): assigns strokes to OCR words with char spans and full/partial
-  resolution, plus a visual-row "orphan" pass for words the detector's stroke evidence missed.
+- **Attribution** (`scanned.py`): assigns strokes to OCR words with char spans, measured against
+  the word's glyph ink and the stroke's own ink rather than the OCR box and the detected line's
+  ends; a word is fully struck only when the stroke reaches its first and last character. A
+  visual-row "orphan" pass then picks up words the detector's stroke evidence missed.
 
 **Resolution & resource limits.** The geometry tunables and the CNN's crop are calibrated at
 200 dpi; scanned rasters above ~300 dpi are downsampled to 200 internally (accuracy-neutral — extra

@@ -15,7 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .lines import RENDER_DPI, ink_mask, rule_mask, strike_lines, to_gray_u8
+from .lines import (RENDER_DPI, THIN_STROKE_RUN_PX, ink_mask, rule_mask, strike_lines,
+                    to_gray_u8)
 
 # --- per-word classification tunables (geometry; engine-independent) ---
 STRIKE_TOL          = 0.16   # half-width of the strike band (fraction of word-box height)
@@ -48,7 +49,33 @@ TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a
 PRINTED_RULE_FILL_MAX     = 0.88  # fill above this = a solid drawn rule, not a shattered strike
 PRINTED_RULE_STRAIGHT_MAX = 1.80  # wobble px @RENDER_DPI below this = a drawn rule, not a strike
 TWIN_MIN_LEN_IN     = 0.60   # substantial line: >=2 fully-struck words, or one word + long line
-FULL_CHAR_COVER     = 0.70   # unioned char coverage >= this -> whole word counts as struck
+FULL_CHAR_COVER     = 0.70   # unioned char coverage >= this -> whole word counts as struck, when
+                             # the strokes also reach its first and last character (below)
+# --- char spans against glyph ink: an OCR box is looser than its glyphs, and a phrase-grained
+# engine (RapidOCR) boxes several words as one, so a stroke's char span is measured against the
+# x-extent of the glyph ink inside the box, not the box. A detected line's ends are no better:
+# stitching runs a line on through crossbars and arches past where the pen stopped, so the stroke's
+# reach is taken from its own ink, its long runs near the line. An end character counts as struck
+# when the stroke covers at least CHAR_STRUCK_FRAC of its estimated width (the ink extent over the
+# character count), and a word is promoted to a whole-word strike only when its strokes reach both
+# its first and its last character, so a stroke over most but not all of a word keeps its partial
+# span.
+CHAR_STRUCK_FRAC    = 0.50
+STROKE_RUN_MIN_CHARS = 1.5   # an ink run near the line at least this many character widths long
+                             # is the stroke itself; a glyph's crossbar or arch is shorter
+STROKE_SEARCH_BAND  = 0.25   # ...looked for this share of the word box's height either side of
+                             # the line: a stitched line can sit several px off a pen stroke
+STROKE_PIECE_MIN_CHARS = 1.0  # a shorter run on the stroke's rows that crosses a gap between
+                             # glyphs is the stroke too (a short word struck on its own)
+STROKE_LINK_MIN_CHARS = 0.5  # ...and so is a run this long within STROKE_BRIDGE_CHARS of the
+STROKE_BRIDGE_CHARS = 0.25   # stroke on its row: a pen break, a dashed stroke, typed hyphens
+GLYPH_BAND          = 0.30   # glyph ink is read this share of the box's height either side of the
+                             # line, so a speck, rule or underline far above or below can't widen
+GLYPH_MIN_COLUMN_PX = 2      # ...in columns holding at least this many px of it
+GLYPH_ROW_MAX_FILL  = 0.90   # a box row inked across more than this share of its width is a rule
+                             # or underline, not glyphs, and is left out of the glyph-ink extent
+WORD_GAP            = 0.20   # a gap in the glyph ink this share of the box's height is a word space;
+STRAY_MAX_WIDTH     = 0.25   # an outer cluster past one, narrower than this share, is not a letter
 
 AUTO_SCORE = 0.55            # score >= this: tier 'auto'; >= REVIEW_SCORE: 'review'; else 'weak'
 REVIEW_SCORE = 0.20
@@ -197,6 +224,111 @@ def _one_sided(above, below):
     return max(above, below) >= INK_MIN_FRAC and min(above, below) < INK_ONESIDE_MAX
 
 
+def _glyph_ink_extent(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):
+    """(x0, x1) in px: the columns of the word box holding glyph ink, or None when it holds none.
+    Glyph ink is read only on rows near the line (GLYPH_BAND, interpolated from the line
+    endpoints so a sloped stroke is followed), leaving out the stroke's own rows and any row inked
+    across nearly the whole box (a rule or underline); a column needs GLYPH_MIN_COLUMN_PX of it.
+    An outer cluster past a word-space gap that is too narrow to be a letter (a speck, or a sliver
+    of the next word in a loose box) is dropped. So a stroke running past the glyphs, or anything
+    else a loose box holds, does not widen the word."""
+    wx0, wy0, wx1, wy1 = word_bbox_px
+    H, W = ink.shape
+    c0, c1 = max(0, int(wx0)), min(W, int(np.ceil(wx1)))
+    r0, r1 = max(0, int(wy0)), min(H, int(np.ceil(wy1)))
+    if c1 <= c0 or r1 <= r0:
+        return None
+    (sx, sy), (ex, ey) = line_ends_px
+    xs = np.arange(c0, c1, dtype=np.float64)
+    ly = np.full(xs.shape, (sy + ey) / 2.0) if ex == sx else sy + (xs - sx) * (ey - sy) / (ex - sx)
+    rows = np.arange(r0, r1, dtype=np.float64)[:, None]
+    box_h = wy1 - wy0
+    dist = np.abs(rows - ly[None, :])
+    glyph = (ink[r0:r1, c0:c1] & (dist > line_run_px / 2.0 + gap)
+             & (dist <= line_run_px / 2.0 + GLYPH_BAND * box_h))
+    glyph &= (glyph.mean(axis=1) <= GLYPH_ROW_MAX_FILL)[:, None]
+    cols = np.flatnonzero(glyph.sum(axis=0) >= GLYPH_MIN_COLUMN_PX)
+    if cols.size == 0:
+        return None
+    clusters = np.split(cols, np.flatnonzero(np.diff(cols) > max(3.0, WORD_GAP * box_h)) + 1)
+    while len(clusters) > 1 and clusters[-1][-1] - clusters[-1][0] + 1 < STRAY_MAX_WIDTH * box_h:
+        clusters.pop()
+    while len(clusters) > 1 and clusters[0][-1] - clusters[0][0] + 1 < STRAY_MAX_WIDTH * box_h:
+        clusters.pop(0)
+    return float(c0 + clusters[0][0]), float(c0 + clusters[-1][-1] + 1)
+
+
+def _stroke_reach(ink, line_ends_px, line_run_px, line_x_px, word_bbox_px, min_run_px,
+                  min_piece_px, min_link_px, bridge_px):
+    """(x0, x1) in px: how far the stroke's own ink reaches inside the word box, or None when none
+    of it runs at least `min_run_px` long. Looked for in a band around the line (a stitched line's
+    height and slope can be off by several px), thickened by 2 px up and down so that a leaning
+    stroke still reads as long horizontal runs; only the line's own x-range counts. A run at least
+    `min_piece_px` long counts too when it lies on a long run's rows and crosses a gap between
+    glyphs, and so does one at least `min_link_px` long within `bridge_px` of a counted run on the
+    same row (a pen break, a dashed stroke, typed hyphens). A glyph's crossbar or arch is too short
+    to count."""
+    wx0, wy0, wx1, wy1 = word_bbox_px
+    H, W = ink.shape
+    lx0, lx1 = line_x_px
+    c0, c1 = max(0, int(wx0), int(lx0) - 2), min(W, int(np.ceil(wx1)), int(np.ceil(lx1)) + 2)
+    if c1 - c0 < max(3, min_run_px):
+        return None
+    (sx, sy), (ex, ey) = line_ends_px
+    xs = np.arange(c0, c1, dtype=np.float64)
+    ly = np.full(xs.shape, (sy + ey) / 2.0) if ex == sx else sy + (xs - sx) * (ey - sy) / (ex - sx)
+    half = line_run_px / 2.0 + max(3.0, STROKE_SEARCH_BAND * (wy1 - wy0))
+    r0 = max(0, int(np.floor(ly.min() - half)))
+    r1 = min(H, int(np.ceil(ly.max() + half)) + 1)
+    if r1 - r0 < 1:
+        return None
+    rows = np.arange(r0, r1, dtype=np.float64)[:, None]
+    near = ink[r0:r1, c0:c1] & (np.abs(rows - ly[None, :]) <= half)
+    thick = near.copy()
+    for d in (1, 2):                                    # thicken vertically by 2 px each way
+        thick[d:] |= near[:-d]
+        thick[:-d] |= near[d:]
+    edges = np.diff(np.pad(thick, ((0, 0), (1, 1))).astype(np.int8), axis=1)
+    run_rows, starts = np.nonzero(edges == 1)
+    ends = np.nonzero(edges == -1)[1]                   # row-major order: paired with starts
+    long = ends - starts >= min_run_px
+    if not long.any():
+        return None
+    # A shorter piece is the same stroke past a gap (a short word struck on its own) when it lies
+    # on the long runs' rows and crosses a gap between two glyphs: a column inside it whose only
+    # ink in the box is on the piece's rows. A crossbar or a bowl on those rows has the rest of
+    # its glyph above or below it there.
+    keep = long.copy()
+    pieces = np.flatnonzero(~long & np.isin(run_rows, run_rows[long])
+                            & (ends - starts >= min_piece_px))
+    if pieces.size:
+        b0, b1 = max(0, int(wy0)), min(H, int(np.ceil(wy1)))
+        box = ink[b0:b1, c0:c1]
+        column_ink = box.sum(axis=0)
+        for i in pieces:
+            top, bot = max(0, r0 + run_rows[i] - 2 - b0), max(0, r0 + run_rows[i] + 3 - b0)
+            inside = slice(starts[i] + 1, ends[i] - 1)
+            on_rows = box[top:bot, inside].sum(axis=0)
+            keep[i] = bool(((on_rows > 0) & (on_rows == column_ink[inside])).any())
+    # A broken stroke: chain runs across short breaks outward from the counted runs, row by row
+    # (runs are in column order within a row; only the outermost ones move the reach).
+    lo, hi = starts[keep].min(), ends[keep].max()
+    link = ends - starts >= min_link_px
+    for row in np.unique(run_rows[keep]):
+        idx = np.flatnonzero(run_rows == row)
+        s, e, ok = starts[idx], ends[idx], link[idx]
+        kept = np.flatnonzero(keep[idx])
+        j = kept[-1]
+        while j + 1 < idx.size and ok[j + 1] and s[j + 1] - e[j] <= bridge_px:
+            j += 1
+        hi = max(hi, e[j])
+        j = kept[0]
+        while j > 0 and ok[j - 1] and s[j] - e[j - 1] <= bridge_px:
+            j -= 1
+        lo = min(lo, s[j])
+    return float(c0 + lo), float(c0 + hi)
+
+
 def _is_printed_rule(ln):
     """A detected line whose appearance is a drawn rule (solid and/or dead-straight), not a strike.
     Keyed on stored line geometry only (no raster access). See the PRINTED_RULE_* constants.
@@ -244,19 +376,40 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
         # endpoints for interpolating the stroke-y over each word, at the center of its overlap with
         # the line (a sloped strike sits at a different height over each word — a single global
         # center mis-attributes them all).
-        (sx, sy), (ex, ey) = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
+        ends = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
+        (sx, sy), (ex, ey) = ends
         short_line = ln.get("len_in", 0.0) < INK_SHORT_LEN_IN
 
         def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None, strike_geom=False):
-            wx0, _, wx1, _ = wbox
+            wx0, wy0, wx1, wy1 = wbox
+            n = len(txt)
+            # the box's share of the line, rounded outward: what PARTIAL_MIN_CHARS gates on, and
+            # the span when the box holds no glyph ink to measure against
             f0 = (max(lx0, wx0) - wx0) / max(wx1 - wx0, 1e-9)
             f1 = (min(lx1, wx1) - wx0) / max(wx1 - wx0, 1e-9)
-            c0 = int(np.floor(f0 * len(txt)))
-            c1 = max(c0 + 1, int(np.ceil(f1 * len(txt))))
+            c0 = int(np.floor(f0 * n))
+            c1 = max(c0 + 1, int(np.ceil(f1 * n)))
+            box_chars = c1 - c0
+            wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
+            run = ln.get("run_px", 3.0)
+            glyphs = _glyph_ink_extent(ink, ends, min(run, THIN_STROKE_RUN_PX * dpi / RENDER_DPI),
+                                       wpx)
+            if glyphs is not None:  # the glyph ink: an end character needs CHAR_STRUCK_FRAC of it
+                gx0, gx1 = glyphs
+                cw = max(gx1 - gx0, 1.0) / n                 # estimated character width
+                reach = _stroke_reach(ink, ends, run, (x0, x1), wpx, STROKE_RUN_MIN_CHARS * cw,
+                                      STROKE_PIECE_MIN_CHARS * cw, STROKE_LINK_MIN_CHARS * cw,
+                                      STROKE_BRIDGE_CHARS * cw)
+                rx0, rx1 = reach if reach is not None else (x0, x1)
+                f0 = min(1.0, max(0.0, (rx0 - gx0) / (cw * n)))
+                f1 = min(1.0, max(0.0, (rx1 - gx0) / (cw * n)))
+                c0 = min(n - 1, max(0, int(np.ceil(f0 * n - (1.0 - CHAR_STRUCK_FRAC) - 1e-9))))
+                c1 = min(n, max(c0 + 1, int(np.floor(f1 * n - CHAR_STRUCK_FRAC + 1e-9)) + 1))
             return {"text": txt, "chars": txt[c0:c1], "char_span": (c0, c1), "strong": strong,
                     "bbox_frac": wbox, "off": round(off, 2), "wcov": round(wcov, 2),
                     "cover_frac": (round(f0, 2), round(f1, 2)), "line_idx": li, "ink_ok": ink_ok,
-                    "conf": conf, "strike_geom": strike_geom}
+                    "conf": conf, "strike_geom": strike_geom, "glyph_span": glyphs is not None,
+                    "box_chars": box_chars}
 
         hits, weak_band = [], []
         best = None
@@ -282,7 +435,6 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
             # `one_sided` is the underline/rule signature (well on one side, ~none on the other) and
             # is kept distinct so a real strike over SPARSE text still reads as two-sided, not one.
             wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
-            ends = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
             above, below = _ink_above_below(side_ink, ends, ln.get("run_px", 3.0), wpx)
             both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
             one_sided = _one_sided(above, below)
@@ -319,7 +471,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
             elif lcov >= PARTIAL_MIN_LCOV and len(txt) >= 2:
                 h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf,
                              strike_geom=strike_geom)
-                if h["char_span"][1] - h["char_span"][0] >= PARTIAL_MIN_CHARS:
+                if h["box_chars"] >= PARTIAL_MIN_CHARS:
                     hits.append(h)
             else:
                 weak_band.append((wbox, txt, off, wcov, ink_ok, conf, strike_geom))
@@ -327,7 +479,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
             for wbox, txt, off, wcov, ink_ok, conf, strike_geom in weak_band:
                 h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf,
                              strike_geom=strike_geom)
-                if h["char_span"][1] - h["char_span"][0] >= PARTIAL_MIN_CHARS:
+                if h["box_chars"] >= PARTIAL_MIN_CHARS:
                     hits.append(h)
         else:
             hits = [h for h in hits if abs(h["off"]) <= PARTIAL_ISO_MAX_OFF or h["ink_ok"]]
@@ -369,7 +521,9 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
 def consolidate_struck(hits, tagged, use_conf=True):
     """One record per WORD: union the char spans of all hits for that word (the detector often
     returns several overlapping fragments of one physical strike). Full vs partial is decided
-    from the UNIONED char coverage. `use_conf=False` scores without the OCR-confidence term."""
+    from the UNIONED char coverage: FULL_CHAR_COVER of the characters, and, when a hit's span was
+    measured against glyph ink, the first and last character too. `use_conf=False` scores
+    without the OCR-confidence term."""
     by_word = {}
     for h in hits:
         by_word.setdefault((h["bbox_frac"], h["text"]), []).append(h)
@@ -385,6 +539,8 @@ def consolidate_struck(hits, tagged, use_conf=True):
         best = max(merged, key=lambda m: m[1] - m[0])
         covered = sum(m1 - m0 for m0, m1 in merged)
         full = covered >= FULL_CHAR_COVER * max(len(txt), 1)
+        if full and any(h.get("glyph_span") for h in hs):     # the strokes reach both ends
+            full = merged[0][0] == 0 and merged[-1][1] >= len(txt)
         c0, c1 = (0, len(txt)) if full else (best[0], best[1])
         conf = min((h["conf"] for h in hs if h["conf"] is not None), default=None)
         rec = {

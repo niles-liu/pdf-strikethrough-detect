@@ -38,6 +38,23 @@ All notable changes to this project are documented here. The format follows
   overlays, whether alone or with a drawn line, `coverage` is the share of the word's width its
   struck characters span. `SCHEMA_VERSION` stays 1: only words carrying U+0336 change, and 0.12.1
   reported those only under a drawn line.
+- **On scanned pages, a stroke over most but not all of a word no longer strikes the whole word.**
+  A word was a full strike whenever its strokes covered 70% of its characters, as estimated from
+  the OCR box, so the live end of a partly struck long word was dropped with the struck part. A
+  word is now a full strike only when its strokes also reach its first and last character, and a
+  character at a stroke's end counts as struck when the stroke covers at least half of it. Both are
+  measured against the word's glyph ink near the stroke, not its OCR box, which runs loose and on
+  RapidOCR can hold several words, and against the stroke's own ink, not the detected line's ends.
+  Pieces of a stroke across short breaks (a pen skip, a dashed stroke, typed hyphens) count as one
+  stroke. Partial spans move onto the struck characters the same way, so a stroke over the letters
+  alone now leaves the punctuation around them live. Which words are reported struck does not
+  change, only their spans and whether they are full or partial. A box with no glyph ink to measure
+  keeps the old rule. Measured on its own against 0.12.1 with the frontier benchmark's scorer, on
+  pages outside its test sets and not used to tune it: the live part of a partly struck word is
+  marked 19 times in 318 where it was 71 (synthetic pages) and 27 times in 149 where it was 42
+  (real redlined documents). The character error rate of the live text, which also counts a whole
+  struck word now left with a character live, falls from 6.36% to 6.06% on the synthetic pages,
+  from 11.29% to 10.96% on the redlined documents and from 3.18% to 3.17% on Senate bills.
 - **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub
   Release with another tag, such as the ones that timestamp the benchmark's pre-registration,
   builds and publishes nothing and asks for no approval. A version tag still has to match
