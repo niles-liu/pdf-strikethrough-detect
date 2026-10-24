@@ -98,7 +98,8 @@ def test_flat_bezier_strike_detected():
 
 
 def test_isolated_short_tick_is_not_a_strike():
-    # a lone sub-MIN_STROKE_LEN tick must not chain into (or be promoted to) a strike
+    # a lone 3 pt tick at the start of a long word must not chain into (or be promoted to) a
+    # strike: it is long enough to be a stroke, but covers too little of the 'd' to strike it
     doc = _one_page(lambda p: p.insert_text((50, 100), "keep deleted text here", fontsize=12))
     page = doc[0]
     x0, y0, _, y1 = _word_box(page, "deleted")
@@ -108,12 +109,13 @@ def test_isolated_short_tick_is_not_a_strike():
 
 
 def test_chain_short_merges_within_gap_only():
-    # three 3-pt dashes 2 pt apart chain into one >=6-pt run; a far tick stays its own short piece
+    # three 3-pt dashes 2 pt apart chain into one 13-pt run; a far dash, past DASH_MAX_GAP, stays
+    # a 3-pt run of its own
     segs = [(0, 3, 50, (0, 0, 0), 1.0), (5, 8, 50, (0, 0, 0), 1.0), (10, 13, 50, (0, 0, 0), 1.0),
             (200, 203, 50, (0, 0, 0), 1.0)]
     chains = sorted(st.native._chain_short(segs))
     assert chains[0][0] == 0 and chains[0][1] == 13        # merged run 0..13
-    assert chains[1][0] == 200 and chains[1][1] == 203     # isolated, still short
+    assert chains[1][0] == 200 and chains[1][1] == 203     # not merged across the 187-pt gap
 
 
 # ===== batch mode =============================================================================

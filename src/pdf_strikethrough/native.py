@@ -25,6 +25,7 @@ import math
 import re
 import sys
 import threading
+from collections import namedtuple
 
 import pymupdf  # (formerly imported as the deprecated `fitz` alias)
 
@@ -32,14 +33,16 @@ import pymupdf  # (formerly imported as the deprecated `fitz` alias)
 STRUCK_COV = 0.50        # >= this: struck (full when every character is struck, else partial)
 PARTIAL_COV = 0.25       # >= this AND >= 2 chars: partial strike; below = grazing stroke end
 CHAR_STRUCK_COV = 0.50   # a character is struck when the strike covers this much of its width
-MIN_STROKE_LEN = 6.0     # pt; a solid strike stroke is at least this long
-MAX_STROKE_DY = 1.5      # pt; a strike stroke is horizontal...
-MAX_STROKE_SLOPE = math.tan(math.radians(2.0))   # ...or leans at most this much (line-tool strikes)
+MIN_STROKE_LEN = 3.0     # pt; a strike stroke (or a chained run of dashes) is at least this long
+MAX_STROKE_SLOPE = math.tan(math.radians(12.0))  # a strike line leans at most this much...
+MAX_STROKE_DY = 1.5      # pt; ...and one rising more is tested in level pieces (see horiz_strokes)
+LEVEL_SLOPE = math.tan(math.radians(2.0))  # a line leaning more strikes only level lines of text
 MAX_RECT_H = 3.5         # pt; a strike drawn as a filled rect is thin
 MAX_STROKE_FRAC = 0.30   # a line wider than this share of the word's height is a highlighter
 MID_BAND = 0.22          # strokes within [y0 + f*h, y1 - f*h] count as through-text
 # Dashes / flat-bezier pieces are chained before the length gate (see _chain_short).
 DASH_MIN_SEG = 1.0       # pt; below this a segment is graphics noise, never a dash
+DASH_MAX_SEG = 6.0       # pt; a segment shorter than this may be a dash, so it is chained first
 DASH_MAX_GAP = 4.0       # pt; max x-gap between dashes of one chained strike
 
 FLAG_MIN_WCOV = 0.15     # a span on a word with no character boxes must cover >= this of it
@@ -106,7 +109,7 @@ def _chain_short(segs):
     when they share a y-band (bucketed at ~1 pt) and sit no more than DASH_MAX_GAP pt apart in x;
     each run is emitted as one ``(x0, x1, y, color, width)`` interval carrying its longest member's
     paint. The caller applies the MIN_STROKE_LEN test to the run, so a dashed strike passes while a
-    lone tick does not."""
+    lone fleck does not."""
     buckets = {}
     for seg in segs:
         buckets.setdefault(round(seg[2]), []).append(seg)
@@ -140,11 +143,22 @@ def horiz_strokes(page):
     fill-only path paints its interior, not its outline, so each of its subpaths counts as a bar
     when it is thin enough.
 
-    A strike may be dashed (many short line segments) or drawn as a flat cubic bezier; those
-    sub-MIN_STROKE_LEN pieces are collected and chained (see :func:`_chain_short`) so they clear the
-    length gate a solid stroke clears directly. A line leaning up to MAX_STROKE_SLOPE is emitted as
-    level pieces, so each word is tested where the line crosses it."""
-    out, shorts = [], []
+    A strike may be dashed (many short line segments) or drawn as a flat cubic bezier; pieces
+    shorter than DASH_MAX_SEG are collected and chained (see :func:`_chain_short`) before the
+    MIN_STROKE_LEN gate, so the gaps of a dashed strike count as struck. A line or curve counts
+    only when it leans at most MAX_STROKE_SLOPE end to end, and a bar narrower than DASH_MAX_SEG
+    only when it is at most MAX_STROKE_DY tall, so a tick or a dot over one character is not a
+    strike. A steeper short piece still chains into a run (the jitter of a hand-drawn strike), but a
+    run with no level piece is dropped. A line rising more than MAX_STROKE_DY is emitted as level
+    pieces, so each word is tested where the line crosses it."""
+    return [s[:5] for s in _strokes(page)]
+
+
+def _strokes(page):
+    """:func:`horiz_strokes` with two more fields per interval: ``extent``, the length of the
+    mark it comes from (a whole line, bar or chained run, not one level piece of a leaning line),
+    and ``leaning``, true for a line or curve leaning more than LEVEL_SLOPE."""
+    out, level, steep = [], [], []
     for d in page.get_drawings():
         stroke_col, stroke_op = d.get("color"), d.get("stroke_opacity", 1.0)
         stroked = "s" in (d.get("type") or "s")         # 'f' = fill-only, 's' / 'fs' = stroked
@@ -167,23 +181,26 @@ def horiz_strokes(page):
             for g in groups:
                 r = pymupdf.Rect(min(p.x for p in g), min(p.y for p in g),
                                  max(p.x for p in g), max(p.y for p in g))
-                if r.height <= MAX_RECT_H and r.width >= MIN_STROKE_LEN:
+                if (r.height <= MAX_RECT_H and r.width >= MIN_STROKE_LEN
+                        and (r.width >= DASH_MAX_SEG or r.height <= MAX_STROKE_DY)):
                     out.append((r.x0, r.x1, (r.y0 + r.y1) / 2, _rgb(fill_col),
-                                round(float(r.height), 2)))
+                                round(float(r.height), 2), r.width, False))
         for it in d["items"]:
-            seg = None
+            seg, flat, lean = None, True, False
             if it[0] == "l":
                 if not draws_line:
                     continue
                 p1, p2 = sorted((it[1], it[2]), key=lambda p: p.x)
                 dx, dy = p2.x - p1.x, p2.y - p1.y
+                flat = abs(dy) <= MAX_STROKE_SLOPE * dx     # else too steep: a tick, a slash
+                lean = abs(dy) > LEVEL_SLOPE * dx
                 if abs(dy) <= MAX_STROKE_DY:
                     seg = (p1.x, p2.x, (p1.y + p2.y) / 2, _rgb(stroke_col), width)
-                elif abs(dy) <= MAX_STROKE_SLOPE * dx:
+                elif flat:
                     n = math.ceil(abs(dy))              # pieces rising <= 1 pt each
                     for i in range(n):
                         out.append((p1.x + dx * i / n, p1.x + dx * (i + 1) / n,
-                                    p1.y + dy * (i + 0.5) / n, _rgb(stroke_col), width))
+                                    p1.y + dy * (i + 0.5) / n, _rgb(stroke_col), width, dx, lean))
             elif it[0] == "c":
                 # a strike drawn as a (near-)flat cubic bezier reads as horizontal when all four
                 # control points share the stroke's y-band; genuinely curved beziers are skipped
@@ -194,6 +211,8 @@ def horiz_strokes(page):
                 xs = [p.x for p in pts]
                 if max(ys) - min(ys) <= MAX_STROKE_DY:
                     seg = (min(xs), max(xs), sum(ys) / len(ys), _rgb(stroke_col), width)
+                    dx, dy = abs(pts[3].x - pts[0].x), abs(pts[3].y - pts[0].y)
+                    flat, lean = dy <= MAX_STROKE_SLOPE * dx, dy > LEVEL_SLOPE * dx
             elif it[0] in ("re", "qu"):
                 # a strike drawn as a thin bar is a FILLED rect — judge it by its fill paint,
                 # falling back to the stroke paint when it is only stroked
@@ -206,15 +225,21 @@ def horiz_strokes(page):
                 r = it[1] if it[0] == "re" else it[1].rect
                 if r.height <= MAX_RECT_H:
                     seg = (r.x0, r.x1, (r.y0 + r.y1) / 2, _rgb(col), round(float(r.height), 2))
+                    flat = r.height <= MAX_STROKE_DY or r.width >= DASH_MAX_SEG
             if seg is None:
                 continue
-            if seg[1] - seg[0] >= MIN_STROKE_LEN:
-                out.append(seg)                        # solid stroke: emitted as-is (no chaining)
+            if seg[1] - seg[0] >= DASH_MAX_SEG:
+                if flat:                               # solid stroke: emitted as-is (no chaining)
+                    out.append((*seg, seg[1] - seg[0], lean))
             elif seg[1] - seg[0] >= DASH_MIN_SEG:
-                shorts.append(seg)                     # dash / bezier piece: chain it first
-    for chain in _chain_short(shorts):
-        if chain[1] - chain[0] >= MIN_STROKE_LEN:
-            out.append(chain)
+                (level if flat else steep).append(seg)  # dash, curve piece or short stroke: chain
+    runs = _chain_short(level)
+    for chain in _chain_short(level + steep):
+        # a run must hold a level piece: a lone tick never strikes, a jittery hand-drawn one does
+        if chain[1] - chain[0] >= MIN_STROKE_LEN and any(
+                round(f[2]) == round(chain[2]) and chain[0] <= f[0] and f[1] <= chain[1]
+                for f in runs):
+            out.append((*chain, chain[1] - chain[0], False))
     return out
 
 
@@ -238,51 +263,73 @@ def _merged_intervals(wx0, wx1, ivals):
 _WORD_DELIMITERS = frozenset(map(chr, [*range(33), 0xA0, *range(0x202A, 0x202F)]))
 
 
+_Found = namedtuple("_Found", "vertical boxes tilted hidden")
+
+
 class _PageChars:
     """Per-character boxes for a page's ``get_text("words")`` entries, so a strike maps onto the
-    characters it crosses. Built lazily from one rawdict pass and shared by the detectors in
-    ``page_strikes(method='both')``."""
+    characters it crosses, with each word's text direction and visibility. Built lazily from one
+    rawdict pass and shared by the detectors in ``page_strikes(method='both')``."""
 
     def __init__(self, page):
         self.page = page
         self._by_text = None
+        self._visible = None                   # the boxes of the page's visible characters
 
-    def _add(self, chars, vertical):
+    def _add(self, chars, vertical, tilted):
         if not chars:
             return
-        boxes = [tuple(c["bbox"]) for c in chars]
+        boxes = [tuple(c["bbox"]) for c, _ in chars]
         cx = (min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2
         cy = (min(b[1] for b in boxes) + max(b[3] for b in boxes)) / 2
-        text = "".join(c["c"] for c in chars)
-        self._by_text.setdefault(text, []).append((cx, cy, vertical, boxes))
+        text = "".join(c["c"] for c, _ in chars)
+        found = _Found(vertical, boxes, tilted, all(hidden for _, hidden in chars))
+        self._by_text.setdefault(text, []).append((cx, cy, found))
+
+    def _build(self):
+        self._by_text, self._visible = {}, []
+        raw = self.page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_WORDS)
+        for block in raw.get("blocks", []):
+            for line in block.get("lines", []):
+                dx, dy = line.get("dir", (1.0, 0.0))
+                vertical = abs(dy) > abs(dx)
+                tilted = not vertical and abs(dy) > LEVEL_SLOPE * abs(dx)
+                cur = []
+                for span in line.get("spans", []):
+                    hidden = span.get("alpha", 255) == 0    # render mode 3, or fully transparent
+                    for ch in span.get("chars", []):
+                        if ch["c"] in _WORD_DELIMITERS:
+                            self._add(cur, vertical, tilted)
+                            cur = []
+                        else:
+                            cur.append((ch, hidden))
+                            if not hidden:
+                                self._visible.append(pymupdf.Rect(ch["bbox"]))
+                self._add(cur, vertical, tilted)
 
     def lookup(self, word):
-        """``(vertical, [char bbox, ...])`` for one ``get_text("words")`` entry, or None when no
-        extracted line reproduces it (the caller then splits the word box evenly)."""
+        """``(vertical, [char bbox, ...], tilted, hidden)`` for one ``get_text("words")`` entry, or
+        None when no extracted line reproduces it (the caller then splits the word box evenly).
+        ``tilted``: its line of text leans more than LEVEL_SLOPE; ``hidden``: every character is
+        invisible (render mode 3, or fully transparent)."""
         if self._by_text is None:
-            self._by_text = {}
-            raw = self.page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_WORDS)
-            for block in raw.get("blocks", []):
-                for line in block.get("lines", []):
-                    dx, dy = line.get("dir", (1.0, 0.0))
-                    vertical = abs(dy) > abs(dx)
-                    cur = []
-                    for span in line.get("spans", []):
-                        for ch in span.get("chars", []):
-                            if ch["c"] in _WORD_DELIMITERS:
-                                self._add(cur, vertical)
-                                cur = []
-                            else:
-                                cur.append(ch)
-                    self._add(cur, vertical)
+            self._build()
         x0, y0, x1, y1, txt = word[:5]
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         best = None
-        for ecx, ecy, vertical, boxes in self._by_text.get(txt, ()):
+        for ecx, ecy, found in self._by_text.get(txt, ()):
             dist = abs(ecx - cx) + abs(ecy - cy)
-            if dist <= 2.0 and len(boxes) == len(txt) and (best is None or dist < best[0]):
-                best = (dist, vertical, boxes)
-        return None if best is None else (best[1], best[2])
+            if dist <= 2.0 and len(found.boxes) == len(txt) and (best is None or dist < best[0]):
+                best = (dist, found)
+        return None if best is None else best[1]
+
+    def visible_under(self, word):
+        """The boxes of the visible characters the word's box overlaps (touching edges do not
+        count)."""
+        if self._by_text is None:
+            self._build()
+        r = pymupdf.Rect(word[:4])
+        return [v for v in self._visible if r.intersects(v)]
 
 
 def _even_char_boxes(word):
@@ -338,7 +385,7 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
              if w[4].strip() and (w[3] - w[1]) >= 4 and (w[2] - w[0]) >= 3]
     if not words:
         return []
-    strokes = horiz_strokes(page)
+    strokes = _strokes(page)
     if not strokes:
         return []
     chars = _chars if _chars is not None else _PageChars(page)
@@ -348,23 +395,52 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
         wx0, wy0, wx1, wy1, txt = word[:5]
         wh = wy1 - wy0
         max_wid = max(MAX_RECT_H, MAX_STROKE_FRAC * wh)
-        mid = [(a, b, col, wid) for (a, b, sy, col, wid) in strokes
-               if wy0 + MID_BAND * wh <= sy <= wy1 - MID_BAND * wh and min(b, wx1) > max(a, wx0)
-               and wid <= max_wid]
+        mid = [s for s in strokes
+               if wy0 + MID_BAND * wh <= s[2] <= wy1 - MID_BAND * wh
+               and min(s[1], wx1) > max(s[0], wx0) and s[4] <= max_wid]
         if not mid:
             continue
-        merged, covered = _merged_intervals(wx0, wx1, [(a, b) for (a, b, _c, _w) in mid])
-        cov = covered / max(wx1 - wx0, 1e-6)
         found = chars.lookup(word)
-        if found is not None and found[0]:
-            continue        # vertical text: a horizontal line crosses it, it does not strike it
-        boxes = found[1] if found is not None else _even_char_boxes(word)
+        if found is not None:
+            if found.vertical:
+                continue    # vertical text: a horizontal line crosses it, it does not strike it
+            under = chars.visible_under(word) if found.hidden else []
+            if under:
+                # an invisible word laid over visible text follows it: a short stroke counts only
+                # through the middle of the visible characters beneath, not as their underline
+                mid = [s for s in mid if s[5] >= DASH_MAX_SEG or any(
+                    min(s[1], v.x1) > max(s[0], v.x0)
+                    and v.y0 + MID_BAND * v.height <= s[2] <= v.y1 - MID_BAND * v.height
+                    for v in under)]
+            if found.tilted:
+                mid = [s for s in mid if not s[6]]     # a slanted line along slanted text
+        boxes = found.boxes if found is not None else _even_char_boxes(word)
+        # a stroke shorter than DASH_MAX_SEG (a fraction bar, a root's bar) counts only on a
+        # character whose own middle band it crosses: in a word mixing sizes, the word's band
+        # also takes in rules above or below the small characters
+        bands = [(by0 + MID_BAND * (by1 - by0), by1 - MID_BAND * (by1 - by0))
+                 for _, by0, _, by1 in boxes]
+
+        def fits(s, i, bands=bands):
+            return s[5] >= DASH_MAX_SEG or bands[i][0] <= s[2] <= bands[i][1]
+
+        mid = [s for s in mid if s[5] >= DASH_MAX_SEG or any(
+            fits(s, i) and min(s[1], b[2]) > max(s[0], b[0]) for i, b in enumerate(boxes))]
+        if not mid:
+            continue
+        merged, covered = _merged_intervals(wx0, wx1, [s[:2] for s in mid])
+        cov = covered / max(wx1 - wx0, 1e-6)
         struck = []
-        for bx0, _, bx1, _ in boxes:
-            if bx1 - bx0 <= 1e-6:      # zero-width (a combining mark): its position decides
-                struck.append(any(a <= bx0 <= b for a, b in merged))
+        for i, (bx0, _, bx1, _) in enumerate(boxes):
+            own = merged
+            if not all(fits(s, i) for s in mid):
+                own = _merged_intervals(wx0, wx1, [s[:2] for s in mid if fits(s, i)])[0]
+            if bx1 - bx0 <= 1e-6:
+                # zero-width: the rest of a ligature ('fi' gives an 'f' spanning the glyph and an
+                # 'i' at its right edge) or a combining mark, so it goes with the character before
+                struck.append(struck[-1] if struck else any(a <= bx0 <= b for a, b in own))
             else:
-                covered = sum(max(0.0, min(b, bx1) - max(a, bx0)) for a, b in merged)
+                covered = sum(max(0.0, min(b, bx1) - max(a, bx0)) for a, b in own)
                 struck.append(covered >= CHAR_STRUCK_COV * (bx1 - bx0))
         if found is not None:
             # a sub/superscript next to a struck character is struck with it: redline tools strike
@@ -377,7 +453,7 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
                             and prev is not None and struck[prev]):
                         struck[i] = True
                     prev = i
-        enters = (any(a < wx0 - 1.0 for a, *_ in mid), any(b > wx1 + 1.0 for _a, b, *_ in mid))
+        enters = (any(s[0] < wx0 - 1.0 for s in mid), any(s[1] > wx1 + 1.0 for s in mid))
         span = _struck_span(txt, struck, cov, exact=found is not None, enters=enters)
         if span is None:
             continue
@@ -388,7 +464,7 @@ def native_page_strikes(page, page_index, words=None, _chars=None):
             "page": page_index, "text": txt, "chars": txt[c0:c1], "char_span": (c0, c1),
             "partial": not full,
             "bbox_frac": _bbox_frac(page, wx0, wy0, wx1, wy1),
-            "coverage": round(cov, 3), "stroke_color": dom[2], "stroke_width": dom[3],
+            "coverage": round(cov, 3), "stroke_color": dom[3], "stroke_width": dom[4],
             "tier": "vector", "verdict": "struck", "final": True,
         })
     out.sort(key=lambda h: (round(h["bbox_frac"][1], 3), h["bbox_frac"][0]))

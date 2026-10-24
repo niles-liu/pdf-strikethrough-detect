@@ -129,6 +129,31 @@ All notable changes to this project are documented here. The format follows
   refuses a box past 1.5 from any other source.
 - **The README said RapidOCR reads every CJK script.** Its default model reads Chinese and
   Japanese but has no Hangul. The README now gives the params for RapidOCR's Korean recognizer.
+- **A strike line leaning more than 2° and rising more than 1.5 pt struck nothing.** The vector
+  detector kept a line only when it rose at most 1.5 pt or leaned at most 2°, so a line-tool strike
+  drawn by hand across a word was often dropped. Lines leaning up to 12° now count, each word
+  tested where the line crosses it, except on a line of text that itself leans more than 2°, where
+  a line along the text crosses its upright box. A steeper line or curve is never a strike on its
+  own, however short; before, any line rising 1.5 pt or less counted at any angle. The steeper
+  pieces of a hand-drawn strike still count when they chain with level ones. On synthetic pages,
+  strikes leaning 3° or more went from none found to 96%; the rest lean past 12° across words of
+  three letters or fewer.
+- **A strike shorter than 6 pt struck nothing,** so a struck digit, comma or period, or the old
+  letter of a relettered item (`(ba)`, `(iv)`), stayed in `clean_text`. The floor is now 3 pt.
+  A short mark must also be flat: a tick across one character (3 pt across, 1.5 pt up), drawn as
+  a line, a curve or a filled shape, is still not a strike, nor is a box or bar under 6 pt wide
+  and over 1.5 pt tall. A stroke under 6 pt counts only on a character whose own middle band it
+  crosses, so the bar of a small fraction or a root beside full-size text is not a strike. A
+  character extracted with no width, such as the 'i' of an 'fi' ligature, is struck with the
+  character before it. Segments under 6 pt are still chained across the gaps of a dashed strike
+  before the floor applies.
+- **Invisible text over an inserted letter could be marked struck.** Some redline tools lay a
+  hidden glyph a little low over a letter, so the underline of an inserted letter crossed the
+  hidden word's middle band. On an invisible word (render mode 3, or fully transparent) that
+  overlaps visible text, a stroke under 6 pt now counts only through the middle of the visible
+  characters beneath it, so the hidden word is struck with a struck letter and not by an
+  underline. A strike over a text layer that is all invisible, such as an OCR'd scan with its
+  markup flattened, still counts.
 
 ## [0.12.1] — 2026-10-08
 
