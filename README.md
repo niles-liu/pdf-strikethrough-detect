@@ -341,8 +341,11 @@ python examples/rag_provenance.py         # clean_text vs provenance_text ([dele
   baseline in ems of the text's height, so an underline at or under the baseline and an overline
   above the capitals are not strikes, whatever the font (a word whose text layer gives no usable
   baseline is measured against the middle share of its box instead); a character is struck when a
-  stroke crosses ≥ 50% of its glyph box or a U+0336 overlay character follows it, and a word is
-  fully struck only when every character is.
+  stroke through its own band crosses ≥ 50% of its glyph box or a U+0336 overlay character follows
+  it, and a word is fully struck only when every character is. A rule beside or behind the text is
+  not a strike: a fraction bar between a numerator and a denominator, a radical's bar over its
+  radicand (except just above x-height letters, as in `√x`), or a plot's gridline behind the box
+  of its legend.
 - **Scanned geometry** (`lines.py`): per-angle morphological opening extracts stroke *fragments*,
   collinear fragments are stitched, then strict filters (spine fill, stroke thickness against the
   stems of the text it crosses, angle/length) separate real strikes from bold crossbars and

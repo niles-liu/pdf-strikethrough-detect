@@ -11,8 +11,12 @@ height the glyphs are drawn at: STRIKE_BAND_LO..STRIKE_BAND_HI above the baselin
 STRIKE_BAND_HI_LEVEL for a level stroke), so an underline drawn at or under the baseline and an
 overline or rule above the letters are not strikes, in every font. A word whose character origins
 are missing, on more than one baseline, or at odds with its box uses the box-share band instead
-(see :func:`_through_text`). The struck characters are the ones the strike crosses, read from
-MuPDF's per-character boxes; a word is a FULL strike only when every character is struck.
+(see :func:`_through_text`). The struck characters are the ones the strike crosses through their
+own bands, read from MuPDF's per-character boxes and origins, so a fraction bar does not strike the
+small numerator or denominator a word joins to a full-size character, nor a radical's bar its
+radicand (see :func:`_fits`); a word is a FULL strike only when every character is struck. A line
+behind the box a text is set on (a plot's gridline under its legend) is not a strike either (see
+:func:`_through_strokes`).
 
 Text can also be struck in the text layer itself, as online strikethrough generators write it: each
 character followed by U+0336 COMBINING LONG STROKE OVERLAY (``o̶f̶``). The vector detector reads
@@ -84,6 +88,14 @@ DASH_MAX_GAP = 4.0       # pt; max x-gap between dashes of one chained strike
 
 FLAG_MIN_WCOV = 0.15     # a span on a word with no character boxes must cover >= this of it
 
+# A fill of one subpath at least COVER_OPACITY opaque and taller than MAX_RECT_H, painted after a
+# stroke and before the text over it, is that text's background (a plot's legend box over its
+# gridlines): the stroke runs behind the text, not through it. The fills are filed by COVER_ROW-pt
+# bands of height, so a stroke looks up only the fills at its own height.
+COVER_OPACITY = 0.5
+COVER_ROW = 8.0          # pt
+RADICALS = frozenset("\N{SQUARE ROOT}\N{CUBE ROOT}\N{FOURTH ROOT}")
+
 OVERLAY = "\N{COMBINING LONG STROKE OVERLAY}"    # U+0336: strikes the character before it
 
 METHODS = ("vector", "flag", "annot", "both")    # the native detectors page_strikes selects
@@ -146,29 +158,32 @@ def _rgb(color):
 def _chain_short(segs):
     """Merge collinear short strike segments (dashes, flat-bezier pieces) into runs. Segments join
     when they share a y-band (bucketed at ~1 pt) and sit no more than DASH_MAX_GAP pt apart in x;
-    each run is emitted as one ``(x0, x1, y, color, width)`` interval carrying its longest member's
-    paint. The caller applies the MIN_STROKE_LEN test to the run, so a dashed strike passes while a
-    lone fleck does not."""
+    each run of ``(x0, x1, y, color, width, seqno)`` segments is emitted as one such interval
+    carrying its longest member's paint and its last-painted member's ``seqno``. The caller applies
+    the MIN_STROKE_LEN test to the run, so a dashed strike passes while a lone fleck does not."""
     buckets = {}
     for seg in segs:
         buckets.setdefault(round(seg[2]), []).append(seg)
     out = []
+
+    def emit(cx0, cx1, members):
+        dom = max(members, key=lambda s: s[1] - s[0])
+        out.append((cx0, cx1, dom[2], dom[3], dom[4], max(s[5] for s in members)))
+
     for group in buckets.values():
         group.sort()                                   # by x0
         cx0 = cx1 = None
         members = []
-        for (x0, x1, y, col, wid) in group:
-            if cx0 is None or x0 > cx1 + DASH_MAX_GAP:
+        for seg in group:
+            if cx0 is None or seg[0] > cx1 + DASH_MAX_GAP:
                 if cx0 is not None:
-                    dom = max(members, key=lambda s: s[1] - s[0])
-                    out.append((cx0, cx1, dom[2], dom[3], dom[4]))
-                cx0, cx1, members = x0, x1, [(x0, x1, y, col, wid)]
+                    emit(cx0, cx1, members)
+                cx0, cx1, members = seg[0], seg[1], [seg]
             else:
-                cx1 = max(cx1, x1)
-                members.append((x0, x1, y, col, wid))
+                cx1 = max(cx1, seg[1])
+                members.append(seg)
         if cx0 is not None:
-            dom = max(members, key=lambda s: s[1] - s[0])
-            out.append((cx0, cx1, dom[2], dom[3], dom[4]))
+            emit(cx0, cx1, members)
     return out
 
 
@@ -193,12 +208,22 @@ def horiz_strokes(page):
     return [s[:5] for s in _strokes(page)]
 
 
-def _strokes(page):
-    """:func:`horiz_strokes` with two more fields per interval: ``extent``, the length of the
+def _strokes(page, drawn=None):
+    """:func:`horiz_strokes` with three more fields per interval: ``extent``, the length of the
     mark it comes from (a whole line, bar or chained run, not one level piece of a leaning line),
-    and ``leaning``, true for a line or curve leaning more than LEVEL_SLOPE."""
+    ``leaning``, true for a line or curve leaning more than LEVEL_SLOPE, and ``seqno``, its
+    drawing's ``seqno`` (see :class:`_PaintOrder`). Each drawing is appended to the list `drawn`,
+    when one is given, as ``(seqno, type, rect, cover)``, ``cover`` true for a fill of one subpath
+    (:func:`_one_subpath`) at least COVER_OPACITY opaque and taller than MAX_RECT_H."""
     out, level, steep = [], [], []
     for d in page.get_drawings():
+        seqno = d.get("seqno", 0)
+        if drawn is not None:
+            fill_op = d.get("fill_opacity")
+            drawn.append((seqno, d.get("type"), d["rect"],
+                          d.get("fill") is not None and "f" in (d.get("type") or "")
+                          and (1.0 if fill_op is None else fill_op) >= COVER_OPACITY
+                          and d["rect"].height > MAX_RECT_H and _one_subpath(d["items"])))
         stroke_col, stroke_op = d.get("color"), d.get("stroke_opacity", 1.0)
         stroked = "s" in (d.get("type") or "s")         # 'f' = fill-only, 's' / 'fs' = stroked
         line_w = d.get("width")
@@ -223,7 +248,7 @@ def _strokes(page):
                 if (r.height <= MAX_RECT_H and r.width >= MIN_STROKE_LEN
                         and (r.width >= DASH_MAX_SEG or r.height <= MAX_STROKE_DY)):
                     out.append((r.x0, r.x1, (r.y0 + r.y1) / 2, _rgb(fill_col),
-                                round(float(r.height), 2), r.width, False))
+                                round(float(r.height), 2), r.width, False, seqno))
         for it in d["items"]:
             seg, flat, lean = None, True, False
             if it[0] == "l":
@@ -234,12 +259,13 @@ def _strokes(page):
                 flat = abs(dy) <= MAX_STROKE_SLOPE * dx     # else too steep: a tick, a slash
                 lean = abs(dy) > LEVEL_SLOPE * dx
                 if abs(dy) <= MAX_STROKE_DY:
-                    seg = (p1.x, p2.x, (p1.y + p2.y) / 2, _rgb(stroke_col), width)
+                    seg = (p1.x, p2.x, (p1.y + p2.y) / 2, _rgb(stroke_col), width, seqno)
                 elif flat:
                     n = math.ceil(abs(dy))              # pieces rising <= 1 pt each
                     for i in range(n):
                         out.append((p1.x + dx * i / n, p1.x + dx * (i + 1) / n,
-                                    p1.y + dy * (i + 0.5) / n, _rgb(stroke_col), width, dx, lean))
+                                    p1.y + dy * (i + 0.5) / n, _rgb(stroke_col), width, dx, lean,
+                                    seqno))
             elif it[0] == "c":
                 # a strike drawn as a (near-)flat cubic bezier reads as horizontal when all four
                 # control points share the stroke's y-band; genuinely curved beziers are skipped
@@ -249,7 +275,7 @@ def _strokes(page):
                 ys = [p.y for p in pts]
                 xs = [p.x for p in pts]
                 if max(ys) - min(ys) <= MAX_STROKE_DY:
-                    seg = (min(xs), max(xs), sum(ys) / len(ys), _rgb(stroke_col), width)
+                    seg = (min(xs), max(xs), sum(ys) / len(ys), _rgb(stroke_col), width, seqno)
                     dx, dy = abs(pts[3].x - pts[0].x), abs(pts[3].y - pts[0].y)
                     flat, lean = dy <= MAX_STROKE_SLOPE * dx, dy > LEVEL_SLOPE * dx
             elif it[0] in ("re", "qu"):
@@ -263,13 +289,14 @@ def _strokes(page):
                     continue
                 r = it[1] if it[0] == "re" else it[1].rect
                 if r.height <= MAX_RECT_H:
-                    seg = (r.x0, r.x1, (r.y0 + r.y1) / 2, _rgb(col), round(float(r.height), 2))
+                    seg = (r.x0, r.x1, (r.y0 + r.y1) / 2, _rgb(col), round(float(r.height), 2),
+                           seqno)
                     flat = r.height <= MAX_STROKE_DY or r.width >= DASH_MAX_SEG
             if seg is None:
                 continue
             if seg[1] - seg[0] >= DASH_MAX_SEG:
                 if flat:                               # solid stroke: emitted as-is (no chaining)
-                    out.append((*seg, seg[1] - seg[0], lean))
+                    out.append((*seg[:5], seg[1] - seg[0], lean, seqno))
             elif seg[1] - seg[0] >= DASH_MIN_SEG:
                 (level if flat else steep).append(seg)  # dash, curve piece or short stroke: chain
     runs = _chain_short(level)
@@ -278,8 +305,18 @@ def _strokes(page):
         if chain[1] - chain[0] >= MIN_STROKE_LEN and any(
                 round(f[2]) == round(chain[2]) and chain[0] <= f[0] and f[1] <= chain[1]
                 for f in runs):
-            out.append((*chain, chain[1] - chain[0], False))
+            out.append((*chain[:5], chain[1] - chain[0], False, chain[5]))
     return out
+
+
+def _one_subpath(items):
+    """Whether a path's `items` (``get_drawings``) make one subpath: a lone rectangle or quad, or
+    lines and curves each starting where the last ended. A fill of more (a frame around a hole,
+    two bars) leaves parts of its box unpainted."""
+    if any(it[0] in ("re", "qu") for it in items):
+        return len(items) == 1
+    return bool(items) and all(abs(a[-1].x - b[1].x) <= 0.01 and abs(a[-1].y - b[1].y) <= 0.01
+                               for a, b in zip(items, items[1:]))
 
 
 def _merged_intervals(wx0, wx1, ivals):
@@ -395,6 +432,84 @@ class _PageChars:
         r = pymupdf.Rect(word[:4])
         return [(v, _char_band(ch, *line_dir)) for v, ch, line_dir in self._visible
                 if r.intersects(v)]
+
+
+class _PaintOrder:
+    """Where in a page's paint order its text and its drawings come, read on first use.
+    ``get_bboxlog`` lists the paint operations in order and ``get_texttrace`` numbers its text by
+    the same count. ``get_drawings`` numbers them too but leaves out a path with no segments (a
+    lone moveto, which PyMuPDF before 2.0 skips, and 2.0 too when it is closed), so each drawing
+    (``drawn``: ``(seqno, type, rect, ...)`` per drawing, see :func:`_strokes`) is found in the
+    log by its kind, its box and its ``seqno``, which counts the operations before it that are not
+    skipped paths. A failed pass, or a drawing not found where its ``seqno`` puts it, leaves the
+    order unknown."""
+
+    def __init__(self, page, drawn):
+        self.page, self.drawn, self._read = page, drawn, None
+
+    def _load(self):
+        if self._read is None:
+            self._read = False
+            try:
+                ops = self.page.get_bboxlog()
+                chars = [((c[3][0] + c[3][2]) / 2, (c[3][1] + c[3][3]) / 2, span["seqno"])
+                         for span in self.page.get_texttrace() for c in span.get("chars", ())]
+            except Exception:                  # a failed pass leaves the order unknown
+                return None
+            at = _align_drawings(ops, self.drawn)
+            if at is not None:
+                self._read = (ops, chars, at)
+        return self._read or None
+
+    def first_text(self, word):
+        """The place in the paint order of the first text drawn inside the word's box, or None."""
+        read = self._load()
+        if read is None:
+            return None
+        ops, chars, _at = read
+        x0, y0, x1, y1 = word[:4]
+        first = min((s for cx, cy, s in chars if x0 <= cx <= x1 and y0 <= cy <= y1),
+                    default=None)
+        if first is None or not (0 <= first < len(ops) and ops[first][0].endswith("text")):
+            return None
+        return first
+
+    def place(self, seqno):
+        """The place in the paint order of the drawing with this ``seqno``, or None."""
+        read = self._load()
+        return None if read is None else read[2].get(seqno)
+
+
+def _align_drawings(ops, drawn):
+    """``{seqno: index in ops}`` for the drawings `drawn` (``(seqno, type, rect, ...)`` in order)
+    in the paint log `ops` (``get_bboxlog``), or None when one is not where its ``seqno`` puts it.
+    A path in the log that is not the next drawing is one ``get_drawings`` skips; a fill and
+    stroke of one path (type ``fs``) take two operations."""
+    at, k, n, i = {}, 0, 0, 0                  # next drawing, operations numbered, log index
+    while i < len(ops):
+        kind, box = ops[i]
+        if not kind.endswith("path"):
+            n += 1
+        elif k < len(drawn) and drawn[k][0] == n and _logged_as(kind, box, *drawn[k][1:3]):
+            at[n] = i
+            n += 1
+            if drawn[k][1] == "fs":
+                if i + 1 >= len(ops) or ops[i + 1][0] != "stroke-path":
+                    return None
+                i += 1
+                n += 1
+            k += 1
+        i += 1
+    return at if k == len(drawn) else None
+
+
+def _logged_as(kind, box, typ, rect):
+    """Whether a log entry (`kind`, `box`) can be the drawing of type `typ` over `rect`: the log's
+    box takes in a stroke's width and the start of every subpath, so it holds the drawing's."""
+    if kind != ("stroke-path" if typ == "s" else "fill-path"):
+        return False
+    return (box[0] - 0.5 <= rect[0] and box[1] - 0.5 <= rect[1]
+            and rect[2] <= box[2] + 0.5 and rect[3] <= box[3] + 0.5)
 
 
 # One character pass at a time while PyMuPDF's process-wide quad-corrections switch is flipped.
@@ -845,36 +960,78 @@ def _struck_span(txt, struck, cov, exact, enters=(False, False)):
 # One stroke piece through a word's text: ``(a, b)`` the part of it in the word's band, clipped to
 # the word, ``y`` its height, ``color`` and ``width`` its paint, ``(x0, x1)`` the whole stroke's
 # extent (whether it enters the word from outside), ``extent`` the length of the mark it comes
-# from and ``leaning`` whether that mark leans more than LEVEL_SLOPE (see :func:`_strokes`)
-_Piece = namedtuple("_Piece", "a b y color width x0 x1 extent leaning")
+# from, ``leaning`` whether that mark leans more than LEVEL_SLOPE and ``seqno`` its drawing's
+# ``seqno`` (see :func:`_strokes`)
+_Piece = namedtuple("_Piece", "a b y color width x0 x1 extent leaning seqno")
 
 
 def _fits(m, box, band):
-    """Whether stroke piece `m` counts on the character with this `box` and `band`: a stroke at
-    least DASH_MAX_SEG long counts wherever the word's band takes it; a shorter one (a fraction
-    bar, a root's bar) only through the character's own band (see :func:`_in_char_band`), since in
-    a word mixing sizes the word's band also takes in rules above or below the small
-    characters."""
-    return m.extent >= DASH_MAX_SEG or _in_char_band(band, box, m.a, m.b, m.y, m.leaning)
+    """Whether stroke piece `m` counts on the character with this `box` and `band`: only through
+    the character's own band (see :func:`_in_char_band`), since in a word mixing sizes the word's
+    band also takes in rules above or below the small characters (a fraction's bar over its
+    denominator, a radical's bar over its radicand). A stroke at least DASH_MAX_SEG long counts on
+    a character without a band of its own wherever the word's band takes it."""
+    if band is None and m.extent >= DASH_MAX_SEG:
+        return True
+    return _in_char_band(band, box, m.a, m.b, m.y, m.leaning)
 
 
-def _through_strokes(word, near, found, boxes, bands, chars):
+def _covered(m, cover):
+    """Whether the fill `cover` (``(seqno, rect)``) lies over stroke piece `m`, painted after it."""
+    seqno, r = cover
+    return seqno > m.seqno and r.x0 <= m.a and m.b <= r.x1 and r.y0 <= m.y <= r.y1
+
+
+def _cover_rows(drawn, strokes):
+    """The fills that may cover a stroke (``(seqno, rect)`` for each drawing in `drawn` that is a
+    ``cover``, see :func:`_strokes`) filed by COVER_ROW-pt band of height, in the bands that hold
+    one of the `strokes`."""
+    rows = {}
+    fills = [(seqno, r) for seqno, _typ, r, cover in drawn if cover]
+    if not strokes or not fills:
+        return rows
+    lo = min(s[2] for s in strokes)
+    hi = max(s[2] for s in strokes)
+    keys = sorted({math.floor(s[2] / COVER_ROW) for s in strokes})
+    for c in fills:
+        r = c[1]
+        if r.y0 <= hi and r.y1 >= lo:
+            for k in keys[bisect.bisect_left(keys, math.floor(max(lo, r.y0) / COVER_ROW)):
+                          bisect.bisect_right(keys, math.floor(min(hi, r.y1) / COVER_ROW))]:
+                rows.setdefault(k, []).append(c)
+    return rows
+
+
+def _through_strokes(word, near, found, boxes, bands, chars, covers=None, order=None, signs=()):
     """The :data:`_Piece` of each stroke in `near` (``_strokes`` tuples crossing the word box) that
     runs through the word's text: a stroke at least DASH_MAX_SEG long through its band
-    (:func:`_through_text`), a shorter one through some character's own band alone
-    (:func:`_fits`); on an invisible word laid over visible text, a short stroke only through the
-    band of a visible character beneath, not as its underline; and on a tilted line, no leaning
-    stroke (a slanted line along slanted text crosses its upright box). `boxes` and `bands` are the
-    word's characters' (overlays left out)."""
+    (:func:`_through_text`), and every stroke through some character's own band (:func:`_fits`)
+    or across half of a radical sign's box in `signs` (see :func:`_stroke_span`); on an invisible
+    word laid over visible text, a short stroke only through the band of a visible character
+    beneath, not as its underline; and on a tilted line, no leaning stroke (a slanted line along
+    slanted text crosses its upright box). `boxes` and `bands` are the word's characters'
+    (overlays left out).
+
+    A stroke under a fill from `covers` (:func:`_cover_rows`) painted after the stroke and before
+    the word's text (`order`, a :class:`_PaintOrder`) is dropped as well, such as a gridline under
+    the box of a plot's legend: it runs behind the text's background. When the paint order is
+    unknown, the stroke is kept."""
     through = _through_text(word, found.baseline if found is not None else None)
     wx0, wx1 = word[0], word[2]
     mid = []
-    for a, b, sy, col, wid, ext, lean in near:
-        # a short stroke answers to its characters' own bands alone: one through a lowered
-        # subscript runs under the band of the word's main characters
+    for a, b, sy, col, wid, ext, lean, seqno in near:
+        # a short stroke skips the word's band, as one through a lowered subscript runs under the
+        # band of the word's main characters; every stroke must also run through the own band of
+        # a character it strikes (_fits, below)
         part = through(a, b, sy, lean) if ext >= DASH_MAX_SEG else (max(a, wx0), min(b, wx1))
         if part is not None:
-            mid.append(_Piece(*part, sy, col, wid, a, b, ext, lean))
+            mid.append(_Piece(*part, sy, col, wid, a, b, ext, lean, seqno))
+    beneath = [(m, c) for m in mid for c in (covers or {}).get(math.floor(m.y / COVER_ROW), ())
+               if _covered(m, c)]
+    first = order.first_text(word) if beneath and order is not None else None
+    if first is not None:
+        behind = [m for m, c in beneath if (at := order.place(c[0])) is not None and at < first]
+        mid = [m for m in mid if m not in behind]
     if found is not None and mid:
         under = chars.visible_under(word) if found.hidden else []
         if under:
@@ -883,16 +1040,32 @@ def _through_strokes(word, near, found, boxes, bands, chars):
                 and _in_char_band(band, v, m.x0, m.x1, m.y, m.leaning) for v, band in under)]
         if found.tilted:
             mid = [m for m in mid if not m.leaning]
-    return [m for m in mid if m.extent >= DASH_MAX_SEG or any(
-        _fits(m, bx, bd) and min(m.b, bx[2]) > max(m.a, bx[0]) for bx, bd in zip(boxes, bands))]
+    return [m for m in mid if any(_fits(m, bx, bd) and min(m.b, bx[2]) > max(m.a, bx[0])
+                                  for bx, bd in zip(boxes, bands))
+            or any(min(m.b, bx[2]) - max(m.a, bx[0]) >= CHAR_STRUCK_COV * (bx[2] - bx[0])
+                   for bx in signs)]
 
 
-def _stroke_span(word, txt, boxes, bands, exact, mid):
+def _radicands(txt, boxes):
+    """``{i: j}`` for each radical sign ``txt[i]`` (RADICALS) with a character after it: ``j``, the
+    first of nonzero width in `boxes`, as a combining mark after the sign goes with the sign."""
+    out = {}
+    for i, ch in enumerate(txt):
+        if ch in RADICALS:
+            j = next((k for k in range(i + 1, len(boxes)) if boxes[k][2] - boxes[k][0] > 1e-6),
+                     None)
+            if j is not None:
+                out[i] = j
+    return out
+
+
+def _stroke_span(word, txt, boxes, bands, exact, mid, roots=None):
     """``(span, cov)`` for the stroke pieces in `mid` (:data:`_Piece`, already through the word's
     text): `span` as :func:`_struck_span` gives it for `txt` (the word's text without overlays)
     from its character `boxes` and `bands` (`exact` when MuPDF's, not an even split), `cov` the
     share of the word's width the strokes cover. A character is struck by the pieces that
-    :func:`_fits` it."""
+    :func:`_fits` it, except a radical sign (RADICALS): struck when the strokes cross it and its
+    radicand, the character after it in `roots` (:func:`_radicands`), is struck."""
     wx0, wx1 = word[0], word[2]
     merged, covered = _merged_intervals(wx0, wx1, [(m.a, m.b) for m in mid])
     cov = covered / max(wx1 - wx0, 1e-6)
@@ -909,6 +1082,22 @@ def _stroke_span(word, txt, boxes, bands, exact, mid):
         else:
             covered = sum(max(0.0, min(b, bx1) - max(a, bx0)) for a, b in own)
             struck.append(covered >= CHAR_STRUCK_COV * (bx1 - bx0))
+    # a radical sign is struck when the strokes cross at least half its width and its radicand,
+    # the character after it, is struck, whatever its own band says: TeX's math fonts hang the sign
+    # from its origin, so the band read from there takes in a fraction bar above the sign and
+    # misses a strike through its middle. A sign with nothing after it is not struck, as the
+    # extractor often parts TeX's sign from its radicand under a fraction bar
+    if roots is None:
+        roots = _radicands(txt, boxes)
+    for i in range(len(struck) - 1, -1, -1):
+        if txt[i] in RADICALS:
+            j = roots.get(i)
+            bx0, bx1 = boxes[i][0], boxes[i][2]
+            crossed = sum(max(0.0, min(b, bx1) - max(a, bx0)) for a, b in merged)
+            struck[i] = (j is not None and struck[j]
+                         and crossed >= CHAR_STRUCK_COV * (bx1 - bx0))
+            for k in range(i + 1, len(struck) if j is None else j):
+                struck[k] = struck[i]           # a zero-width mark after the sign goes with it
     if exact:
         # a sub/superscript next to a struck character is struck with it: redline tools strike
         # it at its own height with a stub too short to pass as a stroke
@@ -960,7 +1149,9 @@ def native_page_strikes(page, page_index, words=None, _chars=None, _garbled=None
         sized = (w[3] - w[1]) >= 4 and (w[2] - w[0]) >= 3
         if sized or any(over):
             items.append((w, txt, over, keep, sized))
-    strokes = _strokes(page) if any(it[4] for it in items) else []
+    drawn = []                                # (seqno, type, rect, cover) per drawing
+    strokes = _strokes(page, drawn) if any(it[4] for it in items) else []
+    covers, order = _cover_rows(drawn, strokes), _PaintOrder(page, drawn)
     if not strokes and not any(any(it[2]) for it in items):
         return []
     chars = _chars if _chars is not None else _PageChars(page)
@@ -987,9 +1178,11 @@ def native_page_strikes(page, page_index, words=None, _chars=None, _garbled=None
         else:
             boxes = _even_char_boxes((wx0, wy0, wx1, wy1, txt))
             bands = [None] * len(boxes)
-        mid = (_through_strokes(word, near, found, boxes, bands, chars)
+        roots = _radicands(txt, boxes) if near and not vertical else {}
+        mid = (_through_strokes(word, near, found, boxes, bands, chars, covers, order,
+                                [boxes[i] for i in roots])
                if near and not vertical else [])
-        span, cov = (_stroke_span(word, txt, boxes, bands, found is not None, mid)
+        span, cov = (_stroke_span(word, txt, boxes, bands, found is not None, mid, roots)
                      if mid else (None, 0.0))
         stroked = span is not None
         text = txt

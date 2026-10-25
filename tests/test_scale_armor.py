@@ -110,12 +110,21 @@ def test_isolated_short_tick_is_not_a_strike():
 
 def test_chain_short_merges_within_gap_only():
     # three 3-pt dashes 2 pt apart chain into one 13-pt run; a far dash, past DASH_MAX_GAP, stays
-    # a 3-pt run of its own
-    segs = [(0, 3, 50, (0, 0, 0), 1.0), (5, 8, 50, (0, 0, 0), 1.0), (10, 13, 50, (0, 0, 0), 1.0),
-            (200, 203, 50, (0, 0, 0), 1.0)]
+    # a 3-pt run of its own; a run is as late in the paint order as its last-painted dash
+    segs = [(0, 3, 50, (0, 0, 0), 1.0, 4), (5, 8, 50, (0, 0, 0), 1.0, 9),
+            (10, 13, 50, (0, 0, 0), 1.0, 6), (200, 203, 50, (0, 0, 0), 1.0, 2)]
     chains = sorted(st.native._chain_short(segs))
     assert chains[0][0] == 0 and chains[0][1] == 13        # merged run 0..13
+    assert chains[0][5] == 9
     assert chains[1][0] == 200 and chains[1][1] == 203     # not merged across the 187-pt gap
+
+
+def test_cover_rows_file_a_tall_fill_only_where_strokes_run():
+    # strokes 2e7 pt apart under one fill spanning them: the fill is filed in the two bands that
+    # hold a stroke, not in the 2.5 million between them
+    strokes = [(0, 100, y, (0, 0, 0), 1.0, 100, False, 0) for y in (-1e7, 1e7)]
+    rows = st.native._cover_rows([(1, "f", fitz.Rect(0, -1e7, 100, 1e7), True)], strokes)
+    assert sorted(rows) == [round(-1e7 / st.native.COVER_ROW), round(1e7 / st.native.COVER_ROW)]
 
 
 # ===== batch mode =============================================================================
