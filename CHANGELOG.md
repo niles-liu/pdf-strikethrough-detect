@@ -246,8 +246,13 @@ All notable changes to this project are documented here. The format follows
   `detect_image_file()` and the call raised, so nothing came back. The backend now clamps each word
   box to the page, so a word placed wholly off it keeps its text on a zero-width box at the edge; a
   box only slightly past the edge, which `Word` accepted before, is clamped too.
-- **The README said RapidOCR reads every CJK script.** Its default model reads Chinese and
-  Japanese but has no Hangul. The README now gives the params for RapidOCR's Korean recognizer.
+- **The README said RapidOCR reads every CJK script and that CJK scans work end to end.** Its
+  default model has no Hangul; the README now gives a runnable Korean route (rapidocr 3.3 or
+  later, Python only). On CJK scans the scanned path takes the horizontal stroke inside many
+  characters (을, 王, 三) for a strike: on synthetic 200-dpi sans-serif scans it marked 13–28% of
+  unstruck Korean, Chinese and Japanese words struck, and no English ones. The README says to
+  check a CJK scan's struck words, and its scope table now lists text-layer CJK PDFs and scans
+  separately.
 - **A strike line leaning more than 2° and rising more than 1.5 pt struck nothing.** The vector
   detector kept a line only when it rose at most 1.5 pt or leaned at most 2°, so a line-tool strike
   drawn by hand across a word was often dropped. Lines leaning up to 12° now count, each word
