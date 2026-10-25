@@ -312,6 +312,227 @@ def test_fraction_bar_beside_a_full_size_character_is_not_a_strike():
     assert st.strikethroughs_in_pdf(doc) == []
 
 
+def test_long_fraction_bar_beside_full_size_characters_is_not_a_strike():
+    # '(13/40, 1)': a bar over 6 pt long, past the word's band test, must still run through each
+    # small digit's own band to strike it; it runs under the 13 and over the 40
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), "over (", fontsize=10)
+    x = 72 + pymupdf.get_text_length("over (", fontsize=10)
+    w = pymupdf.get_text_length("13", fontsize=7)
+    tw = pymupdf.TextWriter(page.rect)
+    tw.append((x + 0.3, 195.8), "13", fontsize=7)
+    tw.append((x + 0.3, 203.5), "40", fontsize=7)
+    tw.append((x + w + 0.6, 200), ", 1) then", fontsize=10)
+    tw.write_text(page)
+    page.draw_line((x, 197), (x + w + 0.6, 197), width=0.4)
+    doc = _reopen(doc)
+    assert {"(13", "40,"} <= {w[4] for w in doc[0].get_text("words")}
+    assert w + 0.6 >= native.DASH_MAX_SEG
+    assert st.strikethroughs_in_pdf(doc) == []
+
+
+SYMBOL = pymupdf.Font("symb")     # has the radical sign
+ROOT = "\N{SQUARE ROOT}"
+
+
+def _root_of(rest, strike=None, raised=0.0, root_size=FS, bar=None, over_sign=False):
+    """'the value of ' + a radical sign + `rest` + ' today', the sign `raised` pt off the line's
+    baseline at `root_size`. `strike` = (start, end) draws a strike at 0.3 em from `start` pt
+    after the sign's right edge (None: from 1 pt before the sign) to `end` pt past `rest`; `bar`
+    draws the radical's bar over `rest` at that height in ems; `over_sign` draws one more strike
+    at 0.3 em from 1 pt before the sign to its right edge."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), "the value of ", fontsize=FS)
+    x = 72 + pymupdf.get_text_length("the value of ", fontsize=FS)
+    tw = pymupdf.TextWriter(page.rect)
+    tw.append((x, 200 - raised), ROOT, font=SYMBOL, fontsize=root_size)
+    x1 = tw.last_point.x
+    tw.append((x1, 200), rest, fontsize=FS)
+    x2 = tw.last_point.x
+    tw.append((x2, 200), " today", fontsize=FS)
+    tw.write_text(page)
+    if strike is not None:
+        start, end = strike
+        page.draw_line((x - 1 if start is None else x1 + start, 200 - 0.3 * FS),
+                       (x2 + end, 200 - 0.3 * FS), color=(1, 0, 0), width=0.6)
+    if bar is not None:
+        page.draw_line((x1, 200 - bar * FS), (x2, 200 - bar * FS), width=0.5)
+    if over_sign:
+        page.draw_line((x - 1, 200 - 0.3 * FS), (x1, 200 - 0.3 * FS), color=(1, 0, 0), width=0.6)
+    return _reopen(doc)
+
+
+def _strikes(doc):
+    return [(r["text"], r["chars"], r["partial"]) for r in st.strikethroughs_in_pdf(doc)]
+
+
+def test_radical_bar_over_its_radicand_is_not_a_strike():
+    # TeX sets the sign off the radicand's baseline, so the word has no one baseline and its band
+    # spans the tall sign; the bar just above the digits' tops is outside their own bands
+    for bar in (0.72, 0.8):
+        assert _strikes(_root_of("27", raised=3.0, root_size=16, bar=bar)) == []
+
+
+@pytest.mark.parametrize("raised", [0.0, 6.0])
+def test_strike_through_a_radical_and_its_radicand_strikes_both(raised):
+    # a sign set high, as TeX hangs it, has its own band above a strike through its middle: it is
+    # struck when the stroke crosses it and its radicand is struck
+    assert _strikes(_root_of("u", strike=(None, 1.0), raised=raised)) == [
+        (ROOT + "u", ROOT + "u", False)]
+
+
+def test_radical_sign_goes_with_the_radicand_after_a_combining_mark():
+    # a zero-width overline after the sign: the radicand is the first character with a width
+    over = "\N{COMBINING OVERLINE}"
+    assert _strikes(_root_of(over + "2", strike=(None, 1.0), raised=6.0)) == [
+        (ROOT + over + "2", ROOT + over + "2", False)]
+
+
+def test_strike_over_a_raised_radical_sign_alone_joins_its_radicand():
+    # one stroke over the sign to its right edge and one through the radicand from there, as a
+    # tool striking each run writes them: the first runs under the raised sign's own band and
+    # crosses no other character, so it is kept for the sign
+    assert _strikes(_root_of("27", strike=(0.0, 1.0), raised=6.0, over_sign=True)) == [
+        (ROOT + "27", ROOT + "27", False)]
+
+
+@pytest.mark.parametrize("rest", ["2 is irrational", " 2 is irrational"])
+def test_strike_starting_at_a_radical_sign_strikes_the_words_after_it(rest):
+    # Word and Chrome draw a deletion right after a sign as one stroke from the sign's right edge
+    assert _strikes(_root_of(rest, strike=(0.0, 0.0))) == [
+        (ROOT + "2", "2", True) if rest[0] == "2" else ("2", "2", False),
+        ("is", "is", False), ("irrational", "irrational", False)]
+
+
+@pytest.mark.parametrize("gap", [0.3, 0.8, 1.5])
+def test_strike_after_a_radical_sign_leaves_the_sign_live(gap):
+    # a strike through the radicand alone does not take the sign the stroke never reaches
+    assert _strikes(_root_of("27", strike=(gap, 0.0))) == [(ROOT + "27", "27", True)]
+
+
+def test_fraction_bar_over_a_hanging_radical_sign_is_not_a_strike():
+    # TeX hangs its radical sign from the bar above the radicand, so the sign's origin sits just
+    # under a fraction bar over it ('1' over the root of 3): the bar is inside the sign's own band,
+    # though not the radicand's. The sign goes with its radicand
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 206), "or", fontsize=FS)
+    x = 72 + pymupdf.get_text_length("or ", fontsize=FS)
+    tw = pymupdf.TextWriter(page.rect)
+    tw.append((x + 3, 198.5), "1", fontsize=8)
+    tw.append((x, 202), ROOT, font=SYMBOL, fontsize=8)
+    tw.append((tw.last_point.x + 1.5, 207.5), "3", fontsize=8)
+    tw.write_text(page)
+    page.draw_line((x, 200), (x + 12, 200), width=0.44)
+    doc = _reopen(doc)
+    assert ROOT + "3" in [w[4] for w in doc[0].get_text("words")]
+    assert st.strikethroughs_in_pdf(doc) == []
+
+
+def _legend(opacity=0.8, box=True, line_after=False, highlight=False, marker=False):
+    """A plot legend's text over a gridline: the line, then a box filled white at `opacity`, then
+    the text; or the line drawn after the text, with a translucent highlight over both. `marker`
+    first draws a square both filled and stroked elsewhere on the page."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    y = 200 - 0.3 * FS
+    if marker:
+        page.draw_rect(pymupdf.Rect(20, 20, 50, 50), color=(0, 0, 0), fill=(0, 0, 1))
+    if not line_after:
+        page.draw_line((40, y), (400, y), color=(0.69, 0.69, 0.69), width=0.8)
+    if box:
+        page.draw_rect(pymupdf.Rect(60, 185, 260, 210), color=(0.8, 0.8, 0.8), fill=(1, 1, 1),
+                       fill_opacity=opacity)
+    page.insert_text((72, 200), "first series, fitted rate", fontsize=FS)
+    if line_after:
+        page.draw_line((40, y), (400, y), color=(0.69, 0.69, 0.69), width=0.8)
+    if highlight:
+        page.draw_rect(pymupdf.Rect(60, 185, 260, 210), color=None, fill=(1, 1, 0),
+                       fill_opacity=0.6)
+    return _reopen(doc)
+
+
+@pytest.mark.parametrize("opacity", [0.8, 1.0])
+def test_gridline_behind_a_legend_box_is_not_a_strike(opacity):
+    assert st.strikethroughs_in_pdf(_legend(opacity)) == []
+
+
+def test_filled_and_stroked_path_before_the_gridline_keeps_the_paint_order():
+    # a path both filled and stroked takes two places in the paint log, so one drawn first must
+    # not leave the gridline and the legend box unplaced
+    doc = _legend(marker=True)
+    assert [d["type"] for d in doc[0].get_drawings()] == ["fs", "s", "fs"]
+    assert st.strikethroughs_in_pdf(doc) == []
+
+
+_FILLS = {
+    "box": b"60 630 200 25 re f",
+    "frame": b"60 630 200 25 re 63 633 194 19 re f*",
+    "frame_nonzero": b"60 630 200 25 re 63 652 m 257 652 l 257 633 l 63 633 l h f",
+    "two_bars": b"60 650 200 5 re 60 630 200 5 re f",
+}
+
+
+@pytest.mark.parametrize("fill", list(_FILLS))
+def test_fill_after_a_strike_hides_it_only_where_it_paints(fill):
+    # a strike, an opaque fill, then the text: a box over the strike hides it, while a fill whose
+    # box takes in the strike but whose paint leaves it bare (a frame around a hole, by either
+    # fill rule, or two bars in one path) does not
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 200), "deleted clause text", fontsize=FS)
+    doc = _reopen(doc)
+    page = doc[0]
+    y = b"%.2f" % (page.rect.height - 200 + 0.3 * FS)
+    xref = page.get_contents()[0]
+    doc.update_stream(xref, b"q 1 0 0 RG 0.8 w 70 " + y + b" m 230 " + y + b" l S Q\nq 0.2 0.4 "
+                      b"0.8 rg " + _FILLS[fill] + b" Q\n" + doc.xref_stream(xref))
+    words = [r["text"] for r in st.strikethroughs_in_pdf(_reopen(doc))]
+    assert words == ([] if fill == "box" else ["deleted", "clause", "text"])
+
+
+@pytest.mark.parametrize("kw", [{"opacity": 0.3}, {"box": False}, {"line_after": True},
+                                {"line_after": True, "highlight": True}])
+def test_line_not_behind_the_text_background_still_strikes(kw):
+    # a faint box, none, or a line painted after the text (a highlight after both included): the
+    # line is not behind the text's background. A line drawn before the text with nothing between
+    # them strikes it too, as typesetters draw rules first
+    words = [r["text"] for r in st.strikethroughs_in_pdf(_legend(**kw))]
+    assert words == ["first", "series,", "fitted", "rate"]
+
+
+@pytest.mark.parametrize("behind", [False, True])
+def test_paths_with_no_segments_do_not_shift_the_paint_order(behind):
+    # four fills of a lone point before the text, as matplotlib writes for a one-point line:
+    # get_drawings() does not number them while the text trace does. A line drawn after the
+    # text with a highlight over both still strikes it; a gridline behind a legend box does not
+    doc = _legend(line_after=not behind, highlight=not behind)
+    page = doc[0]
+    xref = page.get_contents()[0]
+    doc.update_stream(xref, b"10 10 m h f\n" * 4 + doc.xref_stream(xref))
+    doc = _reopen(doc)
+    paths = sum(kind.endswith("path") for kind, _r in doc[0].get_bboxlog())
+    assert paths - sum(len(d["type"]) for d in doc[0].get_drawings()) == 4    # 'fs' paints twice
+    words = [r["text"] for r in st.strikethroughs_in_pdf(doc)]
+    assert words == ([] if behind else ["first", "series,", "fitted", "rate"])
+
+
+@pytest.mark.parametrize("method", ["get_texttrace", "get_bboxlog"])
+def test_failed_paint_order_pass_keeps_the_stroke(method, monkeypatch):
+    # with the paint order unknown, a gridline behind a legend box is read as any other line
+    doc = _legend()
+    page = doc[0]
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("pass failed")
+
+    monkeypatch.setattr(page, method, fail)
+    words = [r["text"] for r in native.native_page_strikes(page, 0)]
+    assert words == ["first", "series,", "fitted", "rate"]
+
+
 def test_hand_drawn_strike_with_jitter_strikes_the_whole_word():
     # a pen stroke sampled every 1.5 pt, wobbling up to 0.45 pt: some of its pieces lean past the
     # cap, but they chain with the level ones into one run

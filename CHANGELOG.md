@@ -330,6 +330,20 @@ All notable changes to this project are documented here. The format follows
   `di_result` does; `on_missing_ocr="skip"`'s warning names `words_by_page` too.
 - **`markdown.strip_struck` kept characters struck with U+0336 overlays.** It was a copy of
   `strip_struck_markdown` from before overlays were read; it now calls it and trims the result.
+- **The vector detector no longer reads fraction bars, radical bars and gridlines behind a legend
+  as strikes,** which dropped that text from `clean_text`. A stroke now strikes a character only
+  through that character's own band, so a fraction bar no longer strikes a small numerator or
+  denominator joined into one word with full-size text, nor a radical's bar its radicand. A radical
+  sign is struck only when the strike crosses at least half of it and its radicand is struck too.
+  A stroke under a fill at least half opaque, painted between it and the text, is behind the
+  text's background, as a plot's gridline is behind its legend's box; where the paint order can't
+  be read, the stroke is kept. On 137 strike-free PDFs, mostly LaTeX documents and matplotlib
+  figures, false strikes go from 421 to 4. Newly generated synthetic pages and Senate bills
+  published before the benchmark's cutoff are unchanged; on the dev pages of the benchmark's
+  public redline corpus, 13 marks go, all fraction bars in equations. Limits: a strike over a
+  radical sign alone, or drawn under such a fill where it still shows through, is lost; an overline
+  or a radical's bar just above x-height letters (`√x`), or a gridline through text with no box,
+  is still read as a strike. The detector takes 1–4% longer.
 
 ## [0.12.1] — 2026-10-08
 
