@@ -224,6 +224,47 @@ def test_cli_json_lists_garbled_words_without_doubling_the_warning(tmp_path, cap
     assert all(w["garbled"] for w in payload["words"] if w["text"].startswith("k"))
 
 
+def _cli_outputs(tmp_path, *flags):
+    """Run the CLI on the broken PDF; return its exit code and its clean text, markdown,
+    provenance text and JSON payload."""
+    src = tmp_path / "broken.pdf"
+    src.write_bytes(_broken_pdf())
+    out = {k: tmp_path / f"out.{k}" for k in ("txt", "md", "prov", "json")}
+    code = cli.main(["detect", str(src), "--clean-text", str(out["txt"]), "--markdown",
+                     str(out["md"]), "--provenance", str(out["prov"]), "--json", str(out["json"]),
+                     *flags])
+    text = {k: p.read_text(encoding="utf-8") for k, p in out.items()}
+    return code, text["txt"], text["md"], text["prov"], json.loads(text["json"])
+
+
+def test_cli_keeps_garbled_words_by_default(tmp_path):
+    for flags in ((), ("--on-garbled", "keep")):
+        code, clean, md, prov, payload = _cli_outputs(tmp_path, *flags)
+        assert code == 0
+        assert "E ൅" in clean and "~~kሺ0.955ሻെx~~" in md and "kሺ0.955ሻെx" in prov
+        assert [p["text"] for p in payload["passages"]] == ["old", "kሺ0.955ሻെx"]
+
+
+def test_cli_on_garbled_drop_leaves_the_words_out_of_the_text(tmp_path):
+    code, clean, md, prov, payload = _cli_outputs(tmp_path, "--on-garbled", "drop")
+    assert code == 0
+    assert clean.splitlines()[-1] == "E"
+    assert "൅" not in md + prov and "kሺ" not in md + prov
+    assert [p["text"] for p in payload["passages"]] == ["old"]
+    # still listed, and still struck, as from detect_pdf(on_garbled="drop")
+    assert [g["text"] for g in payload["garbled_words"]] == ["൅", "kሺ0.955ሻെx"]
+    assert any(w.get("garbled") for w in payload["words"])
+
+
+def test_cli_on_garbled_drop_is_ignored_in_batch_mode(tmp_path, capsys):
+    src, out = tmp_path / "broken.pdf", tmp_path / "out.jsonl"
+    src.write_bytes(_broken_pdf())
+    assert cli.main(["detect", str(src), "--jsonl", str(out), "--on-garbled", "drop"]) == 0
+    assert "warning: --on-garbled is ignored in batch mode" in capsys.readouterr().err
+    assert cli.main(["detect", str(src), "--jsonl", str(out)]) == 0
+    assert "--on-garbled" not in capsys.readouterr().err   # not for the default
+
+
 def test_on_garbled_is_validated():
     with pytest.raises(ValueError, match="on_garbled"):
         st.detect_pdf(_broken_pdf(), on_garbled="Drop")

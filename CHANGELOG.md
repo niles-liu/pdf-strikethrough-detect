@@ -49,6 +49,11 @@ All notable changes to this project are documented here. The format follows
   older Python calls unassigned. On the dev pages of the frontier benchmark's public redline corpus
   it flags the same 957 words the benchmark's own check flags, and none on newly generated
   synthetic pages or on Senate bills published before the benchmark's cutoff.
+- **The CLI's `--on-garbled keep|drop` sets `detect_pdf()`'s `on_garbled`.** With `drop`, words a
+  broken character map garbled are left out of `--markdown`, `--clean-text`, `--provenance` and the
+  `passages` in `--json`, whose `garbled_words` still lists them. The default, `keep`, gives the
+  same output as before. Batch output has no markdown, clean text or passages, so there the option
+  is ignored with a warning, as `--markdown` is.
 
 ### Changed
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
