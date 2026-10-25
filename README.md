@@ -349,7 +349,8 @@ python examples/rag_provenance.py         # clean_text vs provenance_text ([dele
 - **Scanned geometry** (`lines.py`): per-angle morphological opening extracts stroke *fragments*,
   collinear fragments are stitched, then strict filters (spine fill, stroke thickness against the
   stems of the text it crosses, angle/length) separate real strikes from bold crossbars and
-  serif-glyph chains.
+  serif-glyph chains. A second pass adds a thick strike through bold or large text where its ink
+  runs on unbroken across the glyphs, without changing the lines the first pass found.
 - **CNN** (`cnn.py`, StrikeNet, 79k params): resolves pixel-ambiguous cases — a thin strike over
   an ascender-less word is pixel-identical to a glyph chain, and only a learned model tells them
   apart. Ships as ONNX; set `PDF_STRIKETHROUGH_MODEL_DIR` to use your own weights.
