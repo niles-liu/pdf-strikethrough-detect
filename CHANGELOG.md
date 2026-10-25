@@ -286,6 +286,15 @@ All notable changes to this project are documented here. The format follows
   only pages with words, so `detect_pdf()` and the CLI's `--textract-result` raised on a scanned
   page with none. Every page in the result is now a key, with an empty list when it has no usable
   words, as Document AI and Azure DI already report it.
+- **`clean_markdown()`'s docstring and the README now say what MuPDF's strikeout flag does.**
+  `clean_markdown()` removes what pymupdf4llm marks `~~`, which is MuPDF's strikeout flag, and the
+  flag can take in the character a strike ends against when no space separates them: the `M` of a
+  `May` printed straight after a struck `December` goes too, as it does with `method="flag"`, more
+  often under PyMuPDF 2.0 than earlier versions. `method="vector"` and `"both"` stop at the struck
+  characters. The docs also say that `flag` and `annot` find nothing on U+0336 overlay strikes,
+  which `clean_markdown()` drops itself, code blocks included, and that it keeps text the flag
+  marks where pymupdf4llm sets it as a code block, such as a paragraph set entirely in a monospaced
+  font. No code changes.
 
 ## [0.12.1] — 2026-10-08
 

@@ -45,10 +45,17 @@ def _words(page):
 
 # ----------------------------------------------------------------------- character-exact spans
 
+@pytest.mark.parametrize("method", ["vector", "both"])
 @pytest.mark.parametrize("deleted, inserted", [("December", "May"), ("shall", "may"),
                                                ("Policy", "To"), ("Seller's", "its")])
-def test_inserted_text_after_a_deletion_survives(deleted, inserted):
-    res = st.detect_pdf(_redline(deleted, inserted))
+def test_inserted_text_after_a_deletion_survives(deleted, inserted, method):
+    # 'both' too: MuPDF's flag takes in the inserted text's first letter here ('DecemberM', on
+    # MuPDF 1.26 to 1.28.5) and the vector span wins. The flag may stop at the deletion one day.
+    pdf = _redline(deleted, inserted)
+    if method == "both":
+        (flag,) = st.detect_pdf(pdf, method="flag")["words"]
+        assert flag["chars"] in (deleted, deleted + inserted[0])
+    res = st.detect_pdf(pdf, method=method)
     (rec,) = res["words"]
     assert rec["chars"] == deleted and rec["partial"] and rec["char_span"] == (0, len(deleted))
     assert res["clean_text"] == f"ends in {inserted} each year."
