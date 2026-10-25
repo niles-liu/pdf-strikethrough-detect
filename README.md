@@ -441,16 +441,35 @@ column-aware (two-column pages read down each column; tables read across rows).
 | Case | Status |
 |---|---|
 | Latin / Western, horizontal | validated (10-PDF redline benchmark, 55.2k struck words) |
-| CJK, **horizontal** set (native + scanned) | detected — strikes are horizontal regardless of script (regression-tested) |
+| CJK, **horizontal** set, text-layer PDFs | detected: strikes are horizontal regardless of script (regression-tested) |
+| CJK, **horizontal** set, scans | strikes found, but many false strikes (below) |
 | Two-column / newspaper layout, struck table rows, hyphenated-line-break strikes | handled |
 | **Vertical** writing modes (CJK/Mongolian), RTL strike axes | out of scope (roadmap) |
 | Handwritten / freehand strikes | untested (geometry assumes near-straight strokes) |
 
-RapidOCR's default model (the recommended scanned backend) reads Chinese and Japanese, so
-horizontal Chinese and Japanese scans work end to end. It has no Hangul, so for Korean pass
-RapidOCR's Korean recognizer: `rapidocr_backend(params={"Rec.lang_type": LangRec.KOREAN,
-"Rec.ocr_version": OCRVersion.PPOCRV5, "Rec.model_type": ModelType.MOBILE})`, with the three enums
-from `rapidocr` (its model downloads on first use). Full vertical-text support is future work.
+RapidOCR's default model (the recommended scanned backend) reads Chinese and Japanese. It has no
+Hangul, so for Korean pass RapidOCR's Korean recognizer, from Python (the CLI's `--ocr rapidocr`
+uses the default model). It needs rapidocr 3.3 or later, takes the values as RapidOCR's enums
+(strings are refused), and downloads its 13 MB model on first use. These params are added to the
+package's defaults, so the orientation classifier stays off:
+
+```python
+from rapidocr import LangRec, ModelType, OCRVersion
+ocr = st.rapidocr_backend(params={"Rec.lang_type": LangRec.KOREAN,
+                                  "Rec.ocr_version": OCRVersion.PPOCRV5,
+                                  "Rec.model_type": ModelType.MOBILE})
+res = st.detect_pdf("scan.pdf", ocr=ocr)
+```
+
+On CJK scans the scanned path takes the horizontal stroke inside many characters for a strike:
+Hangul syllables built on a horizontal vowel (을, 등, 총) and Han characters such as 王 and 三.
+StrikeNet scores those strokes about as high as real strikes, so no threshold removes them. On
+synthetic 200-dpi scans set at 12 pt in sans-serif fonts, it marked 13% to 28% of the unstruck
+Korean, Chinese and Japanese words struck (and none of the English). The rate changes with font,
+size and resolution; a serif Chinese font more than doubled it. So check a CJK scan's struck words
+(`markdown`, or the overlay) before trusting its `clean_text`. PDFs with a text layer take the
+native path, which never looks at glyph shapes. Rendered as text-layer PDFs, the same pages had
+every strike found and none false. Full vertical-text support is future work.
 
 **Handwritten strikes** are the main known gap: the geometry gate looks for a near-straight,
 near-horizontal stroke, and nothing records that the CNN saw handwritten strikes in training, so a

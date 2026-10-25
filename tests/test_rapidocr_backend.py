@@ -3,6 +3,7 @@ on, a caller's engine used as is), the word boxes it hands on (one placed off th
 clipped to it, not refused along with the whole document) and the lone CJK characters it removes
 from a page without CJK text. Fake engines stand in for RapidOCR, so all but the last test run
 without the extra installed."""
+import enum
 import sys
 import types
 from types import SimpleNamespace
@@ -74,6 +75,19 @@ def test_the_callers_params_win(monkeypatch, params, expected):
     rapidocr_backend(config_path="ocr.yaml", params=passed)(_BLANK)
     assert built == [{"config_path": "ocr.yaml", "params": expected}]
     assert passed == params                             # the caller's dict is left as it was
+
+
+def test_the_readmes_korean_recognizer_reaches_the_engine_as_enums(monkeypatch):
+    """The README's Korean route: RapidOCR refuses strings for these keys, so its enum members must
+    reach the engine as passed, not as their values, beside the classifier-off default."""
+    built = _fake_rapidocr_module(monkeypatch)
+    lang = enum.Enum("LangRec", {"KOREAN": "korean"})           # stand-ins for rapidocr's enums
+    version = enum.Enum("OCRVersion", {"PPOCRV5": "PP-OCRv5"})
+    model = enum.Enum("ModelType", {"MOBILE": "mobile"})
+    params = {"Rec.lang_type": lang.KOREAN, "Rec.ocr_version": version.PPOCRV5,
+              "Rec.model_type": model.MOBILE}
+    rapidocr_backend(params=params)(_BLANK)
+    assert built == [{"params": {"Global.use_cls": False, **params}}]   # a member != its value
 
 
 def test_a_prebuilt_engine_is_used_as_is(monkeypatch):
@@ -166,10 +180,42 @@ def test_drop_lone_cjk_false_keeps_it(monkeypatch):
     ("Mr.", "王", "小", "明", "(Wang)", "斗"),     # a name in an English line
     ("Ver.", "データ", "2", "二"),                 # a kana word
     ("the", "人々", "of", "二"),                   # the iteration mark counts as a character
+    # Korean: RapidOCR's Korean recognizer returns most words whole, but it can split one into
+    # pieces (경, 우에, 는) or run a Latin word or number into the next (Inc.대금은). One-syllable
+    # words and pieces stay, beside Latin words and digits too, since the page has Hangul runs
+    ("본", "계약", "및", "그", "밖의", "사항"),
+    ("Inc.대금은", "경", "우에", "는", "5,000승인"),
+    ("USD", "5,000", "및", "KRW", "6,500,000", "등", "계약서"),
+    ("Appendix", "A", "및", "B에", "따른다."),
+    ("갑", "및", "을"),                           # one-syllable words, next to each other
 ])
 def test_a_page_with_cjk_text_is_left_as_read(texts):
     words = rapidocr_backend(engine=_Engine(_row(*texts)))(_BLANK)
     assert _texts(words) == list(texts)            # the lone character beside the run stays too
+
+
+def test_a_korean_page_keeps_every_word_across_lines():
+    """One-syllable words on lines of their own, between digits and Latin words, stay when another
+    line of the page has Korean text."""
+    lines = [[("제1조", (0.1, 0.1, 0.16, 0.13)), ("계약의", (0.17, 0.1, 0.25, 0.13)),
+              ("목적", (0.26, 0.1, 0.32, 0.13))],
+             [("USD", (0.1, 0.2, 0.15, 0.23)), ("5,000", (0.16, 0.2, 0.22, 0.23)),
+              ("등", (0.23, 0.2, 0.25, 0.23)), ("2026", (0.26, 0.2, 0.31, 0.23))],
+             [("Version", (0.1, 0.3, 0.18, 0.33)), ("3.2", (0.19, 0.3, 0.22, 0.33)),
+              ("그", (0.23, 0.3, 0.25, 0.33)), ("Draft", (0.26, 0.3, 0.32, 0.33))]]
+    words = rapidocr_backend(engine=_Engine(*lines))(_BLANK)
+    assert _texts(words) == [t for line in lines for t, _ in line]
+
+
+@pytest.mark.parametrize("texts, kept", [
+    # a lone Hangul syllable on an English page goes, as a lone Han character does
+    (("Annex", "2", "및", "Schedule"), ["Annex", "2", "Schedule"]),
+    (("Total", "ㅡ", "12"), ["Total", "12"]),                  # a lone jamo
+    (("Kim", "(김)", "and", "Lee"), ["Kim", "( )", "and", "Lee"]),
+])
+def test_a_lone_hangul_character_on_an_english_page_is_removed(texts, kept):
+    words = rapidocr_backend(engine=_Engine(_row(*texts)))(_BLANK)
+    assert _texts(words) == kept
 
 
 def test_two_characters_ending_and_starting_two_lines_are_cjk_text():
