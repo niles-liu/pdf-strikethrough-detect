@@ -173,10 +173,11 @@ originals as ground truth (3 documents, 24 pages, 2,170 known strikes; reproduce
 `detect_pdf` runs confidence-free (`ScanConfig.confidence_free()`) whenever the words come from an
 `ocr` backend or `words_by_page` — RapidOCR's confidences cluster near 1.0 and don't separate struck
 from clean text — and uses the Azure DI calibration (`ScanConfig()`), whose struck words drop to
-0.43–0.94, with `di_result`. Across backends the scanned path recovers **96% of the exact native
-strike set** — the geometry + CNN, not the OCR engine, carry the detection. The DI calibration
-keeps 91%: its confidence gates, built for degraded ruled forms, drop some crisply struck words that
-DI still reads with high confidence. On a clean scan of a printed redline, pass
+0.43–0.94, with `di_result`. `detect_image_file`, `detect_scanned_image` and `analyze_scanned_page`
+run confidence-free unless given a config. Across backends the scanned path recovers **96% of the
+exact native strike set** — the geometry + CNN, not the OCR engine, carry the detection. The DI
+calibration keeps 91%: its confidence gates, built for degraded ruled forms, drop some crisply
+struck words that DI still reads with high confidence. On a clean scan of a printed redline, pass
 `scan_config=ScanConfig.confidence_free()` with `di_result`.
 
 `rapidocr_backend()` passes its other keyword arguments to `RapidOCR(...)` and builds the engine
@@ -256,7 +257,8 @@ lines = st.strike_lines(gray, dpi=200)          # OCR-free stroke geometry (stri
 p = st.score_word(gray, (0.12, 0.34, 0.38, 0.36))   # CNN strike probability (0..1)
 
 from pdf_strikethrough.ocr import Word
-# detect_scanned_image accepts your own image; RGB / float arrays are coerced to grayscale uint8
+# detect_scanned_image accepts your own image; RGB / float arrays are coerced to grayscale uint8.
+# It runs confidence-free unless told otherwise: pass config=st.ScanConfig.azure_di() for DI words
 recs = st.detect_scanned_image(gray, [Word("foo", (0.12, 0.34, 0.38, 0.36), 0.6)])
 
 # visual overlay — render each struck page with the strikes boxed (red=full, orange=partial)
@@ -388,7 +390,8 @@ tables — a printed rule crossing text is hard to tell from a pen strike, and t
 over-fires on it. Two switches address it, both **off by default** and opted into separately:
 
 - `ScanConfig.ruled_forms()` — a geometry-only veto discarding solid or dead-straight lines as
-  printed furniture. Works with any OCR engine.
+  printed furniture. It keeps confidence gating on, which assumes Azure DI confidences; with a
+  non-DI engine use `ScanConfig.ruled_forms(confidence_gating=False)`.
 - `rescue_clean_chains=False` — stops the chain gate handing a clean-OCR glyph chain to the CNN
   because the page *looks* pen-edited; on degraded scans that signal reads scan quality, not edits.
   Needs calibrated confidences, so it does nothing under `confidence_free()`.

@@ -96,10 +96,7 @@ def open_pdf(source):
 
 def render_page_gray(page, dpi=lines.RENDER_DPI):
     """Render a fitz page to a grayscale uint8 (H, W) numpy array."""
-    import numpy as np
-    import pymupdf
-    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
-    return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+    return detect._render_gray(page, dpi)
 
 
 def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":

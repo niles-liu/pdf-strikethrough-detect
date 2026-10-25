@@ -464,6 +464,8 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
             "_len": length,
         }, False
 
+    # Not floored like the first stitch's dy: the re-stitch must stay tighter than that one to split
+    # anything, and floored at 2 px it rejoins a stroke to a rule just below it at 100 dpi
     cands = []
     for (start, end), members in groups:
         cand, salvage = evaluate(start, end)
