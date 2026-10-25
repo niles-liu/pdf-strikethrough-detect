@@ -59,12 +59,39 @@ def _bbox_from_points(points, w, h):
     return (min(xs) / w, min(ys) / h, max(xs) / w, max(ys) / h)
 
 
+def _clip_to_page(bbox):
+    """A word box (page fractions) clamped to the page, or None when it is not finite. A box wholly
+    past an edge becomes a zero-width or zero-height box on that edge, so the word's text, which
+    the OCR engine read from the page, is kept. `rapidocr_backend()` and the cloud adapters (through
+    `_page_words`) clamp the boxes an engine reports, since `Word` refuses a box past 1.5 and one
+    refused box loses the whole document; a `Word` built directly keeps that check."""
+    if not all(math.isfinite(v) for v in bbox):
+        return None
+    return tuple(min(max(v, 0.0), 1.0) for v in bbox)
+
+
+def _page_words(items):
+    """Words from one page's (text, box, confidence) triples, each box in page fractions as a cloud
+    service gave it: clamped to the page, or dropped when it is not finite. When most of the page's
+    boxes lie past 1.5 they are left as given, so `Word` refuses them with its pixel-coordinates
+    error."""
+    items = [it for it in items if all(math.isfinite(v) for v in it[1])]
+    # A stray box past the edge is one word among a page's (RapidOCR's ran to x 1.57). A box in the
+    # wrong units, pixels or inches where page fractions belong, puts nearly every word on the page
+    # past 1.5, so that page still fails loudly.
+    clamp = 2 * sum(max(abs(v) for v in box) > 1.5 for _, box, _ in items) <= len(items)
+    return [Word(text, _clip_to_page(box) if clamp else box, conf) for text, box, conf in items]
+
+
 # --------------------------------------------------------------------- Azure Document Intelligence
 
 def words_from_azure_di(di_page) -> list[Word]:
     """Convert one Azure DI ``pages[i]`` dict (prebuilt-layout / read) into Words. DI word
     polygons are in the page's own units; page width/height give the fractions. Polygons are read
     in the shapes the REST API and the Python SDKs emit; a page whose words carry no usable polygon
+    raises ValueError. A word box that runs past the edge of the page is clamped to it; a word
+    placed wholly off the page keeps its text, on a zero-width box at the edge. A page where most
+    word boxes lie past 1.5 page widths or heights, as with polygons in the wrong units, still
     raises ValueError."""
     pw = di_page.get("width")
     ph = di_page.get("height")
@@ -74,7 +101,7 @@ def words_from_azure_di(di_page) -> list[Word]:
         raise ValueError(
             "Azure DI page is missing a non-zero 'width'/'height'; cannot normalize word "
             f"polygons to page fractions (got width={pw!r}, height={ph!r})")
-    out, unreadable = [], 0
+    items, unreadable = [], 0
     for w in di_page.get("words", []):
         text = w.get("content", "")
         if not text.strip():
@@ -94,8 +121,10 @@ def words_from_azure_di(di_page) -> list[Word]:
             unreadable += 1
             continue
         xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-        bbox = (min(xs) / pw, min(ys) / ph, max(xs) / pw, max(ys) / ph)
-        out.append(Word(text, bbox, w.get("confidence")))
+        items.append((text, (min(xs) / pw, min(ys) / ph, max(xs) / pw, max(ys) / ph),
+                      w.get("confidence")))
+    out = _page_words(items)
+    unreadable += len(items) - len(out)                       # a box that is not finite
     if unreadable and not out:
         raise ValueError(f"none of the {unreadable} Azure DI word(s) on this page has a polygon "
                          "this adapter can read (expected 8 numbers or 4 {x, y} points)")
@@ -118,16 +147,26 @@ def words_from_textract(result) -> "dict[int, list[Word]]":
     """Convert an AWS Textract ``AnalyzeDocument``/``DetectDocumentText`` result into per-page
     Words: ``{0-based page: [Word, ...]}``. Textract ``WORD`` blocks already carry a normalized
     ``Geometry.BoundingBox`` (Left/Top/Width/Height in [0,1]) and a 0..100 ``Confidence`` (scaled
-    to 0..1 here). Blocks tag their 1-based ``Page`` on multi-page input (absent ⇒ page 1).
+    to 0..1 here). Blocks tag their 1-based ``Page`` on multi-page input (absent ⇒ page 1). Each
+    page's ``PAGE`` block makes it a key, so a page with no usable words, such as a blank scanned
+    page, maps to an empty list, as in ``words_from_docai()``. A box that runs past the edge of the
+    page is clamped to it, and a page where most boxes lie past 1.5 raises ValueError, as in
+    ``words_from_azure_di()``.
 
     Textract does not flag strikethrough; feed the result to ``detect_pdf(pdf,
     words_by_page=...)`` (or ``detect_image_file(img, words_by_page=...)``) to add the strike
     layer. Its confidences aren't calibrated to the scanned classifier, so pass
     ``ScanConfig.confidence_free()`` (``detect_pdf`` defaults to it for ``words_by_page``)."""
     result = _as_dict(result)
-    by_page: dict[int, list[Word]] = {}
+    items_by_page: dict[int, list] = {}
     for block in result.get("Blocks", []):
-        if block.get("BlockType") != "WORD":
+        kind = block.get("BlockType")
+        if kind not in ("PAGE", "WORD"):
+            continue
+        # a blank page has a PAGE block and no WORD blocks; left out, detect_pdf would take it
+        # for a page the OCR skipped
+        items = items_by_page.setdefault(int(block.get("Page", 1)) - 1, [])
+        if kind == "PAGE":
             continue
         text = block.get("Text", "")
         if not text.strip():
@@ -139,10 +178,8 @@ def words_from_textract(result) -> "dict[int, list[Word]]":
             continue
         conf = block.get("Confidence")
         conf = float(conf) / 100.0 if conf is not None else None
-        page = int(block.get("Page", 1)) - 1
-        by_page.setdefault(page, []).append(
-            Word(text, (left, top, left + width, top + height), conf))
-    return by_page
+        items.append((text, (left, top, left + width, top + height), conf))
+    return {page: _page_words(items) for page, items in items_by_page.items()}
 
 
 # --------------------------------------------------------------------------- Google Document AI
@@ -192,6 +229,8 @@ def words_from_docai(document) -> "dict[int, list[Word]]":
     with a ``textAnchor`` (offsets into the document ``text``) and a ``boundingPoly``; normalized
     vertices are used directly, pixel vertices are divided by the page ``dimension`` (ValueError
     without one). Pages are keyed by their 1-based ``pageNumber`` when present, else by position.
+    A box that runs past the edge of the page is clamped to it, and a page where most boxes lie
+    past 1.5 raises ValueError, as in ``words_from_azure_di()``.
 
     Like Textract, DocAI does not flag strikethrough — feed the result to ``detect_pdf(pdf,
     words_by_page=...)`` and run confidence-free (its ``layout.confidence`` isn't calibrated to
@@ -207,7 +246,7 @@ def words_from_docai(document) -> "dict[int, list[Word]]":
             i = pos
         dim = _docai_key(page, "dimension") or {}
         pw, ph = dim.get("width"), dim.get("height")
-        words = []
+        items = []
         for tok in _docai_key(page, "tokens") or []:
             layout = _docai_key(tok, "layout") or {}
             text = _docai_token_text(full_text, layout)
@@ -217,8 +256,8 @@ def words_from_docai(document) -> "dict[int, list[Word]]":
             if bbox is None:
                 continue
             conf = _docai_key(layout, "confidence")
-            words.append(Word(text, bbox, float(conf) if conf is not None else None))
-        by_page[i] = words
+            items.append((text, bbox, float(conf) if conf is not None else None))
+        by_page[i] = _page_words(items)
     return by_page
 
 
@@ -246,15 +285,6 @@ def _require_rapidocr_3_2(version):
 # by default) turns struck, underlined and some plain lines upside down, and they then read as stray
 # letters or not at all.
 _RAPIDOCR_DEFAULT_PARAMS = {"Global.use_cls": False}
-
-
-def _clip_to_page(bbox):
-    """A word box (page fractions) clamped to the page, or None when it is not finite. A box wholly
-    past an edge becomes a zero-width or zero-height box on that edge, so the word's text, which
-    RapidOCR read from pixels on the page, is kept."""
-    if not all(math.isfinite(v) for v in bbox):
-        return None
-    return tuple(min(max(v, 0.0), 1.0) for v in bbox)
 
 
 # CJK letters and ideographs. CJK punctuation (U+3000-303F but for U+3005), the katakana double

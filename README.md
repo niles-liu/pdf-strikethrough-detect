@@ -221,6 +221,7 @@ for w in st.strikethroughs_in_docx("contract.docx"):
 
 # AWS Textract / Google Document AI — neither flags strikethrough; add the layer on top.
 # Convert a pre-fetched result to {page: [Word]} and feed it as words_by_page (works on images too).
+# A word box past the edge of the page is clamped to it, here and in an Azure DI di_result.
 res = st.detect_pdf("doc.pdf", words_by_page=st.words_from_textract(textract_response))
 res = st.detect_pdf("doc.pdf", words_by_page=st.words_from_docai(docai_document))
 ```

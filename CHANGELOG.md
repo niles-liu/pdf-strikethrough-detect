@@ -240,8 +240,7 @@ All notable changes to this project are documented here. The format follows
   coordinates, so `rapidocr_backend()` raised `ValueError` inside `detect_pdf()` or
   `detect_image_file()` and the call raised, so nothing came back. The backend now clamps each word
   box to the page, so a word placed wholly off it keeps its text on a zero-width box at the edge; a
-  box only slightly past the edge, which `Word` accepted before, is clamped too. `Word` still
-  refuses a box past 1.5 from any other source.
+  box only slightly past the edge, which `Word` accepted before, is clamped too.
 - **The README said RapidOCR reads every CJK script.** Its default model reads Chinese and
   Japanese but has no Hangul. The README now gives the params for RapidOCR's Korean recognizer.
 - **A strike line leaning more than 2° and rising more than 1.5 pt struck nothing.** The vector
@@ -270,6 +269,18 @@ All notable changes to this project are documented here. The format follows
   visible characters beneath it, so the hidden word is struck with a struck letter and not by an
   underline. A strike over a text layer that is all invisible, such as an OCR'd scan with its
   markup flattened, still counts.
+- **One word box off the page from Azure Document Intelligence, Textract or Document AI no longer
+  loses the whole document.** `Word` refuses a box past 1.5, its guard against pixel coordinates,
+  so one such box made `words_from_azure_di()` (which `di_result` goes through),
+  `words_from_textract()` or `words_from_docai()` raise `ValueError`, and `detect_pdf()` or
+  `detect_image_file()` with it. The adapters now clamp each word box to the page, as
+  `rapidocr_backend()` does, and drop a box that is not finite. A page where most boxes lie past
+  1.5, as with boxes in pixels or inches, still raises: clamped, its struck words would come back
+  as clean text.
+- **A blank page in a Textract result refused the whole scan.** `words_from_textract()` listed
+  only pages with words, so `detect_pdf()` and the CLI's `--textract-result` raised on a scanned
+  page with none. Every page in the result is now a key, with an empty list when it has no usable
+  words, as Document AI and Azure DI already report it.
 
 ## [0.12.1] — 2026-10-08
 
