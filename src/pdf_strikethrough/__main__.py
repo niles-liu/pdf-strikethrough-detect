@@ -283,7 +283,7 @@ def _cmd_detect_single(args, path):
         with warnings.catch_warnings():      # its pages are in res["warnings"], printed below
             warnings.simplefilter("ignore", st.GarbledTextWarning)
             res = st.detect_pdf(doc, ocr=ocr, scan_config=scan_config,
-                                dpi=args.dpi if args.dpi is not None else 200,
+                                dpi=args.dpi if args.dpi is not None else st.detect.RENDER_DPI,
                                 method=args.method, di_result=di_result,
                                 words_by_page=words_by_page, pages=page_subset,
                                 progress=progress, on_missing_ocr=on_missing_ocr,

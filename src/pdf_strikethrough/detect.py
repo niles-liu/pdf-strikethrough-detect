@@ -22,6 +22,7 @@ import warnings as _warnings
 import pymupdf
 
 from . import cnn, markdown as _md, native
+from .lines import RENDER_DPI
 from .ocr import words_from_azure_di
 from .scanned import ScanConfig, _glyph_ink, _own_stroke, analyze_scanned_page
 from .types import SCHEMA_VERSION
@@ -29,12 +30,12 @@ from .types import SCHEMA_VERSION
 log = logging.getLogger(__name__)   # "pdf_strikethrough.detect"; DEBUG diagnostics, opt-in
 
 IMG_COVER_SCANNED = 0.70    # raster images cover >= this frac of the page -> scanned
-RENDER_DPI = 200
 HIGH_DPI_CAP = 300          # scanned rasters above this are worked at RENDER_DPI (see _working_dpi)
 MAX_RENDER_MPIX = 128       # hard per-page raster ceiling; a bigger page is downsampled to fit
 LINE_SUPPORT_MAX_CHARS = 3     # ScanConfig.line_support (see _line_support): a word this short
 LINE_SUPPORT_MIN_RUN = 0.65    # may ride its stroke's confirmed neighbors when the stroke's band
                                # holds one unbroken stretch of ink across this much of the word
+NATIVE_TIERS = ("vector", "flag", "annot")   # exact native records: the CNN never overrules them
 # Standalone raster inputs detect_image_file (and the CLI) accept — a photo/scan/fax that never
 # was a PDF. Multi-page TIFFs are one frame per page.
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
@@ -244,10 +245,10 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     for h, p in zip(owner, probs):
         h["cnn_prob"] = round(float(p), 3)
     for h in kept:
-        if h.get("tier") not in ("vector", "flag"):
+        if h.get("tier") not in NATIVE_TIERS:
             h.setdefault("cnn_prob", None)            # documented: None = crop too small to score
         p = h.get("cnn_prob")
-        if h.get("tier") in ("vector", "flag"):            # native paths are exact; no CNN needed
+        if h.get("tier") in NATIVE_TIERS:                  # native paths are exact; no CNN needed
             h["verdict"], h["final"] = "struck", True
         elif h["tier"] == "auto":
             h["cnn_agrees"] = (p >= meta["p_hi"]) if p is not None else None
@@ -271,7 +272,7 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     if getattr(config, "confidence_gating", False):
         max_clean = getattr(config, "max_clean_conf", 1.0)
         for h in kept:
-            if h.get("tier") in ("vector", "flag") or not h.get("final"):
+            if h.get("tier") in NATIVE_TIERS or not h.get("final"):
                 continue
             conf = h.get("conf")
             if conf is not None and conf > max_clean and not h.get("geom_corroborated"):
@@ -330,12 +331,14 @@ def _line_support(recs, tagged, ink, config, dpi=RENDER_DPI):
                 break
 
 
-def detect_scanned_image(gray, words, config=ScanConfig(), meta=None, dpi=RENDER_DPI,
-                         crop_sink=None):
+def detect_scanned_image(gray, words, config=ScanConfig.confidence_free(), meta=None,
+                         dpi=RENDER_DPI, crop_sink=None):
     """Struck-word records for a single scanned page image + its OCR words. `gray` is a HxW
     grayscale array (RGB / float inputs are coerced); `dpi` must be the resolution the image
     was rendered/scanned at (positive). Runs layer-1 classification, the CNN verdict, then (with
-    ``config.line_support``) the short-word line rule."""
+    ``config.line_support``) the short-word line rule. `config` defaults to
+    ``ScanConfig.confidence_free()``, as ``detect_pdf`` without a ``di_result`` does; pass
+    ``ScanConfig.azure_di()`` for words from Azure Document Intelligence."""
     from .lines import ink_mask, to_gray_u8
     _check_dpi(dpi)
     gray = to_gray_u8(gray)
@@ -744,7 +747,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             0.6.0 to match ``strikethroughs_in_pdf``/``page_strikes`` and the CLI ``--method``.)
         native_method: DEPRECATED alias for ``method``, kept for 0.5.x compatibility; emits a
             ``DeprecationWarning``. Passing both with different values raises ``ValueError``.
-        on_missing_ocr: what to do when a scanned page is hit with no `ocr`/`di_result`:
+        on_missing_ocr: what to do when a scanned page is hit with no `ocr`, `di_result` or
+            `words_by_page` entry for it:
             'raise' (default) raises OcrRequiredError; 'skip' skips the page, records a warning
             in the result, and still returns everything from the other pages.
         pages: restrict work to a subset — an iterable of 0-based page indices (negatives index
@@ -863,7 +867,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                     # classified scanned but has extractable text (text-bearing scan / OCR-overlay
                     # / full-bleed born-digital) — run the native detector instead of raising
                     msg = (f"page {pno} classified as scanned but has extractable text; ran the "
-                           f"native detector on it (no OCR backend / di_result was provided)")
+                           f"native detector on it (no OCR backend, di_result or words_by_page "
+                           f"entry covered it)")
                     _warnings.warn(msg, stacklevel=2)
                     warns.append(msg)
                     chars = native._PageChars(page)
@@ -882,8 +887,15 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         f"{doc.page_count}-page document is scanned; pass a full di_result "
                         f"or an ocr backend, or use on_missing_ocr='skip'")
                 elif on_missing_ocr == "skip":
-                    warns.append(f"page {pno} is scanned but no OCR backend / di_result covered "
-                                 f"it; skipped (no text or strikes reported for it)")
+                    warns.append(f"page {pno} is scanned but no OCR backend, di_result or "
+                                 f"words_by_page entry covered it; skipped (no text or strikes "
+                                 f"reported for it)")
+                elif wbp is not None:
+                    covered = ", ".join(str(p) for p in sorted(wbp)) or "none"
+                    raise OcrRequiredError(
+                        f"words_by_page covers pages [{covered}] (0-based) but page {pno} of the "
+                        f"{doc.page_count}-page document is scanned; add its words, pass an ocr "
+                        f"backend for the rest, or use on_missing_ocr='skip'")
                 else:
                     raise OcrRequiredError(
                         f"page {pno} is scanned and no OCR backend was provided; pass "

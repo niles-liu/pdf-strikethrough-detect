@@ -97,7 +97,8 @@ def _detect_payload(path, opts):
             with warnings.catch_warnings():  # its pages are in the payload's "warnings"
                 warnings.simplefilter("ignore", st.GarbledTextWarning)
                 res = st.detect_pdf(path, ocr=ocr, scan_config=sc,
-                                    dpi=opts["dpi"] if opts["dpi"] is not None else 200,
+                                    dpi=(opts["dpi"] if opts["dpi"] is not None
+                                         else st.detect.RENDER_DPI),
                                     method=opts["method"],
                                     on_missing_ocr="skip" if opts["ocr"] == "none" else "raise")
         final = [w for w in res["words"] if w.get("final")]

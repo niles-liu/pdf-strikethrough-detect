@@ -143,6 +143,14 @@ All notable changes to this project are documented here. The format follows
   `ocr=rapidocr_backend(drop_lone_cjk=False)`.
 - **CI's extras job now runs the RapidOCR adapter's tests** against the real engine. The test jobs
   don't install RapidOCR, so its one real-engine test was always skipped there.
+- **`detect_scanned_image`, `analyze_scanned_page` and `scanned.classify_lines` default to
+  `ScanConfig.confidence_free()`,** as `detect_pdf` without a `di_result`, `detect_image_file`,
+  `words_by_page=` and the CLI have since 0.12.0. They defaulted to the Azure DI calibration,
+  which reads the near-1.0 confidences other engines give struck words as clean text: on a
+  synthetic page, a struck word read at 0.99 scored 0.40 (`review`) where the high-level paths
+  score it 0.67 (`auto`). Words without confidences get the same output either way (see Fixed).
+  Azure DI words passed with no config also lose that calibration's chain gate and confidence
+  veto; pass `config=ScanConfig.azure_di()` to keep the old behavior.
 
 ### Removed
 - **The TestPyPI rehearsal.** A manual run of `publish.yml` tried to publish to TestPyPI, where this
@@ -300,6 +308,28 @@ All notable changes to this project are documented here. The format follows
   which `clean_markdown()` drops itself, code blocks included, and that it keeps text the flag
   marks where pymupdf4llm sets it as a code block, such as a paragraph set entirely in a monospaced
   font. No code changes.
+- **Under the Azure DI calibration, scanned words with no OCR confidence scored at most 0.60.**
+  With `ScanConfig()` and words that carry no confidence, the chain gate already ran without
+  confidences, but the evidence score kept its confidence term and read every word as clean
+  text: on a synthetic page a clear strike scored 0.47 (`review`) where `confidence_free()` gives
+  0.78 (`auto`). The score now drops the term whenever the page has no confidences, as the gate
+  does, so such a page gets the same output under either calibration. Words with confidences
+  score as before.
+- **`apply_cnn_verdict` could drop an annotation record.** It leaves native records to their own
+  detector, but its list of native tiers predated `annot`, so a `/StrikeOut` record passed to it
+  was dropped whenever StrikeNet read the crop as clean. `detect_pdf` never passes it native
+  records; only a direct call was affected.
+- **A caller-built line without a `fill` could lose its words to the table-rule test.**
+  `classify_lines` read a missing `fill` as 1.0 there, so a long line through a word's middle
+  with glyph ink on one side only was dropped as a solid rule, the failure 0.10.0 fixed in the
+  printed-rule veto. A missing or `None` `fill` now triggers neither fill test (the table-rule test
+  and the chain gate, which already skipped it) and still scores as 0.80
+  (`scanned.FILL_UNMEASURED`); a `None` used to raise. Lines from `strike_lines` always carry one.
+- **A scanned page missing from `words_by_page` raised "no OCR backend was provided".** The
+  `OcrRequiredError` now names the pages `words_by_page` covers, as the error for a partial
+  `di_result` does; `on_missing_ocr="skip"`'s warning names `words_by_page` too.
+- **`markdown.strip_struck` kept characters struck with U+0336 overlays.** It was a copy of
+  `strip_struck_markdown` from before overlays were read; it now calls it and trims the result.
 
 ## [0.12.1] — 2026-10-08
 

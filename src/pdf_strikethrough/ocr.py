@@ -15,10 +15,13 @@ clouds flag strikethrough natively; these adapters add that layer on top.
 
 Confidence caveat: the scanned classifier's confidence thresholds are calibrated to Azure
 Document Intelligence, whose struck words drop to 0.43-0.94 while clean text sits at 0.976-1.0.
-Other engines score differently (RapidOCR clusters near 1.0). Use ``ScanConfig.confidence_free()``
-when your engine's confidence is unreliable — it disables every confidence-dependent decision
-(chain rejection, ink-fail rescue, and the confidence term of the evidence score), so detection
-rests on geometry + the CNN alone.
+Other engines score differently (RapidOCR clusters near 1.0), so the functions that take a
+``ScanConfig`` default to ``ScanConfig.confidence_free()``, except ``detect_pdf`` with a
+``di_result``. That config disables every confidence-dependent decision (chain rejection,
+ink-fail rescue, and the confidence term of the evidence score), so detection rests on geometry +
+the CNN alone.
+Pass ``ScanConfig.azure_di()`` when you give Azure DI words to ``detect_scanned_image``,
+``analyze_scanned_page`` or ``scanned.classify_lines``.
 """
 from __future__ import annotations
 
@@ -92,7 +95,11 @@ def words_from_azure_di(di_page) -> list[Word]:
     raises ValueError. A word box that runs past the edge of the page is clamped to it; a word
     placed wholly off the page keeps its text, on a zero-width box at the edge. A page where most
     word boxes lie past 1.5 page widths or heights, as with polygons in the wrong units, still
-    raises ValueError."""
+    raises ValueError.
+
+    Only ``detect_pdf(di_result=...)`` applies the DI calibration by default: pass
+    ``config=ScanConfig.azure_di()`` when you give these words to ``detect_scanned_image``,
+    ``analyze_scanned_page`` or ``scanned.classify_lines``."""
     pw = di_page.get("width")
     ph = di_page.get("height")
     if not pw or not ph:

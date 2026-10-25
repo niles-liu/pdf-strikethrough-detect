@@ -37,6 +37,7 @@ GLYPH_INK_RULE_LEN_IN = 0.25 # the INK_* tests read glyph ink: horizontal runs a
                              # of a long, slightly sloped strike, which skewed scans make worse
 INK_SHORT_LEN_IN    = 0.50   # pixel test REQUIRED only for lines shorter than this (+ rescues)
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
+FILL_UNMEASURED     = 0.80   # score_struck's fill for a caller-built line without one
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
                              # strike, unless it shows through-glyph ink on BOTH sides (issue #4·B)
 # --- printed-rule veto (issue #7 / v0.10.0), opt-in via ScanConfig.ruled_forms(): a degraded-scan
@@ -84,7 +85,8 @@ REVIEW_SCORE = 0.20
 @dataclass(frozen=True)
 class ScanConfig:
     """Confidence calibration for the scanned classifier. Defaults match Azure Document
-    Intelligence (struck words OCR at 0.43-0.94, clean text at 0.976-1.0).
+    Intelligence (struck words OCR at 0.43-0.94, clean text at 0.976-1.0). The functions that take
+    one default to ``confidence_free()`` instead, except ``detect_pdf`` with a ``di_result``.
 
     ``confidence_free()`` disables EVERY confidence-dependent decision: the chain-rejection
     gate, the ink-fail rescue, and the confidence term in the evidence score (the remaining
@@ -174,6 +176,8 @@ class ScanConfig:
         Controls the printed-rule veto ONLY. On degraded ruled forms you usually also want
         ``ruled_forms(rescue_clean_chains=False)``, the best-measured configuration; the two are
         opted into separately so a caller who has validated one does not silently acquire the other.
+        Confidence gating stays on, which assumes Azure DI confidences; add
+        ``confidence_gating=False`` for other engines.
         """
         return cls(veto_printed_rules=veto_printed_rules, **kw)
 
@@ -194,7 +198,9 @@ class ScanConfig:
     def precision_first(cls, cnn_p_hi=0.97, line_support=False, **kw):
         """Precision-first operating point (RAG / indexing): bias toward never dropping live text
         as if it were deleted. Only high-confidence CNN strikes are reported; an uncertain strike
-        falls back to 'unsure'/clean rather than being removed, so ``line_support`` is off."""
+        falls back to 'unsure'/clean rather than being removed, so ``line_support`` is off.
+        Confidence gating stays on, which assumes Azure DI confidences; add
+        ``confidence_gating=False`` for other engines."""
         return cls(cnn_p_hi=cnn_p_hi, line_support=line_support, **kw)
 
 
@@ -393,13 +399,17 @@ def _is_printed_rule(ln):
             or (wobble is not None and wobble < PRINTED_RULE_STRAIGHT_MAX))
 
 
-def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER_DPI,
-                   glyph_ink=None):
+def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_free(),
+                   dpi=RENDER_DPI, glyph_ink=None):
     """(tagged_lines, struck_words) from detected strokes + OCR words.
     `words`: list of ocr.Word (bbox in [0,1] fractions). `gray`: the page raster the lines were
     detected on (uint8 HxW), at `dpi`. Returns per-WORD struck records with tier in
     auto/review/weak. With ``config.glyph_ink`` on, the ink tests read `glyph_ink`, a bool mask;
-    None builds it from `ink` at `dpi`."""
+    None builds it from `ink` at `dpi`. `config` defaults to ``ScanConfig.confidence_free()``;
+    pass ``ScanConfig.azure_di()`` for words from Azure Document Intelligence.
+
+    A line dict without a `fill` (a caller-built line) never loses a word for it: it is not taken
+    for a solid table rule or put through the chain gate, and it scores as FILL_UNMEASURED."""
     pix_h, pix_w = gray.shape
     if ink is None:
         ink = ink_mask(gray)
@@ -430,6 +440,11 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
         ends = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
         (sx, sy), (ex, ey) = ends
         short_line = ln.get("len_in", 0.0) < INK_SHORT_LEN_IN
+        # both fill tests can drop words, so an unmeasured fill triggers neither
+        # (see _is_printed_rule)
+        line_fill = ln.get("fill")
+        long_solid = (line_fill is not None and line_fill >= FILL_STRONG
+                      and ln.get("len_in", 0.0) >= TABLE_RULE_MIN_LEN_IN)
 
         def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None, strike_geom=False):
             wx0, wy0, wx1, wy1 = wbox
@@ -489,8 +504,6 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
             above, below = _ink_above_below(side_ink, ends, ln.get("run_px", 3.0), wpx)
             both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
             one_sided = _one_sided(above, below)
-            line_fill = ln.get("fill", 1.0)
-            long_solid = line_fill >= FILL_STRONG and ln.get("len_in", 0.0) >= TABLE_RULE_MIN_LEN_IN
             if long_solid and config.glyph_ink and max(above, below) < INK_ONESIDE_MAX:
                 # No glyph ink on either side: judge it on all ink, where the partner of a double
                 # rule, which glyph ink leaves out, is the ink on its one side.
@@ -535,7 +548,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
         else:
             hits = [h for h in hits if abs(h["off"]) <= PARTIAL_ISO_MAX_OFF or h["ink_ok"]]
         chain = False
-        if hits and ln.get("fill", 1.0) < FILL_STRONG and gating:
+        if hits and line_fill is not None and line_fill < FILL_STRONG and gating:
             # marginal spine fill: real strike or serif glyph chain? A real strike corrupts what
             # it crosses -> at least one struck word must read with degraded OCR confidence.
             min_conf = min((h["conf"] if h["conf"] is not None else 1.0) for h in hits)
@@ -566,7 +579,9 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig(), dpi=RENDER
         tagged.append({**ln, "label": label, "struck": hits, "rel": rel,
                        "words": [h["chars"] for h in hits]})
         struck_words.extend(hits)
-    return tagged, consolidate_struck(struck_words, tagged, use_conf=config.confidence_gating)
+    # scored with the confidence term only when the chain gate could use confidences: with none on
+    # the page, the term would cap every score at 0.60
+    return tagged, consolidate_struck(struck_words, tagged, use_conf=gating)
 
 
 def consolidate_struck(hits, tagged, use_conf=True):
@@ -622,7 +637,7 @@ def score_struck(rec, tagged, use_conf=True):
     geometry terms renormalize to keep the same [0,1] range and tier thresholds."""
     lines = [tagged[li] for li in rec["line_idx"]]
     length = max(l.get("len_in", 0.0) for l in lines)   # optional on caller-built lines
-    fill = max(l.get("fill", 0.8) for l in lines)
+    fill = max(FILL_UNMEASURED if l.get("fill") is None else l["fill"] for l in lines)
     row_support = max(sum(1 for h in l["struck"] if h["strong"]) for l in lines)
     s = 0.25 * min(1.0, length / 0.75)
     s += 0.15 * min(1.0, max(0.0, (fill - 0.70) / 0.28))
@@ -696,10 +711,13 @@ def promote_context_orphans(struck, words):
     return out
 
 
-def analyze_scanned_page(gray, words, ink=None, config=ScanConfig(), dpi=RENDER_DPI):
+def analyze_scanned_page(gray, words, ink=None, config=ScanConfig.confidence_free(),
+                         dpi=RENDER_DPI):
     """Full layer-1 pass on one scanned page: detect strokes, classify per word, promote orphans.
     `gray`: page raster (uint8 HxW; RGB/float inputs are coerced). `words`: list of ocr.Word.
-    `dpi` must be the resolution the raster was rendered at. Returns (tagged_lines, struck)."""
+    `dpi` must be the resolution the raster was rendered at. `config` defaults to
+    ``ScanConfig.confidence_free()``; pass ``ScanConfig.azure_di()`` for words from Azure Document
+    Intelligence. Returns (tagged_lines, struck)."""
     gray = to_gray_u8(gray)
     if ink is None:
         ink = ink_mask(gray)

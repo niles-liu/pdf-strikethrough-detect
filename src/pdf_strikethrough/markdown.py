@@ -135,13 +135,14 @@ def page_clean_text(items, drop_overlaid=False):
 
 
 def strip_struck(md):
-    """Remove ~~struck~~ spans from markdown -> the surviving (non-deleted) text.
+    """Remove ~~struck~~ spans from markdown -> the surviving (non-deleted) text, trimmed:
+    :func:`pdf_strikethrough.native.strip_struck_markdown`, so characters struck with U+0336
+    overlays go too.
 
     Caveat: text that itself contains a literal '~~' is ambiguous in markdown form; prefer
     :func:`page_clean_text`, which works from the word records and has no such ambiguity."""
-    clean = _STRIKE_SPAN.sub("", md)
-    clean = re.sub(r"[ \t]{2,}", " ", clean)
-    return re.sub(r"\n{3,}", "\n\n", clean).strip()
+    from .native import strip_struck_markdown
+    return strip_struck_markdown(md).strip()
 
 
 def mark_provenance(md, template="[deleted: {}]"):
