@@ -1103,9 +1103,11 @@ def native_flag_strikes(page, page_index, words=None, _chars=None, _garbled=None
     SAME exact word boxes and text as the vector detector — a span covering only part of a word
     ('Policy' of 'PolicyTo') becomes a partial strike over exactly the flagged characters. All
     four axis directions are read. The character set is MuPDF's own and can include the character
-    a strike ends against ('DecemberM'); 'vector' and 'both' stop at 'December'. Records: {page,
-    text, chars, char_span, partial, bbox_frac, coverage, tier='flag', verdict='struck',
-    final=True}.
+    a strike ends against ('DecemberM'), more often under PyMuPDF 2.0 (MuPDF 1.28.5), which also
+    flags it when the line ends within half its stroke width of it; 'vector' and 'both' stop at
+    'December'. U+0336 overlays are characters, not drawn lines, so this finds nothing on them.
+    Records: {page, text, chars, char_span, partial, bbox_frac, coverage, tier='flag',
+    verdict='struck', final=True}.
 
     ``words`` optionally supplies this page's ``get_text("words")`` output (see
     :func:`native_page_strikes`); the ``get_text("dict", ...)`` styled-span pass this detector

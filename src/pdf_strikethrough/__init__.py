@@ -132,9 +132,23 @@ def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
 
 
 def clean_markdown(source) -> str:
-    """Markdown for a born-digital PDF with struck (deleted) spans removed — the surviving text.
+    """Markdown for a born-digital PDF with struck (deleted) spans removed: the surviving text.
     Requires the ``[markdown]`` extra (pymupdf4llm); raises ImportError with the pip command
-    otherwise. For an extra-free equivalent use ``detect_pdf(source)["clean_text"]``."""
+    otherwise. For an extra-free equivalent use ``detect_pdf(source)["clean_text"]``.
+
+    The spans removed are the ones pymupdf4llm marks ``~~``: the characters MuPDF flags as struck
+    out, the signal ``method="flag"`` reads, not this package's vector detector. MuPDF can also
+    flag the character a strike ends against when no space separates them, so the ``M`` of a
+    ``May`` printed straight after a struck ``December`` goes too; the next letter of a partly
+    struck word and the punctuation after a struck word can go the same way. PyMuPDF 2.0 (MuPDF
+    1.28.5) does this more often than versions below it, also when the line ends within half its
+    stroke width of the next character. ``detect_pdf``'s ``clean_text``, with ``method="vector"``
+    (the default) or ``"both"``, stops at the struck characters.
+
+    Characters struck with U+0336 overlays have no drawn line for MuPDF to flag, so pymupdf4llm
+    leaves them unmarked; this function drops them itself, with their overlays, code blocks
+    included. Text the strikeout flag marks is kept where pymupdf4llm sets it as a code block,
+    such as a paragraph set entirely in a monospaced font, since it writes no ``~~`` there."""
     doc = open_pdf(source)
     try:
         if doc.page_count == 0:

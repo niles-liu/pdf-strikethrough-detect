@@ -77,7 +77,8 @@ each character followed by U+0336 COMBINING LONG STROKE OVERLAY (`o̶f̶`). The 
 (and so `both`) reads that too. Each character an overlay follows is struck, and the record's
 `text`, `markdown` and `clean_text` leave out the overlays on the characters it reports. A word
 struck by overlays alone has no stroke, so its record carries no `stroke_color`/`stroke_width`.
-The short overlays U+0335 and U+0337, which some generators emit, are not read.
+The short overlays U+0335 and U+0337, which some generators emit, are not read. `flag` and `annot`
+find nothing on overlays: an overlay is a character, not a drawn line or a strikeout annotation.
 
 Three native detectors, all **base-PyMuPDF only** (no pymupdf4llm), selected by `method`:
 
@@ -96,6 +97,9 @@ Copyright Office, FDIC, CEQ and EPA; California privacy-regulation redlines; a m
 development code — 55.2k struck words), **99.8% of vector detections are independently confirmed
 by MuPDF's strikeout signal** (99.6–100% per document; 9 of 10 ≥99.9%), and the flag method adds
 ~2.1% more words (font-attribute strikes and edge cases) — use `method="both"` to capture them.
+MuPDF's flag can also take in the character a strike ends against when no space separates them
+(`DecemberM` of `DecemberMay`), more often under PyMuPDF 2.0 than earlier versions; `vector` and
+`both` stop at `December`.
 `pymupdf4llm` is not used for detection at all; it is only an optional `[markdown]` extra for
 richer layout in `clean_markdown()`. On Python 3.11+ the extra installs PyMuPDF 2.0, which ships
 pymupdf4llm itself; to stay on PyMuPDF below 2.0 there, install `pymupdf4llm<2` instead of the
@@ -132,7 +136,11 @@ everything from the native pages. Password-protected PDFs raise `EncryptedPdfErr
 
 > `clean_markdown()` remains a separate, higher-fidelity **native-only** path that borrows
 > pymupdf4llm's layout (headings, paragraphs). `detect_pdf`'s `markdown` is layout-plain but works
-> uniformly on scanned pages too.
+> uniformly on scanned pages too. `clean_markdown()` removes what pymupdf4llm marks `~~`, which is
+> MuPDF's strikeout flag, so, like `method="flag"`, it can also remove the letter a strike ends
+> against. It drops U+0336 overlay strikes itself, code blocks included, but keeps text the flag
+> marks where pymupdf4llm sets it as a code block, such as a paragraph set entirely in a monospaced
+> font.
 
 ### Garbled text layers
 
