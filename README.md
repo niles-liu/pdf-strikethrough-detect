@@ -142,11 +142,11 @@ the page. Equations Word exports in Cambria Math are the common case: `·(0.955)
 `bbox_frac`; the CLI's `--json` and `--jsonl` carry it too), marks a struck record of one with
 `garbled: True`, adds an entry to `res["warnings"]` for each page that holds any, and issues one
 `GarbledTextWarning` naming those pages. `markdown` and `clean_text` keep them as extracted;
-`on_garbled="drop"` leaves them out. Real text in the scripts these maps fall into (Ethiopic, the
-Indic scripts, Arabic, Hebrew, Thai and others), digits and Latin abbreviations included, is not
-flagged. Not caught: a broken map that only gives letters of one such script, in a font that is
-not a math font, since it reads like real text, and one that gives Latin, Greek or Cyrillic
-letters or U+FFFD.
+`on_garbled="drop"` (the CLI's `--on-garbled drop`) leaves them out. Real text in the scripts these
+maps fall into (Ethiopic, the Indic scripts, Arabic, Hebrew, Thai and others), digits and Latin
+abbreviations included, is not flagged. Not caught: a broken map that only gives letters of one such
+script, in a font that is not a math font, since it reads like real text, and one that gives Latin,
+Greek or Cyrillic letters or U+FFFD.
 
 ### Choosing an OCR backend
 
@@ -305,7 +305,9 @@ Per-file output flags (`--markdown`/`--overlay`/`--clean-text`/`--provenance`/cl
 Other flags: `--dpi` (raster DPI for scanned pages, default 200; read from image metadata for image
 files — very-high-dpi input is normalized to 200 internally, see below), `--overlay-dpi` (overlay
 render DPI, default 150), `--limit` (max words in plain output), `--jobs` / `--jsonl` (batch),
-`--scan-config auto|azure-di|confidence-free`, `--markdown`, `--docai-result`. Exit codes: `0` ok,
+`--scan-config auto|azure-di|confidence-free`, `--on-garbled keep|drop` (drop leaves garbled words
+out of the text outputs; single file only, see [Garbled text layers](#garbled-text-layers)),
+`--markdown`, `--docai-result`. Exit codes: `0` ok,
 `1` usage/file error (batch: ≥1 file errored), `2` encrypted / OCR required, `3` `--fail-if-found`
 matched, `130` interrupted (a batch keeps the lines already written). Results go to stdout (UTF-8
 when written to `-`) and status lines to stderr, so `--json -` and `--markdown -` pipe cleanly.

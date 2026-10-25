@@ -286,7 +286,8 @@ def _cmd_detect_single(args, path):
                                 dpi=args.dpi if args.dpi is not None else 200,
                                 method=args.method, di_result=di_result,
                                 words_by_page=words_by_page, pages=page_subset,
-                                progress=progress, on_missing_ocr=on_missing_ocr)
+                                progress=progress, on_missing_ocr=on_missing_ocr,
+                                on_garbled=args.on_garbled)
     except st.OcrRequiredError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -457,7 +458,9 @@ def _cmd_detect_batch(args, inputs):
                       (args.provenance, "--provenance"), (args.overlay, "--overlay"),
                       (args.di_result, "--di-result"), (args.textract_result, "--textract-result"),
                       (args.docai_result, "--docai-result"), (args.pages, "--pages"),
-                      (args.dump_crops, "--dump-crops")):
+                      (args.dump_crops, "--dump-crops"),
+                      # batch output has no markdown, clean text or passages
+                      (args.on_garbled != "keep", "--on-garbled")):
         if val:
             print(f"warning: {flag} is ignored in batch mode", file=sys.stderr)
 
@@ -612,6 +615,11 @@ def main(argv=None):
     d.add_argument("--method", default="vector", choices=["vector", "flag", "annot", "both"],
                    help="native-page detector: vector geometry, MuPDF strikeout flag, explicit "
                         "/StrikeOut annotations, or the union of all three")
+    d.add_argument("--on-garbled", dest="on_garbled", default="keep", choices=["keep", "drop"],
+                   help="words whose text a broken character map garbled (listed in --json's "
+                        "garbled_words): keep them as extracted, or drop them from the markdown, "
+                        "clean text, provenance text and passages; struck-word lists keep them "
+                        "(single file)")
     d.add_argument("--limit", type=int, default=25, help="max words to print (plain output)")
     d.add_argument("--json", metavar="PATH", help="write full results as JSON ('-' = stdout); in "
                    "batch mode this is JSONL, one result object per file")
