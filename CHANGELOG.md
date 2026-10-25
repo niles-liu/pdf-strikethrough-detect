@@ -70,16 +70,18 @@ All notable changes to this project are documented here. The format follows
   character at a stroke's end counts as struck when the stroke covers at least half of it. Both are
   measured against the word's glyph ink near the stroke, not its OCR box, which runs loose and on
   RapidOCR can hold several words, and against the stroke's own ink, not the detected line's ends.
-  Pieces of a stroke across short breaks (a pen skip, a dashed stroke, typed hyphens) count as one
-  stroke. Partial spans move onto the struck characters the same way, so a stroke over the letters
-  alone now leaves the punctuation around them live. Which words are reported struck does not
-  change, only their spans and whether they are full or partial. A box with no glyph ink to measure
-  keeps the old rule. Measured on its own against 0.12.1 with the frontier benchmark's scorer, on
-  pages outside its test sets and not used to tune it: the live part of a partly struck word is
-  marked 19 times in 318 where it was 71 (synthetic pages) and 27 times in 149 where it was 42
-  (real redlined documents). The character error rate of the live text, which also counts a whole
-  struck word now left with a character live, falls from 6.36% to 6.06% on the synthetic pages,
-  from 11.29% to 10.96% on the redlined documents and from 3.18% to 3.17% on Senate bills.
+  Pieces of a stroke across short breaks count as one stroke: a pen skip, typed hyphens, or dashes
+  at least half a character long with breaks of at most a quarter of one. A strike with shorter
+  dashes or wider breaks can still leave a long word partly struck. Partial spans move onto the
+  struck characters the same way, so a stroke over the letters alone now leaves the punctuation
+  around them live. Which words are reported struck does not change, only their spans and whether
+  they are full or partial. A box with no glyph ink to measure keeps the old rule. Measured on its
+  own against 0.12.1 with the frontier benchmark's scorer, on pages outside its test sets and not
+  used to tune it: the live part of a partly struck word is marked 19 times in 318 where it was 71
+  (synthetic pages) and 27 times in 149 where it was 42 (real redlined documents). The character
+  error rate of the live text, which also counts a whole struck word now left with a character live,
+  falls from 6.36% to 6.06% on the synthetic pages, from 11.29% to 10.96% on the redlined documents
+  and from 3.18% to 3.17% on Senate bills.
 - **The scanned path keeps short struck words that StrikeNet leaves unsure.** A word of three
   characters or fewer, not counting surrounding punctuation, is mostly padding at StrikeNet's input
   width, so a struck "of" or "a" often scored below the 0.85 struck threshold inside a run of
@@ -344,6 +346,23 @@ All notable changes to this project are documented here. The format follows
   radical sign alone, or drawn under such a fill where it still shows through, is lost; an overline
   or a radical's bar just above x-height letters (`√x`), or a gridline through text with no box,
   is still read as a strike. The detector takes 1–4% longer.
+- **The scanned path dropped thick strikes through bold or large text.** A 2 pt strike through bold
+  text above about 10 pt, or regular text above about 18 pt, is as thick as the stems it crosses, so
+  it read as a bold glyph's bar, and in larger bold text it merged with the bars it touches into one
+  piece too thick to stitch. A second pass now adds such a line where none was found: a thick line
+  is kept when its ink runs on unbroken for two and a half glyph heights, since a bold glyph's bar
+  ends with its glyph, and where a piece is too thick to stitch, the band it fills end to end is
+  taken as the line. Every line found before comes out unchanged, and `strike_lines` still needs no
+  OCR. On synthetic scanned pages in 42 fonts, struck words found rose from 3,853 to 4,997 of 12,782
+  (2 to 3 pt strikes from 944 to 1,717 of 4,247), with none lost and no more live words marked, and
+  strike-free bold text on shading, in boxes and under rules marked no more words. Struck bold
+  headings drawn with underlines, rules and boxes marked 46 live words where they marked 40. On
+  newly generated synthetic pages from the frontier benchmark, the half not used to tune, struck
+  sub-tokens found rose from 2,694 to 2,707 of 3,560 with no new over-marks; Senate bills published
+  before the benchmark's cutoff and the dev pages of its public redline corpus are unchanged.
+  `strike_lines` takes about 10% longer on struck pages and 7% on strike-free bold headings. A
+  strike thicker than about 3 pt is still over the 9 px cap, and a thin strike merged into bold
+  glyph bars is still lost. `lines.SOLID_GLYPHS = 0` gives the previous behavior.
 
 ## [0.12.1] — 2026-10-08
 
