@@ -11,30 +11,15 @@ On degraded ruled forms that escape is the dominant residual false-positive sour
 These tests pin BOTH directions, so neither the default rescue nor its suppression can be lost
 silently.
 
-Synthetic rasters (the originating corpus is private) — same construction as
-``test_one_sided_rules_and_confidence_veto.py``.
+Synthetic rasters (the originating corpus is private), drawn with the ``_synth.py`` helpers
+``test_one_sided_rules_and_confidence_veto.py`` uses too.
 """
-import numpy as np
-from pdf_strikethrough import cnn, detect
+from pdf_strikethrough import detect
 from pdf_strikethrough.ocr import Word
 from pdf_strikethrough.scanned import ScanConfig, analyze_scanned_page
+from _synth import _blank, _glyphs, _saturated_cnn
 
 DPI = 200
-
-
-def _blank(h=500, w=900):
-    return np.full((h, w), 255, np.uint8)
-
-
-def _glyphs(gray, x0, x1, y0, y1, step=8, wide=3):
-    for x in range(x0, x1, step):
-        gray[y0:y1, x:x + wide] = 20
-
-
-def _saturated_cnn(monkeypatch):
-    """StrikeNet pinned at prob 1.0 — the faint-scan failure mode the escape hands words to.
-    Same helper as ``test_one_sided_rules_and_confidence_veto``."""
-    monkeypatch.setattr(cnn, "score_crops", lambda crops, **kw: np.ones(len(crops)))
 
 
 def _clean_chain_page():

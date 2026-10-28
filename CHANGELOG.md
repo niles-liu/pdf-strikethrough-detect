@@ -167,6 +167,10 @@ All notable changes to this project are documented here. The format follows
   repository had no trusted publisher, so it failed at the login each time. A manual run now builds
   the sdist and wheel, checks them and tests the wheel, and publishes nothing; a GitHub Release
   publishes to PyPI as before.
+- **`benchmarks/di_parity.py` and `benchmarks/ocr_backend_table.py`.** They read two manifest
+  fields, `di_result` and `di_reference_struck`, that no manifest entry has, so they ran on nothing,
+  and the README no longer quotes what they measured. `scanned_recovery.py`, added in 0.9.0,
+  measures the scanned path's recovery on this repository's own corpus.
 
 ### Fixed
 - **The vector detector missed text struck with overlay characters.** Online strikethrough
@@ -391,6 +395,12 @@ All notable changes to this project are documented here. The format follows
   found 350 and 710 more struck words, and marked 97 and 10 more live ones. A scanned page's
   detection takes 1.5 to 3.2% longer on average, OCR aside, and up to 1.17 times as long on one
   page. `scanned.STROKE_SNAP_PX = 0` gives the previous behavior.
+- **`benchmarks/confidence_veto.py` split its counts where the veto does not.** Its default mode
+  counted a word read at exactly `max_clean_conf` (0.955) as high-confidence, but the veto acts
+  only above it. The split now uses the veto's boundary. One reported word on its ruled-table set
+  reads at exactly 0.955 in both 0.9.0 and 0.9.1, so the 0.9.1 figures it reproduces become 94 → 21
+  (−78%) high-confidence over-flags, not 95 → 22 (−77%). The struck-final counts (188 → 115) are
+  unchanged.
 
 ## [0.12.1] — 2026-10-08
 

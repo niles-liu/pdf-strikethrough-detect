@@ -4,50 +4,14 @@ import io
 import json
 import zipfile
 
-import pymupdf as fitz
 from PIL import Image
 
 import pdf_strikethrough as st
 from pdf_strikethrough.ocr import Word
+from _synth import _mixed_native_scanned_pdf, _redline_image_png, _synthetic_native_pdf
 
 
 # ------------------------------------------------------------------------- fixtures
-
-def _synthetic_native_pdf():
-    """Born-digital PDF: one line with a vector strike through the consecutive 'deleted text'."""
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    page.insert_text((72, 100), "keep this deleted text here", fontsize=12)
-    words = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}
-    r1, r2 = words["deleted"], words["text"]
-    ymid = (r1.y0 + r1.y1) / 2
-    page.draw_line(fitz.Point(r1.x0 - 1, ymid), fitz.Point(r2.x1 + 1, ymid), width=1.0)
-    return doc
-
-
-def _mixed_native_scanned_pdf():
-    """Page 0 native (struck); page 1 an image-only render of it (classified scanned)."""
-    doc = _synthetic_native_pdf()
-    scan = doc.new_page(width=595, height=842)
-    scan.insert_image(scan.rect, pixmap=doc[0].get_pixmap(dpi=72))
-    return doc
-
-
-def _redline_image_png(dpi=200):
-    """PNG bytes of a rendered page with a vector strike through 'struck', + its Word boxes."""
-    doc = fitz.open()
-    page = doc.new_page(width=300, height=120)
-    page.insert_text((20, 60), "keep struck", fontsize=20)
-    b = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}
-    r = b["struck"]
-    ymid = (r.y0 + r.y1) / 2
-    page.draw_line(fitz.Point(r.x0, ymid), fitz.Point(r.x1, ymid), width=1.5)
-    png = page.get_pixmap(dpi=dpi).tobytes("png")
-    W, H = page.rect.width, page.rect.height
-    words = [Word(w[4], (w[0] / W, w[1] / H, w[2] / W, w[3] / H)) for w in page.get_text("words")]
-    doc.close()
-    return png, words
-
 
 def _docx_bytes(body_xml):
     ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"

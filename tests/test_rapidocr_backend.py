@@ -14,6 +14,7 @@ import pytest
 
 import pdf_strikethrough as st
 from pdf_strikethrough.ocr import rapidocr_backend
+from _synth import _final_chars
 
 _BLANK = np.zeros((100, 200, 3), np.uint8)
 
@@ -128,14 +129,10 @@ def _struck_line():
     return png, _Engine(words + [("tail", (0.778, y0, 1.569, y1))])
 
 
-def _struck(res):
-    return [w["chars"] for w in res["words"] if w["final"]]
-
-
 def test_detect_image_file_reads_past_an_off_page_box():
     png, engine = _struck_line()
     res = st.detect_image_file(png, ocr=rapidocr_backend(engine=engine))
-    assert _struck(res) == ["struck"] and res["clean_text"].split() == ["keep", "tail"]
+    assert _final_chars(res) == ["struck"] and res["clean_text"].split() == ["keep", "tail"]
 
 
 def test_detect_pdf_reads_past_an_off_page_box():
@@ -145,7 +142,7 @@ def test_detect_pdf_reads_past_an_off_page_box():
     page.insert_image(page.rect, stream=png)                # an image-only, scanned page
     res = st.detect_pdf(doc.tobytes(), ocr=rapidocr_backend(engine=engine))
     assert res["page_sources"] == ["scanned"]
-    assert _struck(res) == ["struck"] and res["clean_text"].split() == ["keep", "tail"]
+    assert _final_chars(res) == ["struck"] and res["clean_text"].split() == ["keep", "tail"]
 
 
 # ------------------------------------------------------------------ lone CJK characters it removes
