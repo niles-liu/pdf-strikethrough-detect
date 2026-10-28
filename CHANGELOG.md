@@ -54,6 +54,14 @@ All notable changes to this project are documented here. The format follows
   `passages` in `--json`, whose `garbled_words` still lists them. The default, `keep`, gives the
   same output as before. Batch output has no markdown, clean text or passages, so there the option
   is ignored with a warning, as `--markdown` is.
+- **`get_model_meta()` reports the loaded model's sha256,** so a log or a report can tell
+  retrained models apart where `version` cannot: the training script stamps its own version
+  string. It is the digest of `strike_verdict_cnn.onnx` (or the `.pt`), the same one
+  `ensure_model` verifies. An ONNX model that keeps its weights in external data files, as torch's
+  newer exporter writes by default, also gets `external_data`, the location and sha256 of each
+  file, and only both together identify its weights. The model still loads by path, so ONNX
+  Runtime finds those files beside it and never in the working directory. `get_model_meta()` now
+  returns a deep copy.
 
 ### Changed
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
