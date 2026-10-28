@@ -36,6 +36,12 @@ GLYPH_INK_RULE_LEN_IN = 0.25 # the INK_* tests read glyph ink: horizontal runs a
                              # half) but 2 struck words lost, as it also cuts the stair-step pieces
                              # of a long, slightly sloped strike, which skewed scans make worse
 INK_SHORT_LEN_IN    = 0.50   # pixel test REQUIRED only for lines shorter than this (+ rescues)
+STROKE_SNAP_PX      = 4      # a word the ink tests drop is tried again at the stroke's own row,
+                             # looked for this many px (at RENDER_DPI, scaled with dpi) either side
+                             # of the line: a stitched line can run a few px off a thin or light
+                             # stroke, so its "ink below" falls under the glyphs. 0 turns it off
+STROKE_SNAP_MIN_RUN = 0.80   # ...the row band whose unbroken ink run covers the most of the columns
+                             # the word shares with the line, and at least this share of them
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 FILL_UNMEASURED     = 0.80   # score_struck's fill for a caller-built line without one
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
@@ -364,6 +370,50 @@ def _band_ink(ink, line_ends_px, line_run_px, x0_px, x1_px, dy=0.0, pad=1):
     return np.array([ink[r0:r1, x].any() for x, r0, r1 in zip(xs, top, bot)], bool)
 
 
+def _longest_run(flags):
+    """Length of the longest stretch of True in a 1-D bool array."""
+    d = np.diff(np.concatenate(([0], np.asarray(flags, dtype=np.int8), [0])))
+    starts, ends = np.flatnonzero(d == 1), np.flatnonzero(d == -1)
+    return int((ends - starts).max()) if starts.size else 0
+
+
+def _stroke_row_dy(ink, line_ends_px, line_run_px, x0_px, x1_px, max_dy):
+    """How far (px, + = down) to move the line, at most `max_dy` either way, so its band sits on
+    the stroke: the band whose longest unbroken run of ink covers the most of columns x0_px to
+    x1_px, the nearest one on a tie. 0 when no band's run covers STROKE_SNAP_MIN_RUN of them, or
+    when the line's own band covers as much as any. Bands are the line's thickness, without the
+    pad the ink tests use, so a stroke a few px off is told from one under the line."""
+    (sx, sy), (ex, ey) = line_ends_px
+    H, W = ink.shape
+    if max_dy < 1 or not np.isfinite([sx, sy, ex, ey, line_run_px]).all():
+        return 0
+    x0 = max(int(x0_px), int(min(sx, ex)), 0)
+    x1 = min(int(x1_px), int(max(sx, ex)), W - 1)
+    if x1 <= x0:
+        return 0
+    xs = np.arange(x0, x1 + 1)
+    ys = sy + ((xs - sx) / (ex - sx) if ex != sx else np.zeros(len(xs))) * (ey - sy)
+    half = line_run_px / 2.0
+    dys = np.arange(-max_dy, max_dy + 1)
+    tops = (ys[None, :] + dys[:, None] - half).astype(int)    # (band, column): rows top..bot-1
+    bots = (ys[None, :] + dys[:, None] + half).astype(int) + 1
+    # Each column's reach only, so a steep line costs no more than a level one: the window starts
+    # at its first band's top and is as tall as the tallest stack of bands.
+    first = tops[0]
+    rows = first[None, :] + np.arange(int((bots - first).max()))[:, None]
+    inside = (rows >= 0) & (rows < H)
+    win = np.zeros(rows.shape, bool)
+    win[inside] = ink[rows[inside], np.broadcast_to(xs, rows.shape)[inside]] != 0
+    need = STROKE_SNAP_MIN_RUN * len(xs)
+    if _longest_run(win.any(axis=0)) < need:      # no band runs further than all its rows together
+        return 0
+    cum = np.vstack([np.zeros((1, len(xs)), np.int32), np.cumsum(win, axis=0, dtype=np.int32)])
+    cols = np.arange(len(xs))
+    runs = [_longest_run(band) for band in (cum[bots - first, cols] - cum[tops - first, cols]) > 0]
+    best = max(range(len(dys)), key=lambda i: (runs[i], -abs(dys[i])))   # 0 if the line's band ties
+    return int(dys[best]) if runs[best] >= need else 0
+
+
 def _own_stroke(ink, line_ends_px, line_run_px, x0_px, x1_px, beside_ink=None):
     """(run, excess) for a word under a line. `run` is the longest unbroken stretch of band ink as
     a fraction of the word's columns: a stroke through the word is one stretch, while glyph ink at
@@ -409,7 +459,10 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
     pass ``ScanConfig.azure_di()`` for words from Azure Document Intelligence.
 
     A line dict without a `fill` (a caller-built line) never loses a word for it: it is not taken
-    for a solid table rule or put through the chain gate, and it scores as FILL_UNMEASURED."""
+    for a solid table rule or put through the chain gate, and it scores as FILL_UNMEASURED.
+
+    A word the ink tests drop is tried again at its stroke's own row, within STROKE_SNAP_PX of the
+    line (scaled with `dpi`): a stitched line can run a few px off a thin or light stroke."""
     pix_h, pix_w = gray.shape
     if ink is None:
         ink = ink_mask(gray)
@@ -421,6 +474,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
     confs = [c for (_, _, c) in ws if c is not None]
     edit_prior = (sum(1 for c in confs if c <= 0.90) / len(confs)) if confs else 0.0
     gating = config.confidence_gating and bool(confs)
+    snap_px = int(round(STROKE_SNAP_PX * dpi / RENDER_DPI))
 
     tagged, struck_words = [], []
     for li, ln in enumerate(lines):
@@ -446,7 +500,9 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
         long_solid = (line_fill is not None and line_fill >= FILL_STRONG
                       and ln.get("len_in", 0.0) >= TABLE_RULE_MIN_LEN_IN)
 
-        def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None, strike_geom=False):
+        def make_hit(wbox, txt, off, wcov, strong, ink_ok=False, conf=None, strike_geom=False,
+                     wends=None):
+            wends = ends if wends is None else wends      # the line, or its stroke's row
             wx0, wy0, wx1, wy1 = wbox
             n = len(txt)
             # the box's share of the line, rounded outward: what PARTIAL_MIN_CHARS gates on, and
@@ -458,12 +514,12 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
             box_chars = c1 - c0
             wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
             run = ln.get("run_px", 3.0)
-            glyphs = _glyph_ink_extent(ink, ends, min(run, THIN_STROKE_RUN_PX * dpi / RENDER_DPI),
+            glyphs = _glyph_ink_extent(ink, wends, min(run, THIN_STROKE_RUN_PX * dpi / RENDER_DPI),
                                        wpx)
             if glyphs is not None:  # the glyph ink: an end character needs CHAR_STRUCK_FRAC of it
                 gx0, gx1 = glyphs
                 cw = max(gx1 - gx0, 1.0) / n                 # estimated character width
-                reach = _stroke_reach(ink, ends, run, (x0, x1), wpx, STROKE_RUN_MIN_CHARS * cw,
+                reach = _stroke_reach(ink, wends, run, (x0, x1), wpx, STROKE_RUN_MIN_CHARS * cw,
                                       STROKE_PIECE_MIN_CHARS * cw, STROKE_LINK_MIN_CHARS * cw,
                                       STROKE_BRIDGE_CHARS * cw)
                 rx0, rx1 = reach if reach is not None else (x0, x1)
@@ -476,6 +532,35 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                     "cover_frac": (round(f0, 2), round(f1, 2)), "line_idx": li, "ink_ok": ink_ok,
                     "conf": conf, "strike_geom": strike_geom, "glyph_span": glyphs is not None,
                     "box_chars": box_chars}
+
+        run_px = ln.get("run_px", 3.0)
+
+        def ink_gate(off, wends, wpx, conf):
+            """(passes, in_band, both_ink) for the line at `wends` through the word at `wpx`."""
+            in_band = abs(off) <= STRIKE_TOL
+            # Through-glyph ink at this word (see _ink_above_below). As of 0.9.1 this runs for EVERY
+            # hit — it was skipped for in-band lines, so a full-width table rule rode high fill
+            # straight to tier 'auto' (issue #4). `both_ink` requires substantial ink on both sides;
+            # `one_sided` is the underline/rule signature (well on one side, ~none on the other) and
+            # is kept distinct so a real strike over SPARSE text still reads as two-sided, not one.
+            above, below = _ink_above_below(side_ink, wends, run_px, wpx)
+            both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
+            one_sided = _one_sided(above, below)
+            if long_solid and config.glyph_ink and max(above, below) < INK_ONESIDE_MAX:
+                # No glyph ink on either side: judge it on all ink, where the partner of a double
+                # rule, which glyph ink leaves out, is the ink on its one side.
+                one_sided = _one_sided(*_ink_above_below(ink, wends, run_px, wpx))
+            if (not in_band) or short_line:
+                # OCR damage is the tiebreaker — only meaningful when confidences are calibrated,
+                # so the rescue is off under confidence_free()
+                rescue = (config.confidence_gating and in_band
+                          and conf is not None and conf <= config.inkfail_max_conf)
+                return both_ink or rescue, in_band, both_ink
+            # Issue #4·B (0.9.1): a long, solid (high-fill) in-band line with ink on only ONE side
+            # is a table rule / underline, not a strike. Previously in-band long lines skipped the
+            # ink test entirely and rode high fill straight to 'auto'. Real strikes SHATTER on the
+            # glyphs (fill < FILL_STRONG) and keep ink on BOTH sides, so they are spared.
+            return not (long_solid and one_sided), in_band, both_ink
 
         hits, weak_band = [], []
         best = None
@@ -494,34 +579,18 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 best = (abs(off), off, txt, round(rel, 2), wcov)
             if abs(off) > INK_MAX_OFF or wcov < PARTIAL_MIN_WCOV:
                 continue
-            in_band = abs(off) <= STRIKE_TOL
-            # Through-glyph ink at this word (see _ink_above_below). As of 0.9.1 this runs for EVERY
-            # hit — it was skipped for in-band lines, so a full-width table rule rode high fill
-            # straight to tier 'auto' (issue #4). `both_ink` requires substantial ink on both sides;
-            # `one_sided` is the underline/rule signature (well on one side, ~none on the other) and
-            # is kept distinct so a real strike over SPARSE text still reads as two-sided, not one.
             wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
-            above, below = _ink_above_below(side_ink, ends, ln.get("run_px", 3.0), wpx)
-            both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
-            one_sided = _one_sided(above, below)
-            if long_solid and config.glyph_ink and max(above, below) < INK_ONESIDE_MAX:
-                # No glyph ink on either side: judge it on all ink, where the partner of a double
-                # rule, which glyph ink leaves out, is the ink on its one side.
-                one_sided = _one_sided(*_ink_above_below(ink, ends, ln.get("run_px", 3.0), wpx))
-            if (not in_band) or short_line:
-                if not both_ink:
-                    # OCR damage is the tiebreaker — only meaningful when confidences are
-                    # calibrated, so the rescue is off under confidence_free()
-                    rescue = (config.confidence_gating and in_band
-                              and conf is not None and conf <= config.inkfail_max_conf)
-                    if not rescue:
-                        continue
-            elif long_solid and one_sided:
-                # Issue #4·B (0.9.1): a long, solid (high-fill) in-band line with ink on only ONE
-                # side is a table rule / underline, not a strike. Previously in-band long lines
-                # skipped the ink test entirely and rode high fill straight to 'auto'. Real strikes
-                # SHATTER on the glyphs (fill < FILL_STRONG) and keep ink on BOTH sides, so they are
-                # spared.
+            wends = ends
+            passes, in_band, both_ink = ink_gate(off, ends, wpx, conf)
+            if not passes and snap_px:
+                # The line may run a few px off the stroke (a thin or light one, stitched to glyph
+                # pieces), so the ink "below" it is under the glyphs. Try again at the stroke's row.
+                dy = _stroke_row_dy(ink, ends, run_px, max(x0, wpx[0]), min(x1, wpx[2]), snap_px)
+                if dy:
+                    wends = ((sx, sy + dy), (ex, ey + dy))
+                    off += dy / max(wpx[3] - wpx[1], 1e-9)
+                    passes, in_band, both_ink = ink_gate(off, wends, wpx, conf)
+            if not passes:
                 continue
             ink_ok = not in_band
             # Strike-geometry corroboration (0.9.1): a genuine strike crosses the x-height (in-band)
@@ -531,18 +600,18 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
             wbox = (wx0, wy0, wx1, wy1)
             if wcov >= MIN_WORD_XOVER:
                 hits.append(make_hit(wbox, txt, off, wcov, strong=True, ink_ok=ink_ok, conf=conf,
-                                     strike_geom=strike_geom))
+                                     strike_geom=strike_geom, wends=wends))
             elif lcov >= PARTIAL_MIN_LCOV and len(txt) >= 2:
                 h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf,
-                             strike_geom=strike_geom)
+                             strike_geom=strike_geom, wends=wends)
                 if h["box_chars"] >= PARTIAL_MIN_CHARS:
                     hits.append(h)
             else:
-                weak_band.append((wbox, txt, off, wcov, ink_ok, conf, strike_geom))
+                weak_band.append((wbox, txt, off, wcov, ink_ok, conf, strike_geom, wends))
         if any(h["strong"] for h in hits):
-            for wbox, txt, off, wcov, ink_ok, conf, strike_geom in weak_band:
+            for wbox, txt, off, wcov, ink_ok, conf, strike_geom, wends in weak_band:
                 h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf,
-                             strike_geom=strike_geom)
+                             strike_geom=strike_geom, wends=wends)
                 if h["box_chars"] >= PARTIAL_MIN_CHARS:
                     hits.append(h)
         else:
