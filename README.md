@@ -420,7 +420,9 @@ pre-normalize such a page before running it.
 scored plus its verdict as a labeling set; label it, retrain with
 [`training/train_strikenet.py`](training/), and load your weights via
 `PDF_STRIKETHROUGH_MODEL_DIR`, `cnn.set_model_dir`, or `cnn.ensure_model(url, sha256, …)`
-(digest-verified download). The shipped weights cannot be reproduced: their training data is not
+(digest-verified download). `st.get_model_meta()["sha256"]` is the digest of the model file that
+loaded, and `external_data` lists the digests of any weight files kept beside it, so a log can tell
+retrained models apart. The shipped weights cannot be reproduced: their training data is not
 recorded ([model card](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/training/MODEL_CARD.md#provenance-and-training)).
 A model the script trains records a digest of its labeled set and its settings in its meta. A
 ["contribute a failing page"](.github/ISSUE_TEMPLATE/failing-page.md)

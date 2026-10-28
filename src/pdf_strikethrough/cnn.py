@@ -228,6 +228,88 @@ def _check_thresholds(meta):
                          f"p_lo={p_lo!r}, p_hi={p_hi!r}")
 
 
+# The ONNX messages that can hold a tensor, and the fields leading to them (onnx.proto): the walk
+# that finds a model's external data. The package does not depend on `onnx`, so it reads them here.
+_ONNX_CHILDREN = {
+    "model": {7: "graph", 20: "training", 25: "function"},
+    "training": {1: "graph", 2: "graph"},                        # TrainingInfoProto
+    "function": {7: "node", 11: "attribute"},                    # nodes, attribute defaults
+    "graph": {1: "node", 5: "tensor", 15: "sparse"},             # initializer, sparse_initializer
+    "node": {5: "attribute"},
+    "attribute": {5: "tensor", 6: "graph", 10: "tensor", 11: "graph", 22: "sparse", 23: "sparse"},
+    "sparse": {1: "tensor", 2: "tensor"},                        # values, indices
+    "tensor": {13: "entry"},                                     # external_data
+}
+
+
+def _pb_varint(buf, i, end):
+    value = shift = 0
+    while True:
+        if i >= end or shift > 63:
+            raise ValueError("malformed varint")
+        b = buf[i]
+        i += 1
+        value |= (b & 0x7F) << shift
+        if not b & 0x80:
+            return value, i
+        shift += 7
+
+
+def _pb_fields(buf, start, end):
+    """(field number, wire type, value) for each field of the protobuf message in buf[start:end];
+    a length-delimited value is its (start, end) span, a fixed-width one None."""
+    i = start
+    while i < end:
+        key, i = _pb_varint(buf, i, end)
+        key &= 0xFFFFFFFF                        # protobuf reads a tag as 32 bits
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            value, i = _pb_varint(buf, i, end)
+        elif wire == 2:
+            n, i = _pb_varint(buf, i, end)
+            value, i = (i, i + n), i + n
+        elif wire in (1, 5):
+            value, i = None, i + (8 if wire == 1 else 4)
+        else:
+            raise ValueError(f"unsupported protobuf wire type {wire}")
+        if i > end:
+            raise ValueError("truncated protobuf field")
+        yield field, wire, value
+
+
+def _external_data_locations(model_bytes):
+    """The files an ONNX model's tensors keep their data in (each tensor's external_data
+    ``location``), sorted; empty for a model that holds all its weights. Raises ValueError when
+    the bytes are not a well-formed protobuf."""
+    buf, found, todo = bytes(model_bytes), set(), [("model", 0, len(model_bytes))]
+    while todo:                                  # a stack, so deep nesting can't overflow
+        kind, start, end = todo.pop()
+        for field, wire, span in _pb_fields(buf, start, end):
+            child = _ONNX_CHILDREN.get(kind, {}).get(field)
+            if child is None or wire != 2:
+                continue
+            if child != "entry":
+                todo.append((child, *span))
+                continue
+            entry = {f: buf[s:e] for f, w, (s, e) in
+                     ((f, w, v) for f, w, v in _pb_fields(buf, *span) if w == 2)}
+            if entry.get(1) == b"location":
+                try:
+                    found.add(entry.get(2, b"").decode("utf-8"))
+                except UnicodeDecodeError:       # no file has that name: a stale entry
+                    pass
+    return sorted(found)
+
+
+def _file_sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def _load_model():
     """Try ONNX Runtime first, then a torch checkpoint. Returns (score_fn, meta)."""
     model_dir = _current_model_dir()
@@ -236,19 +318,40 @@ def _load_model():
     pt_path = os.path.join(model_dir, "strike_verdict_cnn.pt")
 
     if os.path.exists(onnx_path) and os.path.exists(meta_path):
+        import hashlib
+
         import onnxruntime as ort
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
         _check_geometry(meta)
         _check_thresholds(meta)
+        with open(onnx_path, "rb") as f:
+            model_bytes = f.read()
+        # Loaded by path, not from the bytes just read: ONNX Runtime finds a model's external data
+        # beside the model only when it has the path (from bytes it looks in the working directory).
+        # So a file replaced while it loads can leave the digests naming another model.
         sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         iname = sess.get_inputs()[0].name
+        try:                                     # no b"location" in the bytes: no external data
+            external = _external_data_locations(model_bytes) if b"location" in model_bytes else []
+        except ValueError as e:
+            raise ValueError(f"{onnx_path}: cannot read the model's external-data entries to "
+                             f"compute its digest ({e})") from None
 
         def score(batch):
             logits = sess.run(None, {iname: batch})[0].reshape(-1)
             return 1.0 / (1.0 + np.exp(-logits.astype(np.float64)))
 
         meta["runtime"] = "onnx"
+        meta["sha256"] = hashlib.sha256(model_bytes).hexdigest()
+        meta.pop("external_data", None)          # computed here, never taken from the meta JSON
+        # The session is built, so every file it read is a regular file beside the model. A
+        # location that is not (a stale entry on a tensor nothing reads, a pipe) is skipped.
+        paths = [(loc, os.path.join(model_dir, loc)) for loc in external]
+        files = [{"location": loc, "sha256": _file_sha256(p)} for loc, p in paths
+                 if os.path.isfile(p)]
+        if files:
+            meta["external_data"] = files
         return score, meta
 
     if os.path.exists(pt_path):
@@ -260,7 +363,8 @@ def _load_model():
         net.load_state_dict(ckpt["state_dict"])
         net.eval()
         meta = {"p_hi": float(ckpt["p_hi"]), "p_lo": float(ckpt["p_lo"]),
-                "version": ckpt.get("version", "unknown"), "runtime": "torch"}
+                "version": ckpt.get("version", "unknown"), "runtime": "torch",
+                "sha256": _file_sha256(pt_path)}
         _check_geometry({k: ckpt[k] for k in ("crop_h", "crop_w", "pad_x", "pad_y") if k in ckpt})
         _check_thresholds(meta)
 
@@ -276,8 +380,15 @@ def _load_model():
 
 
 def get_model_meta():
-    """Model metadata: {version, p_hi, p_lo, runtime}. Loads the model on first call."""
-    return dict(_ensure_loaded()[1])
+    """Model metadata: {version, p_hi, p_lo, runtime, sha256}. Loads the model on first call.
+    ``sha256`` is the hex digest of the model file loaded (``strike_verdict_cnn.onnx``, or the
+    ``.pt``), the digest :func:`ensure_model` verifies. An ONNX model that keeps weights in
+    external data files also gets ``external_data``: one ``{location, sha256}`` per file, sorted by
+    location. Together they tell retrained models apart where ``version`` may not: for a model
+    with external data, compare ``external_data`` too, since its weights are not in the ``.onnx``.
+    The digests are of the files as read while the model loads. Returns a copy."""
+    import copy
+    return copy.deepcopy(_ensure_loaded()[1])
 
 
 def _ensure_loaded():
