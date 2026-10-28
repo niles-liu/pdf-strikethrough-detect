@@ -62,6 +62,15 @@ All notable changes to this project are documented here. The format follows
   file, and only both together identify its weights. The model still loads by path, so ONNX
   Runtime finds those files beside it and never in the working directory. `get_model_meta()` now
   returns a deep copy.
+- **Run telemetry: `detect_pdf(telemetry=True)` and `detect_image_file(telemetry=True)`.** The
+  result gains `telemetry`, a JSON-ready report for monitoring: the package version, the scoring
+  model's `version` and `sha256`, the seconds taken, a ten-bin histogram of the scanned records'
+  `cnn_prob`, and per page its source, its render, OCR and detection seconds, its candidates per
+  tier and its struck count. A scanned page also gives its dpi and OCR word count, and its tiers
+  count the geometry stage's candidates, including the `weak` ones the CNN pass drops. The rest of
+  the result is unchanged. The CLI's `--telemetry FILE` appends one report per document to FILE as
+  a JSON line, batch mode included, where a file that fails gets a line with its error.
+  `pdf_strikethrough.types.Telemetry` documents the shape, versioned by `telemetry_version`.
 
 ### Changed
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a

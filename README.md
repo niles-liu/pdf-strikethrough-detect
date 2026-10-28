@@ -156,6 +156,25 @@ abbreviations included, is not flagged. Not caught: a broken map that only gives
 script, in a font that is not a math font, since it reads like real text, and one that gives Latin,
 Greek or Cyrillic letters or U+FFFD.
 
+### Run telemetry
+
+`telemetry=True` (on `detect_pdf` and `detect_image_file`) adds `res["telemetry"]`, a JSON-ready
+report for monitoring a deployment. It holds:
+- the package version, and the scoring model's `version` and `sha256` (`None` when no model was
+  loaded);
+- the seconds the call took;
+- per page: its source, the seconds it spent rendering, in OCR and in detection, its candidates per
+  tier, and how many words were reported struck. A scanned page also gives its dpi and OCR word
+  count, and its tiers count the geometry stage's candidates, including the `weak` ones the CNN
+  never sees;
+- a ten-bin histogram of the scanned records' `cnn_prob`, with counts of crops too small to score
+  and of values outside 0 to 1 (a broken model's).
+
+Compare the tier mix and the histogram across runs to see when incoming scans start to differ.
+Everything else in the result is unchanged. The CLI's `--telemetry FILE` appends one report per
+document to FILE as a JSON line, with its `source`. In batch mode a file that fails gets a line with
+its `error`.
+
 ### Choosing an OCR backend
 
 The geometry + CNN carry the detection and are **OCR-independent**; OCR only supplies word boxes
@@ -317,6 +336,7 @@ files — very-high-dpi input is normalized to 200 internally, see below), `--ov
 render DPI, default 150), `--limit` (max words in plain output), `--jobs` / `--jsonl` (batch),
 `--scan-config auto|azure-di|confidence-free`, `--on-garbled keep|drop` (drop leaves garbled words
 out of the text outputs; single file only, see [Garbled text layers](#garbled-text-layers)),
+`--telemetry FILE` (append a JSON line per document, see [Run telemetry](#run-telemetry)),
 `--markdown`, `--docai-result`. Exit codes: `0` ok,
 `1` usage/file error (batch: ≥1 file errored), `2` encrypted / OCR required, `3` `--fail-if-found`
 matched, `130` interrupted (a batch keeps the lines already written). Results go to stdout (UTF-8
@@ -499,12 +519,12 @@ The top-level package (`import pdf_strikethrough as st`) exports ~37 names; the 
 | Active learning + calibration | `dump_crops`, `pdf_strikethrough.calibration` (`threshold_for_recall`, `threshold_for_precision`, `conformal_threshold`, `pr_curve`) |
 | OCR (backends + cloud-result adapters) | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di`, `words_from_textract`, `words_from_docai` |
 | Errors and warnings | `OcrRequiredError`, `EncryptedPdfError`, `GarbledTextWarning` |
-| Types | `StruckWord`, `DetectResult`, `Passage`, `GarbledWord` (in `pdf_strikethrough.types`) |
+| Types | `StruckWord`, `DetectResult`, `Passage`, `GarbledWord`, `Telemetry` (in `pdf_strikethrough.types`) |
 
 Every `detect_pdf` / `detect_image_file` result and every CLI `--json` / `--jsonl` payload carries
 `schema_version` (`pdf_strikethrough.types.SCHEMA_VERSION`, currently `1`). It is bumped when a
 documented key is removed or renamed or changes meaning, never for an added key, so ignore keys you
-don't recognize.
+don't recognize. The `telemetry` report carries its own `telemetry_version` under the same rule.
 
 Everything is docstringed; `help(st.detect_pdf)` is the reference.
 

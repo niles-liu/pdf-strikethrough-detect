@@ -12,6 +12,9 @@ strikes confirmed words on both sides of it.
 """
 from __future__ import annotations
 
+import bisect
+import contextlib
+import contextvars
 import logging
 import numbers
 import operator
@@ -39,6 +42,10 @@ NATIVE_TIERS = ("vector", "flag", "annot")   # exact native records: the CNN nev
 # Standalone raster inputs detect_image_file (and the CLI) accept — a photo/scan/fax that never
 # was a PDF. Multi-page TIFFs are one frame per page.
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
+TELEMETRY_VERSION = 1       # of the telemetry=True report's shape; bumped as SCHEMA_VERSION is
+CNN_PROB_EDGES = tuple(i / 10 for i in range(11))   # its cnn_prob bins; the last one holds 1.0
+# telemetry's tier counts for the scanned page being detected (see _layer1_tiers)
+_LAYER1_TIERS = contextvars.ContextVar("pdf_strikethrough_layer1_tiers", default=None)
 
 
 class OcrRequiredError(ValueError):
@@ -344,10 +351,93 @@ def detect_scanned_image(gray, words, config=ScanConfig.confidence_free(), meta=
     gray = to_gray_u8(gray)
     ink = ink_mask(gray)
     tagged, struck = analyze_scanned_page(gray, words, ink=ink, config=config, dpi=dpi)
+    tiers = _LAYER1_TIERS.get()
+    if tiers is not None:                  # telemetry: layer 1's tiers, the weak ones included
+        for h in struck:
+            tiers[h["tier"]] = tiers.get(h["tier"], 0) + 1
     recs = apply_cnn_verdict(struck, gray, meta, config=config, crop_sink=crop_sink)
     if getattr(config, "line_support", False):
         _line_support(recs, tagged, ink, config, dpi)
     return recs
+
+
+@contextlib.contextmanager
+def _layer1_tiers(pt):
+    """Counts layer 1's tiers into telemetry page `pt` while the block runs; no-op for None. A
+    context variable carries them, so detect_scanned_image keeps its signature for code that
+    wraps or replaces it."""
+    if pt is None:
+        yield
+        return
+    token = _LAYER1_TIERS.set(pt["tiers"])
+    try:
+        yield
+    finally:
+        _LAYER1_TIERS.reset(token)
+
+
+@contextlib.contextmanager
+def _clock(pt, key):
+    """Adds the block's wall time to ``pt["seconds"][key]``, a telemetry page; no-op for None."""
+    t0 = time.perf_counter()
+    yield
+    if pt is not None:
+        pt["seconds"][key] = pt["seconds"].get(key, 0.0) + time.perf_counter() - t0
+
+
+class _Telemetry:
+    """Collects the ``telemetry=True`` report of one detect_pdf / detect_image_file call."""
+
+    def __init__(self):
+        self.t0 = time.perf_counter()
+        self.pages = []
+        self.counts = [0] * (len(CNN_PROB_EDGES) - 1)
+        self.unscored = self.invalid = 0
+        self.model = None
+
+    def page(self, pno, source):
+        pt = {"page": pno, "source": source, "seconds": {}, "tiers": {}}
+        self.pages.append(pt)
+        return pt
+
+    def scanned_page(self, pt, dpi, words):
+        """A detected scanned page's dpi and word count, and the model that scored it: the one
+        loaded now, read without loading one."""
+        pt["dpi"] = dpi
+        if hasattr(words, "__len__"):              # a generator's count is gone once it is read
+            pt["ocr_words"] = len(words)
+        if self.model is None and (meta := cnn._loaded_meta()) is not None:
+            self.model = {k: meta[k] for k in ("version", "sha256", "external_data") if k in meta}
+
+    def end_page(self, pt, recs):
+        """Counts the page's records: native ones by tier (scanned tiers come from layer 1, through
+        _layer1_tiers), and scanned ones into the cnn_prob histogram."""
+        for r in recs:
+            if r.get("tier") in NATIVE_TIERS:
+                pt["tiers"][r["tier"]] = pt["tiers"].get(r["tier"], 0) + 1
+            elif "cnn_prob" in r:
+                p = r["cnn_prob"]
+                if p is None:
+                    self.unscored += 1
+                elif not 0.0 <= p <= 1.0:          # NaN or out of range: a broken model's output
+                    self.invalid += 1
+                else:
+                    i = bisect.bisect_right(CNN_PROB_EDGES, p) - 1
+                    self.counts[min(i, len(self.counts) - 1)] += 1
+        pt["final"] = sum(1 for r in recs if r.get("final"))
+        pt["seconds"] = {k: round(v, 4) for k, v in pt["seconds"].items()}
+
+    def report(self):
+        from . import __version__
+        tiers = {}
+        for pt in self.pages:
+            for k, n in pt["tiers"].items():
+                tiers[k] = tiers.get(k, 0) + n
+        return {"telemetry_version": TELEMETRY_VERSION, "package": __version__,
+                "model": self.model, "seconds": round(time.perf_counter() - self.t0, 4),
+                "pages": self.pages, "tiers": tiers, "final": sum(pt["final"] for pt in self.pages),
+                "cnn_prob": {"edges": list(CNN_PROB_EDGES), "counts": self.counts,
+                             "unscored": self.unscored, "invalid": self.invalid}}
 
 
 MIN_META_DPI = 100   # image-metadata resolutions below this are placeholders, not measurements
@@ -416,7 +506,8 @@ def _check_dpi(dpi, name="dpi"):
 
 
 def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_config=None,
-                      dpi=None, meta=None, include_markdown=True, _crop_sink=None):
+                      dpi=None, meta=None, include_markdown=True, telemetry=False,
+                      _crop_sink=None):
     """Detect strikethroughs in a standalone raster image (``.png/.jpg/.tiff``, incl. multi-page
     TIFF) — a photo/scan/fax that never was a PDF.
 
@@ -433,10 +524,12 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
 
     Returns the same dict shape as :func:`detect_pdf` (``page_sources`` all ``"scanned"``); there
     is no `pages` subset and no native path. A frame with no word source raises
-    ``OcrRequiredError``.
+    ``OcrRequiredError``. With ``telemetry=True`` the result gains ``telemetry``, as
+    :func:`detect_pdf`'s does, with one entry per frame.
     """
     import numpy as np
 
+    tel = _Telemetry() if telemetry else None
     if dpi is not None:
         _check_dpi(dpi)
     wbp = _normalize_words_by_page(words_by_page)
@@ -493,15 +586,21 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         if note:
             _warnings.warn(note, stacklevel=2)
             warns.append(note)
+        pt = tel.page(pno, "scanned") if tel else None
         if page_words is None:
             t0 = time.perf_counter()
-            page_words = ocr(np.stack([gray] * 3, axis=-1))
+            with _clock(pt, "ocr"):
+                page_words = ocr(np.stack([gray] * 3, axis=-1))
             log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
                       pno, len(page_words), (time.perf_counter() - t0) * 1e3)
         if meta is None:
             meta = cnn.get_model_meta()
-        recs = detect_scanned_image(gray, page_words, config=scan_config,
-                                    meta=meta, dpi=use_dpi, crop_sink=_crop_sink)
+        with _clock(pt, "detect"), _layer1_tiers(pt):
+            recs = detect_scanned_image(gray, page_words, config=scan_config, meta=meta,
+                                        dpi=use_dpi, crop_sink=_crop_sink)
+        if tel is not None:
+            tel.scanned_page(pt, use_dpi, page_words)
+            tel.end_page(pt, recs)
         for r in recs:
             r["page"] = pno
         all_words.extend(recs)
@@ -529,6 +628,8 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         result["markdown"] = "\n\n".join(page_md)
         result["clean_text"] = "\n\n".join(c for c in page_clean if c).strip()
         result["passages"] = passages
+    if tel is not None:
+        result["telemetry"] = tel.report()
     return result
 
 
@@ -716,7 +817,7 @@ def _warn_garbled(garbled, on_garbled, include_markdown):
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
                include_markdown=True, method=None, on_missing_ocr="raise",
                pages=None, progress=None, words_by_page=None, native_method=None,
-               on_garbled="keep", _crop_sink=None):
+               on_garbled="keep", telemetry=False, _crop_sink=None):
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
@@ -766,16 +867,24 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             out of all three. Either way they are listed in ``garbled_words``, their struck
             records carry ``garbled: True``, each page holding any gets an entry in
             ``warnings``, and one ``GarbledTextWarning`` names those pages.
+        telemetry: also return ``telemetry``, a JSON-ready report of the run for monitoring: the
+            package version and the model's ``version`` and ``sha256``, the seconds taken, each
+            processed page's source, timing (render, OCR, detection), candidates per tier (on a
+            scanned page, layer 1's, ``weak`` included, with its dpi and OCR word count) and
+            struck-final count, and a histogram of the scanned records' ``cnn_prob``. See
+            ``pdf_strikethrough.types.Telemetry``.
 
     Returns a dict:
         {schema_version, source, page_count, page_sources, words, n_struck_final, warnings,
          garbled_words, markdown, clean_text, passages}   (last three only if include_markdown;
-         plus ``pages`` when a subset was requested). See ``pdf_strikethrough.types.DetectResult``.
+         plus ``pages`` when a subset was requested, and ``telemetry`` with telemetry=True). See
+         ``pdf_strikethrough.types.DetectResult``.
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
     records (not by stripping the markdown), so the two always agree. A PDF that MuPDF had to
     repair to open carries a warning: its text or drawings may be incomplete.
     """
+    tel = _Telemetry() if telemetry else None
     method = _resolve_native_method(method, native_method)
     if method not in native.METHODS:
         raise ValueError(f"unknown method {method!r} (use one of {', '.join(native.METHODS)})")
@@ -816,12 +925,14 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             # drop from clean_text the overlaid characters a record's one span leaves out
             overlays = False
             log.debug("page %d/%d (index %d): source=%s", done, total, pno, sources[pno])
+            pt = tel.page(pno, sources[pno]) if tel is not None else None
             if sources[pno] == "native":
-                nat_words = page.get_text("words")   # extract once; threaded through both detectors
-                chars = native._PageChars(page)
-                garb = native._garbled_words(page, nat_words, chars)
-                recs = native.page_strikes(page, pno, method, words=nat_words, _garbled=garb,
-                                           _chars=chars)
+                with _clock(pt, "detect"):
+                    nat_words = page.get_text("words")   # extracted once, for both detectors
+                    chars = native._PageChars(page)
+                    garb = native._garbled_words(page, nat_words, chars)
+                    recs = native.page_strikes(page, pno, method, words=nat_words, _garbled=garb,
+                                               _chars=chars)
                 for r in recs:
                     r["final"], r["verdict"] = True, "struck"
                 if include_markdown:
@@ -843,19 +954,27 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                     page_words = wbp[pno]
                 elif ocr is not None:
                     t0 = time.perf_counter()
-                    page_words = ocr(_render_rgb(page, page_dpi))
+                    with _clock(pt, "render"):
+                        rgb = _render_rgb(page, page_dpi)
+                    with _clock(pt, "ocr"):
+                        page_words = ocr(rgb)
+                    del rgb                                # freed before the page is detected
                     log.debug("page %d: OCR -> %d word(s) in %.0f ms",
                               pno, len(page_words), (time.perf_counter() - t0) * 1e3)
 
                 if page_words is not None:
-                    gray = _render_gray(page, page_dpi)
+                    with _clock(pt, "render"):
+                        gray = _render_gray(page, page_dpi)
                     if meta is None:
                         meta = cnn.get_model_meta()
                     t0 = time.perf_counter()
-                    recs = detect_scanned_image(gray, page_words, config=scan_config,
-                                                meta=meta, dpi=page_dpi, crop_sink=_crop_sink)
+                    with _clock(pt, "detect"), _layer1_tiers(pt):
+                        recs = detect_scanned_image(gray, page_words, config=scan_config,
+                                                    meta=meta, dpi=page_dpi, crop_sink=_crop_sink)
                     log.debug("page %d: geometry+CNN -> %d struck record(s) in %.0f ms",
                               pno, len(recs), (time.perf_counter() - t0) * 1e3)
+                    if pt is not None:
+                        tel.scanned_page(pt, page_dpi, page_words)
                     for r in recs:
                         r["page"] = pno
                     if include_markdown:
@@ -871,10 +990,11 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                            f"entry covered it)")
                     _warnings.warn(msg, stacklevel=2)
                     warns.append(msg)
-                    chars = native._PageChars(page)
-                    garb = native._garbled_words(page, nat_words, chars)
-                    recs = native.page_strikes(page, pno, method, words=nat_words,
-                                               _garbled=garb, _chars=chars)
+                    with _clock(pt, "detect"):
+                        chars = native._PageChars(page)
+                        garb = native._garbled_words(page, nat_words, chars)
+                        recs = native.page_strikes(page, pno, method, words=nat_words,
+                                                   _garbled=garb, _chars=chars)
                     for r in recs:
                         r["final"], r["verdict"] = True, "struck"
                     if include_markdown:
@@ -890,6 +1010,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                     warns.append(f"page {pno} is scanned but no OCR backend, di_result or "
                                  f"words_by_page entry covered it; skipped (no text or strikes "
                                  f"reported for it)")
+                    if pt is not None:
+                        pt["skipped"] = True
                 elif wbp is not None:
                     covered = ", ".join(str(p) for p in sorted(wbp)) or "none"
                     raise OcrRequiredError(
@@ -911,6 +1033,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 for ps in _md.group_passages(seq):
                     ps["page"] = pno
                     passages.append(ps)
+            if tel is not None:
+                tel.end_page(pt, recs)
             if progress is not None:
                 progress(done, total, pno)
 
@@ -937,6 +1061,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             result["markdown"] = "\n\n".join(page_md)
             result["clean_text"] = "\n\n".join(c for c in page_clean if c).strip()
             result["passages"] = passages
+        if tel is not None:
+            result["telemetry"] = tel.report()
         return result
     finally:
         if close:

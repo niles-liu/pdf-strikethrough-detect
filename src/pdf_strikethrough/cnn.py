@@ -391,6 +391,13 @@ def get_model_meta():
     return copy.deepcopy(_ensure_loaded()[1])
 
 
+def _loaded_meta():
+    """A copy of the loaded model's meta, or None when no model is loaded. Never loads one."""
+    import copy
+    model = _model
+    return copy.deepcopy(model[1]) if model is not None else None
+
+
 def _ensure_loaded():
     """The loaded ``(score_fn, meta)``, loading it on first use. Callers use the returned tuple,
     never the global, which a concurrent ``set_model_dir`` / ``ensure_model`` may reset."""
