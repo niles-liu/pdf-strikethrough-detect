@@ -13,8 +13,10 @@ import pytest
 
 import pdf_strikethrough as st
 from pdf_strikethrough import __main__ as cli
+from pdf_strikethrough import detect
 from pdf_strikethrough import markdown as md
 from pdf_strikethrough.detect import (MAX_RENDER_MPIX, RENDER_DPI, _downsample_gray, _working_dpi)
+from pdf_strikethrough.ocr import Word
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -70,6 +72,46 @@ def test_huge_mediabox_page_does_not_oom():
     doc.new_page(width=40000, height=40000)
     res = st.detect_pdf(doc)
     assert res["n_struck_final"] == 0
+
+
+def _over_budget_scan(side=1440):
+    """A scanned page `side` pt square (an image over the whole page; 1440 pt is 20 in, 16 Mpix at
+    200 dpi) of 60 pt text with "struck" struck, and its words."""
+    src = fitz.open()
+    sp = src.new_page(width=side, height=side)
+    sp.insert_text((100, 700), "keep this struck word", fontsize=60)
+    _solid_strike(sp, "struck", width=2.0)
+    words = [Word(w[4], (w[0] / side, w[1] / side, w[2] / side, w[3] / side))
+             for w in sp.get_text("words")]
+    doc = fitz.open()
+    page = doc.new_page(width=side, height=side)
+    page.insert_image(page.rect, pixmap=sp.get_pixmap(dpi=100))
+    return doc, words
+
+
+@pytest.mark.parametrize("source", ["words_by_page", "ocr"])
+def test_page_over_the_pixel_budget_is_rendered_end_to_end_within_it(monkeypatch, source):
+    # The blank page above is never rendered. This one is: a scanned page four times the budget
+    # at 200 dpi is rendered at 100 dpi, inside the budget, for detection and for the OCR call, and
+    # its strike is still found. The budget is scaled down from MAX_RENDER_MPIX (128): a page at
+    # that budget takes minutes and over a GB of arrays to run.
+    budget = 4
+    monkeypatch.setattr(detect, "MAX_RENDER_MPIX", budget)
+    doc, words = _over_budget_scan()
+    rendered, ocr_shapes = [], []
+    real = detect._render_gray
+    monkeypatch.setattr(detect, "_render_gray",
+                        lambda pg, dpi=RENDER_DPI: rendered.append(real(pg, dpi)) or rendered[-1])
+    kw = ({"words_by_page": {0: words}} if source == "words_by_page"
+          else {"ocr": lambda rgb: ocr_shapes.append(rgb.shape) or words})
+    with pytest.warns(UserWarning, match=f"{budget} Mpix raster budget"):
+        res = st.detect_pdf(doc, **kw)
+    gray, = rendered
+    assert gray.shape == (2000, 2000) and gray.size <= budget * 1_000_000
+    assert ocr_shapes == ([(2000, 2000, 3)] if source == "ocr" else [])
+    assert res["page_sources"] == ["scanned"]
+    assert any("rendering at 100 dpi" in w for w in res["warnings"])
+    assert [w["chars"] for w in res["words"] if w["final"]] == ["struck"]
 
 
 # ===== R-dash (dashed / flat-bezier native strikes) ===========================================

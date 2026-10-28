@@ -6,23 +6,18 @@ import inspect
 import warnings
 
 import numpy as np
-import pymupdf
 import pytest
 
 from pdf_strikethrough import cnn, detect, lines, markdown, native
 from pdf_strikethrough.ocr import Word
 from pdf_strikethrough.scanned import ScanConfig, analyze_scanned_page, classify_lines
+from _synth import _glyphs, _scanned_pdf
 
 DPI = 200
 
 
 def _page():
     return np.full((500, 900), 255, np.uint8)
-
-
-def _glyphs(gray, x0, x1, y0, y1, step=8, wide=3):
-    for x in range(x0, x1, step):
-        gray[y0:y1, x:x + wide] = 20
 
 
 def _struck(x1=700, solid=True):
@@ -143,16 +138,6 @@ def test_cnn_verdict_never_drops_a_native_record(monkeypatch, tier):
 
 
 # ------------------------------------------------------------- a page words_by_page misses
-
-def _scanned_pdf(n=2):
-    doc = pymupdf.open()
-    for _ in range(n):
-        page = doc.new_page(width=300, height=200)
-        pix = pymupdf.Pixmap(pymupdf.csGRAY, pymupdf.IRect(0, 0, 60, 40), False)
-        pix.set_rect(pix.irect, (250,))
-        page.insert_image(page.rect, pixmap=pix)
-    return doc.tobytes()
-
 
 def test_page_missing_from_words_by_page_names_words_by_page():
     """It still raises (as a partial di_result does), but no longer says no OCR backend was

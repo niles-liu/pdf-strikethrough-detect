@@ -5,32 +5,15 @@ import hashlib
 import json
 import pathlib
 
-import pymupdf as fitz
 import numpy as np
 import pytest
 
 import pdf_strikethrough as st
 from pdf_strikethrough import calibration
-from pdf_strikethrough.ocr import Word
+from _synth import _redline_image_png
 
 
 # ------------------------------------------------------------------------- fixtures
-
-def _redline_image_png(dpi=200):
-    """PNG bytes of a rendered page with a vector strike through 'struck', + its Word boxes."""
-    doc = fitz.open()
-    page = doc.new_page(width=300, height=120)
-    page.insert_text((20, 60), "keep struck", fontsize=20)
-    b = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}
-    r = b["struck"]
-    ymid = (r.y0 + r.y1) / 2
-    page.draw_line(fitz.Point(r.x0, ymid), fitz.Point(r.x1, ymid), width=1.5)
-    png = page.get_pixmap(dpi=dpi).tobytes("png")
-    W, H = page.rect.width, page.rect.height
-    words = [Word(w[4], (w[0] / W, w[1] / H, w[2] / W, w[3] / H)) for w in page.get_text("words")]
-    doc.close()
-    return png, words
-
 
 # ------------------------------------------------------------------------- R-cal calibration
 

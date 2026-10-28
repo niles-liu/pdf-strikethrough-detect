@@ -83,6 +83,7 @@ cache-keys = [{ file = "pyproject.toml" }, { file = "src/pdf_strikethrough/__ini
 [tool.pytest.ini_options]
 # The package's tests; benchmarks/frontier/tests run in that folder's own environment (its README).
 testpaths = ["tests"]
+pythonpath = ["tests"]   # the tests import their shared helpers from tests/_synth.py
 
 [tool.ruff]
 line-length = 100        # the codebase targets ~99 cols

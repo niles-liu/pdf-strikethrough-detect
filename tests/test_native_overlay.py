@@ -10,6 +10,7 @@ import pytest
 
 import pdf_strikethrough as st
 from pdf_strikethrough import native
+from _synth import _reopen
 
 FS = 12
 S = "\N{COMBINING LONG STROKE OVERLAY}"        # U+0336
@@ -30,10 +31,6 @@ def noto():
             pytest.fail(msg + "; the overlay tests would all be skipped")
         pytest.skip(msg)
     return font
-
-
-def _reopen(doc):
-    return pymupdf.open("pdf", doc.tobytes())
 
 
 def _page(noto, *parts):

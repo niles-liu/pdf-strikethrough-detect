@@ -2,3 +2,4 @@ include LICENSE README.md CHANGELOG.md
 include src/pdf_strikethrough/strike_verdict_cnn.onnx
 include src/pdf_strikethrough/strike_verdict_cnn.meta.json
 include src/pdf_strikethrough/py.typed
+include tests/_synth.py

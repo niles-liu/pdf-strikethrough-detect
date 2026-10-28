@@ -15,6 +15,7 @@ from pdf_strikethrough import detect
 from pdf_strikethrough.lines import to_gray_u8
 from pdf_strikethrough.ocr import Word
 from pdf_strikethrough.scanned import classify_lines
+from _synth import _final_chars
 
 
 def _page(highlight=None):
@@ -37,10 +38,6 @@ def _page(highlight=None):
     return gray, rgb, words
 
 
-def _struck(res):
-    return [w["chars"] for w in res["words"] if w["final"]]
-
-
 def _png(arr, **save):
     buf = io.BytesIO()
     Image.fromarray(arr).save(buf, format="PNG", **save)
@@ -55,14 +52,14 @@ def test_placeholder_metadata_dpi_is_not_trusted(meta_dpi):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         res = st.detect_image_file(_png(gray, dpi=(meta_dpi, meta_dpi)), words=words)
-    assert _struck(res) == ["struck"]
+    assert _final_chars(res) == ["struck"]
     assert any(f"{meta_dpi} dpi" in w and "placeholder" in w for w in res["warnings"])
 
 
 def test_real_metadata_dpi_is_trusted_silently():
     gray, _, words = _page()
     res = st.detect_image_file(_png(gray, dpi=(200, 200)), words=words)
-    assert _struck(res) == ["struck"] and res["warnings"] == []
+    assert _final_chars(res) == ["struck"] and res["warnings"] == []
 
 
 def test_transparent_png_reads_as_ink_on_white():
@@ -70,7 +67,7 @@ def test_transparent_png_reads_as_ink_on_white():
     rgba = np.zeros(gray.shape + (4,), np.uint8)       # black ink, alpha = how much ink
     rgba[..., 3] = 255 - gray
     res = st.detect_image_file(_png(rgba, dpi=(200, 200)), words=words)
-    assert _struck(res) == ["struck"]
+    assert _final_chars(res) == ["struck"]
 
 
 def test_exif_rotated_photo_is_turned_upright_for_ocr():
@@ -86,7 +83,7 @@ def test_exif_rotated_photo_is_turned_upright_for_ocr():
         seen.append(image.shape[:2])
         return words if image.shape[:2] == gray.shape else []
     res = st.detect_image_file(buf.getvalue(), ocr=ocr)
-    assert seen == [gray.shape] and _struck(res) == ["struck"]
+    assert seen == [gray.shape] and _final_chars(res) == ["struck"]
 
 
 def test_exif_rotation_with_supplied_words_warns():
@@ -106,7 +103,7 @@ def test_color_image_file_matches_the_array_and_pdf_conversion():
     frame = detect._image_frames(_png(rgb))[0][0]
     assert np.array_equal(frame, to_gray_u8(rgb))
     res = st.detect_image_file(_png(rgb, dpi=(200, 200)), words=words)
-    assert _struck(res) == _struck({"words": st.detect_scanned_image(rgb, words)})
+    assert _final_chars(res) == _final_chars({"words": st.detect_scanned_image(rgb, words)})
 
 
 def test_open_binary_file_is_accepted(tmp_path):
@@ -115,7 +112,7 @@ def test_open_binary_file_is_accepted(tmp_path):
     path.write_bytes(_png(gray, dpi=(200, 200)))
     with open(path, "rb") as f:
         res = st.detect_image_file(f, words=words)
-    assert _struck(res) == ["struck"] and res["source"] == str(path)
+    assert _final_chars(res) == ["struck"] and res["source"] == str(path)
 
 
 def test_file_is_released_after_a_decode_error(tmp_path):
@@ -211,7 +208,7 @@ def test_malformed_exif_block_is_read_as_no_rotation():
     gray, _, words = _page()
     buf = io.BytesIO()
     Image.fromarray(gray).save(buf, format="PNG", exif=b"Exif\x00\x00not-a-tiff", dpi=(200, 200))
-    assert _struck(st.detect_image_file(buf.getvalue(), words=words)) == ["struck"]
+    assert _final_chars(st.detect_image_file(buf.getvalue(), words=words)) == ["struck"]
 
 
 def test_tiff_orientation_is_applied_on_load_without_a_warning():
@@ -222,7 +219,7 @@ def test_tiff_orientation_is_applied_on_load_without_a_warning():
     frame, upright, _dpi = detect._image_frames(buf.getvalue())[0]
     assert frame.shape == gray.shape and upright is None
     res = st.detect_image_file(buf.getvalue(), words=words)
-    assert _struck(res) == ["struck"] and not any("EXIF" in w for w in res["warnings"])
+    assert _final_chars(res) == ["struck"] and not any("EXIF" in w for w in res["warnings"])
 
 
 def test_scan_config_takes_numpy_numbers_and_stores_floats():

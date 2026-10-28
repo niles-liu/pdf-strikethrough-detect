@@ -3,6 +3,7 @@ import numpy as np
 import pdf_strikethrough as st
 from pdf_strikethrough.ocr import Word
 from pdf_strikethrough.scanned import ScanConfig
+from _synth import _mixed_native_scanned_pdf, _synthetic_native_pdf
 
 
 def test_model_loads():
@@ -73,19 +74,6 @@ def test_partial_strike_wraps_only_struck_chars():
     from pdf_strikethrough import markdown as md
     rec = {"final": True, "partial": True, "char_span": (0, 5)}   # 'semi-' of 'semi-monthly'
     assert md.mark_word("semi-monthly", rec) == "~~semi-~~monthly"
-
-
-def _synthetic_native_pdf():
-    """Born-digital PDF: one line of text with a vector strike through 'deleted text'."""
-    import pymupdf as fitz
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    page.insert_text((72, 100), "keep this deleted text here", fontsize=12)
-    words = {w[4]: fitz.Rect(w[:4]) for w in page.get_text("words")}
-    r1, r2 = words["deleted"], words["text"]
-    ymid = (r1.y0 + r1.y1) / 2
-    page.draw_line(fitz.Point(r1.x0 - 1, ymid), fitz.Point(r2.x1 + 1, ymid), width=1.0)
-    return doc
 
 
 def test_native_vector_flag_and_both_on_synthetic_pdf():
@@ -598,14 +586,6 @@ def test_clean_text_immune_to_literal_tildes():
 
 
 # --------------------------------------------------------------------- v0.5.0 surface
-
-def _mixed_native_scanned_pdf():
-    """Page 0: native with a strike. Page 1: image-only (scanned)."""
-    doc = _synthetic_native_pdf()
-    scan = doc.new_page(width=595, height=842)
-    scan.insert_image(scan.rect, pixmap=doc[0].get_pixmap(dpi=72))
-    return doc
-
 
 def test_strikethroughs_in_pdf_warns_on_scanned():
     """A scanned page yields a silent [] for that page — warn so the caller knows to route it

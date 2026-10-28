@@ -12,12 +12,9 @@ from PIL import Image
 
 import pdf_strikethrough as st
 from pdf_strikethrough import detect, markdown as md, native
+from _synth import _reopen
 
 FS = 12
-
-
-def _reopen(doc):
-    return pymupdf.open("pdf", doc.tobytes())
 
 
 def _redline(deleted, inserted, prefix="ends in ", suffix=" each year."):

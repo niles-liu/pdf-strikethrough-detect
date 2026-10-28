@@ -101,16 +101,17 @@ def score(final, truth):
 
 def run_conf_split(docs):
     tot = hi = lo = 0
-    print(f"{'document':28s} {'final':>6s} {'conf>=gate':>11s} {'conf<gate':>10s}")
+    print(f"{'document':28s} {'final':>6s} {'conf>gate':>10s} {'conf<=gate':>11s}")
     for name, pdf, di in docs:
         final = _analyze(*_load(pdf, di))
-        n_hi = sum(1 for w in final if (w.get("conf") or 0.0) >= CLEAN_CONF)
+        # split where the veto splits (detect.apply_cnn_verdict): conf > max_clean_conf
+        n_hi = sum(1 for w in final if (w.get("conf") or 0.0) > CLEAN_CONF)
         n_lo = len(final) - n_hi
         tot += len(final); hi += n_hi; lo += n_lo
-        print(f"{name:28s} {len(final):6d} {n_hi:11d} {n_lo:10d}")
-    print(f"{'TOTAL':28s} {tot:6d} {hi:11d} {lo:10d}")
-    print(f"\ngate = ScanConfig.max_clean_conf = {CLEAN_CONF}. 'conf>=gate' is the high-confidence "
-          "clean-text\nover-flag the 0.9.1 veto targets; 'conf<gate' is the faint-scan "
+        print(f"{name:28s} {len(final):6d} {n_hi:10d} {n_lo:11d}")
+    print(f"{'TOTAL':28s} {tot:6d} {hi:10d} {lo:11d}")
+    print(f"\ngate = ScanConfig.max_clean_conf = {CLEAN_CONF}. 'conf>gate' is the high-confidence "
+          "clean-text\nover-flag the 0.9.1 veto targets; 'conf<=gate' is the faint-scan "
           "CNN-saturation residual\ntracked for the CNN retrain (issue #4·C/D).")
     return 0
 
