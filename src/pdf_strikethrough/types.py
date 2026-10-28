@@ -12,7 +12,7 @@ tier-specific keys as optional and branch on ``tier`` — or use ``.get(...)``.
 """
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Tuple, TypedDict
+from typing import Dict, List, Literal, Optional, Tuple, TypedDict
 
 # Version of the documented output shape (the keys below and their meaning), carried as
 # ``schema_version`` on every ``DetectResult`` and CLI --json / --jsonl payload. Bumped when a key
@@ -93,10 +93,47 @@ class GarbledWord(TypedDict, total=False):
     bbox_frac: BBoxFrac
 
 
+class PageTelemetry(TypedDict, total=False):
+    """One processed page (or image frame) in :class:`Telemetry`."""
+    page: int
+    source: str                  # as in page_sources
+    seconds: Dict[str, float]    # "render", "ocr", "detect": those the page ran
+    dpi: float                   # scanned: the resolution it was detected at
+    ocr_words: int               # scanned: the words its OCR or word source gave (absent when
+                                 # they came as an iterator with no length)
+    tiers: Dict[str, int]        # candidates per tier: layer 1's on a scanned page ("weak"
+                                 # included, which the CNN pass drops), the records on a native one
+    final: int                   # its words reported struck
+    skipped: bool                # present (True) when on_missing_ocr="skip" skipped it
+
+
+class CnnProbHistogram(TypedDict):
+    """The scanned records' ``cnn_prob``: ``counts[i]`` holds ``edges[i] <= p < edges[i + 1]``,
+    the last bin ``p == 1.0`` too."""
+    edges: List[float]
+    counts: List[int]
+    unscored: int                # crops too small to score (cnn_prob None)
+    invalid: int                 # NaN or outside [0, 1]: a broken model's output
+
+
+class Telemetry(TypedDict, total=False):
+    """``telemetry=True``'s report of one detect_pdf / detect_image_file call. JSON-ready."""
+    telemetry_version: int       # bumped when a key is removed, renamed or changes meaning
+    package: str                 # the package version
+    model: Optional[Dict[str, object]]   # get_model_meta()'s version and sha256 (+ external_data)
+                                         # of the model that scored; None when none was loaded
+    seconds: float               # the whole call
+    pages: List[PageTelemetry]
+    tiers: Dict[str, int]        # the pages' tiers, summed
+    final: int
+    cnn_prob: CnnProbHistogram
+
+
 class DetectResult(TypedDict, total=False):
-    """The dict returned by :func:`pdf_strikethrough.detect_pdf`. The last three keys are present
-    only when ``include_markdown=True`` (the default); ``pages`` is present only when a ``pages=``
-    subset was requested."""
+    """The dict returned by :func:`pdf_strikethrough.detect_pdf`. The ``markdown``,
+    ``clean_text`` and ``passages`` keys are present only when ``include_markdown=True`` (the
+    default); ``pages`` only when a ``pages=`` subset was requested; ``telemetry`` only with
+    ``telemetry=True``."""
     schema_version: int          # == SCHEMA_VERSION of the release that produced it
     source: Optional[str]
     page_count: int
@@ -109,10 +146,12 @@ class DetectResult(TypedDict, total=False):
     markdown: str
     clean_text: str
     passages: List[Passage]
+    telemetry: Telemetry
 
 
 # Re-exported so ``from pdf_strikethrough.types import ...`` covers the whole surface.
 __all__ = [
     "StruckWord", "Passage", "GarbledWord", "DetectResult", "SCHEMA_VERSION",
+    "Telemetry", "PageTelemetry", "CnnProbHistogram",
     "BBoxFrac", "CharSpan", "Tier", "Verdict",
 ]

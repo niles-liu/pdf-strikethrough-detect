@@ -11,6 +11,7 @@ builders from here too, so the shared payload shape has one home (the version is
 from __future__ import annotations
 
 import os
+import time
 import warnings
 
 from .types import SCHEMA_VERSION  # one version for the Python result and the CLI payloads
@@ -75,24 +76,54 @@ def _batch_scan_config(opts):
     return st.ScanConfig()
 
 
+def _docx_telemetry(recs, t0):
+    """A .docx's --telemetry report, shaped as detect_pdf's: no pages, render, OCR or model,
+    and its records counted by tier."""
+    from .detect import _Telemetry
+    rep = _Telemetry().report()
+    tiers = {}
+    for r in recs:
+        tiers[r["tier"]] = tiers.get(r["tier"], 0) + 1
+    rep.update(seconds=round(time.perf_counter() - t0, 4), tiers=tiers,
+               final=sum(1 for r in recs if r.get("final")))
+    return rep
+
+
+def _telemetry_line(source, payload):
+    """The --telemetry JSON line for one file's payload: its ``telemetry``, or its ``error``."""
+    from .detect import TELEMETRY_VERSION
+    if "error" in payload:
+        return {"telemetry_version": TELEMETRY_VERSION, "source": source,
+                "error": payload["error"]}
+    tel = payload["telemetry"]
+    return {"telemetry_version": tel["telemetry_version"], "source": source, **tel}
+
+
 def _detect_payload(path, opts):
     """Detect on one file and return a JSON-serializable payload (or an ``error`` one). Never
     raises — a batch of many files must not abort on one unreadable member (cloud-result flags,
-    which are single-result, don't apply in batch, so this path only uses the --ocr backend)."""
+    which are single-result, don't apply in batch, so this path only uses the --ocr backend).
+    With ``opts["telemetry"]`` the payload carries ``telemetry`` too."""
     import pdf_strikethrough as st
     ext = os.path.splitext(path)[1].lower()
+    telemetry = opts.get("telemetry", False)
     try:
         if ext == ".docx":
+            t0 = time.perf_counter()
             with open(path, "rb") as f:
                 recs = st.strikethroughs_in_docx(f.read())
             final = [r for r in recs if r.get("final")]
-            return {"schema_version": SCHEMA_VERSION, "source": path, "kind": "docx",
-                    "n_struck_final": len(final),
-                    "words": [{k: r[k] for k in _JSON_EVIDENCE if k in r} for r in recs]}
+            payload = {"schema_version": SCHEMA_VERSION, "source": path, "kind": "docx",
+                       "n_struck_final": len(final),
+                       "words": [{k: r[k] for k in _JSON_EVIDENCE if k in r} for r in recs]}
+            if telemetry:
+                payload["telemetry"] = _docx_telemetry(recs, t0)
+            return payload
         ocr = _get_ocr_cached(opts["ocr"])
         sc = _batch_scan_config(opts)
         if ext in st.detect.IMAGE_SUFFIXES:
-            res = st.detect_image_file(path, ocr=ocr, scan_config=sc, dpi=opts["dpi"])
+            res = st.detect_image_file(path, ocr=ocr, scan_config=sc, dpi=opts["dpi"],
+                                       telemetry=telemetry)
         else:
             with warnings.catch_warnings():  # its pages are in the payload's "warnings"
                 warnings.simplefilter("ignore", st.GarbledTextWarning)
@@ -100,13 +131,17 @@ def _detect_payload(path, opts):
                                     dpi=(opts["dpi"] if opts["dpi"] is not None
                                          else st.detect.RENDER_DPI),
                                     method=opts["method"],
-                                    on_missing_ocr="skip" if opts["ocr"] == "none" else "raise")
+                                    on_missing_ocr="skip" if opts["ocr"] == "none" else "raise",
+                                    telemetry=telemetry)
         final = [w for w in res["words"] if w.get("final")]
-        return {"schema_version": SCHEMA_VERSION, "source": path,
-                "page_count": res["page_count"], "page_sources": res["page_sources"],
-                "n_struck_final": len(final), "warnings": res.get("warnings", []),
-                "garbled_words": res.get("garbled_words", []),
-                "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
+        payload = {"schema_version": SCHEMA_VERSION, "source": path,
+                   "page_count": res["page_count"], "page_sources": res["page_sources"],
+                   "n_struck_final": len(final), "warnings": res.get("warnings", []),
+                   "garbled_words": res.get("garbled_words", []),
+                   "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
+        if telemetry:
+            payload["telemetry"] = res["telemetry"]
+        return payload
     except Exception as e:               # batch resilience: report it, don't abort the run
         return {"schema_version": SCHEMA_VERSION, "source": path,
                 "error": f"{type(e).__name__}: {e}"}

@@ -46,7 +46,7 @@ from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di
                   words_from_docai, words_from_textract)
 from .overlay import render_overlay, save_overlays
 from .scanned import ScanConfig, analyze_scanned_page
-from .types import DetectResult, GarbledWord, Passage, StruckWord
+from .types import DetectResult, GarbledWord, Passage, StruckWord, Telemetry
 
 # Library logging etiquette: attach a NullHandler so importing the package never emits records on
 # its own. Diagnostics (page routing, per-page record counts, OCR/CNN timing) are logged at DEBUG
@@ -79,7 +79,7 @@ __all__ = [
     # active learning + calibration
     "dump_crops",
     # typing
-    "StruckWord", "DetectResult", "Passage", "GarbledWord",
+    "StruckWord", "DetectResult", "Passage", "GarbledWord", "Telemetry",
     # submodules
     "active", "calibration", "cnn", "docx", "lines", "native", "ocr", "overlay", "scanned",
     "detect", "markdown", "types",
