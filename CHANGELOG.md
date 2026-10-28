@@ -363,6 +363,26 @@ All notable changes to this project are documented here. The format follows
   `strike_lines` takes about 10% longer on struck pages and 7% on strike-free bold headings. A
   strike thicker than about 3 pt is still over the 9 px cap, and a thin strike merged into bold
   glyph bars is still lost. `lines.SOLID_GLYPHS = 0` gives the previous behavior.
+- **The scanned path dropped struck words whose line ran a few px off the stroke.** Stitching can
+  run a line a few px above or below a thin or light stroke, along the glyph pieces it crosses.
+  Read from there, the ink on one side of the line is under the glyphs, so one of two tests
+  dropped the word: a line outside the word's middle band, or a short one, needs glyph ink on both
+  sides, and a long solid line with ink on one side only is taken for a table rule. A word either
+  test drops is now tried again at the stroke's own row: the row within 4 px of the line (at 200
+  dpi, scaled with the dpi) whose unbroken run of ink covers the most of the columns the word
+  shares with the line, and at least 80% of them. The tests themselves are unchanged, and a word
+  they pass is judged as before. On the half of each set not used for tuning, struck sub-tokens
+  found rose from 2,707 to 2,797 of 3,560 on newly generated synthetic pages from the frontier
+  benchmark, from 2,599 to 2,631 of 2,798 on the dev pages of its public redline corpus, and from
+  5,548 to 5,561 of 5,752 on Senate bills published before its cutoff, with none lost. Three live
+  sub-tokens were newly marked, all in partly struck words: two struck words already found took
+  one or two more characters, and one OCR box holding a live word and the struck word after it
+  was marked whole. A stroke over less than 80% of those columns, or more than 4 px off, is still
+  lost. The reach was tuned at 200 dpi. At 72 and 100 dpi it is 1 or 2 px, and glyph rows of
+  serif and bold text can run as far as a stroke: on synthetic pages at those resolutions it
+  found 350 and 710 more struck words, and marked 97 and 10 more live ones. A scanned page's
+  detection takes 1.5 to 3.2% longer on average, OCR aside, and up to 1.17 times as long on one
+  page. `scanned.STROKE_SNAP_PX = 0` gives the previous behavior.
 
 ## [0.12.1] — 2026-10-08
 
