@@ -19,8 +19,8 @@ All notable changes to this project are documented here. The format follows
   audits and the limitations, with its tables in `benchmarks/frontier/results/`, every prompt
   template it used in `benchmarks/frontier/prompts/`, and each change to a rule since `prereg-1` in
   `benchmarks/frontier/DEVIATIONS.md`. A new `.gitattributes` checks `benchmarks/frontier/` out
-  byte for byte, so its files match the sha256s the pre-registration pins on every platform. The README gains the run's
-  summary, in the form the pre-registration fixed.
+  byte for byte, so its files match the sha256s the pre-registration pins on every platform. The
+  README gains the run's summary, in the form the pre-registration fixed.
 - **The benchmark's harness and scorer are in `benchmarks/frontier/`:** the code, its tests, its
   config and its pinned environment, committed as their history from `prereg-2` on, with a README
   on checking the code against the pre-registration's pins and re-scoring the run from the Hugging
@@ -122,8 +122,7 @@ All notable changes to this project are documented here. The format follows
   cannot be moved.
 - **CI's copies of the dependency pins can no longer drift from `pyproject.toml`.** The lint job
   reads ruff's version from the `dev` extra instead of keeping its own copy, and moves to
-  ruff-action v4.1.0 (Node 24; v4 has no floating major tag, which is why Dependabot never offered
-  it). The `lowest-bounds` job still copies the dependency floors, and
+  ruff-action v4.1.0. The `lowest-bounds` job still copies the dependency floors, and
   `tests/test_dependency_floors.py` now fails when its copy and `pyproject.toml` disagree. The
   `pymupdf` floor may rise above `native.FLAG_MIN_PYMUPDF` (1.26.6, where the flag detector's
   1.26.3–1.26.5 crash ends), but still not fall below it.
@@ -151,15 +150,11 @@ All notable changes to this project are documented here. The format follows
   default recognizer reads Chinese and Japanese as well as English, and on English redlines it read
   small marks as CJK characters, which reached `clean_text` as inserted text: a table's footnote
   marker `(a)` as `(斗)`, an `=` in an equation as `二`. On a page where no two CJK characters (Han,
-  kana, Hangul, bopomofo) come one right after the other in reading order (inside a word, or the
-  last of one word and the first of the next, across a line break too; a digit in between breaks
-  the run), the backend now removes each one: a word left empty is dropped, and one inside a word
-  becomes a space. Real CJK goes too when it stands alone like that: `100 円`, `5 個` and `7 元` lose
-  the unit, and `Article 1 (第1条)` reads `(1)`. A page with CJK text, where the characters come in
-  runs, is returned as read, and CJK punctuation and fullwidth forms are kept.
-  `drop_lone_cjk=False` keeps every character; it applies to an engine passed as `engine=` too. The
-  CLI's `--ocr rapidocr` always removes them; to keep them, call `detect_pdf()` from Python with
-  `ocr=rapidocr_backend(drop_lone_cjk=False)`.
+  kana, Hangul, bopomofo) come one right after the other in reading order, the backend now removes
+  each one: a word left empty is dropped, and one inside a word becomes a space. Real CJK standing
+  alone goes too (`100 円` loses the unit); a page with runs of CJK text is returned as read, and CJK
+  punctuation and fullwidth forms are kept. `drop_lone_cjk=False` keeps every character, also for
+  an engine passed as `engine=`. The CLI's `--ocr rapidocr` always removes them.
 - **CI's extras job now runs the RapidOCR adapter's tests** against the real engine. The test jobs
   don't install RapidOCR, so its one real-engine test was always skipped there.
 - **`detect_scanned_image`, `analyze_scanned_page` and `scanned.classify_lines` default to
@@ -244,10 +239,8 @@ All notable changes to this project are documented here. The format follows
   installed. The extra now takes `pymupdf4llm>=0.0.27,<2` on Python 3.10 and PyMuPDF 2.0 on 3.11
   and later. On 3.11 and later, `[markdown]` with PyMuPDF pinned below 2.0 now fails to resolve:
   to stay below 2.0 there, install the base package with `pymupdf4llm<2` instead of the extra.
-  Dependabot is told not to lift the `<2` cap.
-  New tests cover `clean_markdown()`, which no test called before. Detection output on the
-  benchmark corpus is unchanged under 2.0; `clean_markdown()`'s layout changes in places, mostly
-  around equations.
+  Detection output on the benchmark corpus is unchanged under 2.0; `clean_markdown()`'s layout
+  changes in places, mostly around equations.
 - **`clean_markdown()` wrote to stdout.** On PyMuPDF 2.0, pymupdf4llm prints a "Document parser
   messages" banner on every call ("RapidOCR is missing" without RapidOCR, "Using RapidOCR" with
   it), and older pymupdf4llm releases print a hint on their first call. Both now go to stderr,
@@ -267,9 +260,6 @@ All notable changes to this project are documented here. The format follows
 - **`training/train_strikenet.py` checked its validation split only after training**, and one
   labeled crop crashed it on an empty training split. It now stops before the first epoch and
   says what the split lacks; the same seed still gives the same split and model.
-- **A test pinned the wrong switch.** The chain-gate escape test ran `ScanConfig.ruled_forms()`,
-  whose printed-rule veto removes the line before the escape is reached, so nothing tested
-  `rescue_clean_chains=False`; now one test does, and another pins the veto's order.
 - **One RapidOCR word box off the page no longer loses the whole document.** RapidOCR can place a
   word partly or wholly past the edge of the page (the last word of one equation line ran from
   0.78 to 1.57 of the page width). `Word` refuses a box past 1.5, its guard against pixel
@@ -277,13 +267,11 @@ All notable changes to this project are documented here. The format follows
   `detect_image_file()` and the call raised, so nothing came back. The backend now clamps each word
   box to the page, so a word placed wholly off it keeps its text on a zero-width box at the edge; a
   box only slightly past the edge, which `Word` accepted before, is clamped too.
-- **The README said RapidOCR reads every CJK script and that CJK scans work end to end.** Its
-  default model has no Hangul; the README now gives a runnable Korean route (rapidocr 3.3 or
-  later, Python only). On CJK scans the scanned path takes the horizontal stroke inside many
-  characters (을, 王, 三) for a strike: on synthetic 200-dpi sans-serif scans it marked 13–28% of
-  unstruck Korean, Chinese and Japanese words struck, and no English ones. The README says to
-  check a CJK scan's struck words, and its scope table now lists text-layer CJK PDFs and scans
-  separately.
+- **The README said RapidOCR reads every CJK script and that CJK scans work end to end.** RapidOCR's
+  default model has no Hangul; the README now gives a Korean route (rapidocr 3.3 or later, Python
+  only), says to check a CJK scan's struck words (on synthetic 200-dpi sans-serif scans the scanned
+  path marked 13–28% of unstruck Korean, Chinese and Japanese words struck, and no English ones),
+  and lists text-layer CJK PDFs and scans separately in its scope table.
 - **A strike line leaning more than 2° and rising more than 1.5 pt struck nothing.** The vector
   detector kept a line only when it rose at most 1.5 pt or leaned at most 2°, so a line-tool strike
   drawn by hand across a word was often dropped. Lines leaning up to 12° now count, each word
@@ -322,15 +310,11 @@ All notable changes to this project are documented here. The format follows
   only pages with words, so `detect_pdf()` and the CLI's `--textract-result` raised on a scanned
   page with none. Every page in the result is now a key, with an empty list when it has no usable
   words, as Document AI and Azure DI already report it.
-- **`clean_markdown()`'s docstring and the README now say what MuPDF's strikeout flag does.**
-  `clean_markdown()` removes what pymupdf4llm marks `~~`, which is MuPDF's strikeout flag, and the
-  flag can take in the character a strike ends against when no space separates them: the `M` of a
-  `May` printed straight after a struck `December` goes too, as it does with `method="flag"`, more
-  often under PyMuPDF 2.0 than earlier versions. `method="vector"` and `"both"` stop at the struck
-  characters. The docs also say that `flag` and `annot` find nothing on U+0336 overlay strikes,
-  which `clean_markdown()` drops itself, code blocks included, and that it keeps text the flag
-  marks where pymupdf4llm sets it as a code block, such as a paragraph set entirely in a monospaced
-  font. No code changes.
+- **`clean_markdown()`'s docstring and the README now say what MuPDF's strikeout flag does:** it
+  can take in the character a strike ends against when no space separates them (the `M` of a `May`
+  printed straight after a struck `December`), as `method="flag"` can, more often under PyMuPDF
+  2.0 than before; `method="vector"` and `"both"` stop at the struck characters. The docstring also says how
+  `clean_markdown()` treats U+0336 overlays and code blocks. No code changes.
 - **Under the Azure DI calibration, scanned words with no OCR confidence scored at most 0.60.**
   With `ScanConfig()` and words that carry no confidence, the chain gate already ran without
   confidences, but the evidence score kept its confidence term and read every word as clean
@@ -410,6 +394,14 @@ All notable changes to this project are documented here. The format follows
   reads at exactly 0.955 in both 0.9.0 and 0.9.1, so the 0.9.1 figures it reproduces become 94 → 21
   (−78%) high-confidence over-flags, not 95 → 22 (−77%). The struck-final counts (188 → 115) are
   unchanged.
+- **The docs said a few things that were no longer true.** `SECURITY.md` said the package makes no
+  network calls, but `cnn.ensure_model` downloads the URL it is given. The failing-page issue
+  template said `--dump-crops` exports only the affected crops and leaks no surrounding text; it
+  exports every scored crop with its OCR text, and `--pages` limits it to the pages named. The
+  README said the package exports about 37 names (it exports 47, all in its table), its relative
+  links broke on PyPI, and its quick starts passed `ScanConfig.confidence_free()`, which `ocr=`
+  already implies. The README, `CONTRIBUTING.md` and the benchmark docs now say each thing once,
+  and most code comments no longer tell their own history. No code changes.
 
 ## [0.12.1] — 2026-10-08
 

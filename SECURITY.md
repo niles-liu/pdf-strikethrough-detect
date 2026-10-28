@@ -3,19 +3,21 @@
 ## Scope
 
 `pdf-strikethrough-detect` parses **untrusted PDFs and images**. PDF and image parsing is done by
-third-party libraries (PyMuPDF, Pillow, ONNX Runtime, and — for scanned pages — an OCR backend you
+third-party libraries (PyMuPDF, Pillow, ONNX Runtime, and, for scanned pages, an OCR backend you
 choose). Most parser-level vulnerabilities therefore live in those dependencies; keep them current.
 
-This package makes **no network calls** and executes no code from the documents it reads. It does
-not accept or store credentials. Password-protected PDFs are rejected with `EncryptedPdfError`
-rather than being decrypted.
+This package makes **no network calls** except `cnn.ensure_model` (below), which fetches only a URL
+you pass, and executes no code from the documents it reads. It does not accept or store
+credentials. Password-protected PDFs are rejected with `EncryptedPdfError` rather than being
+decrypted.
 
 A few defensive choices worth knowing:
 
 - The torch checkpoint loader (only reached if you point `PDF_STRIKETHROUGH_MODEL_DIR` at a `.pt`
   file) uses `torch.load(..., weights_only=True)`, so a malicious checkpoint cannot execute
   arbitrary pickle code.
-- The shipped model's crop/pad geometry is validated against the code constants at load time.
+- Any crop/pad geometry a model records (in its ONNX meta or `.pt` checkpoint) is checked against
+  the code constants at load time.
 - `cnn.ensure_model(url, sha256, ...)` (opt-in, for loading a model off the network) verifies the
   downloaded bytes against the caller-supplied sha256 *before* the model is written or loaded; a
   mismatch raises and nothing is kept, so a tampered host or a man-in-the-middle cannot swap in a
@@ -24,7 +26,7 @@ A few defensive choices worth knowing:
 ## Resource limits
 
 Rendering a scanned page allocates a raster of `page_size × dpi²` pixels, so a hostile
-document — a huge mediabox, or an absurd requested DPI — could otherwise exhaust memory. Two
+document (a huge mediabox, or an absurd requested DPI) could otherwise exhaust memory. Two
 guards bound this:
 
 - **Per-page raster budget (128 Mpix).** A page that would exceed it is rendered at a

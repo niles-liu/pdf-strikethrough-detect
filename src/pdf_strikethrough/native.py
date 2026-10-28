@@ -4,10 +4,11 @@ ground truth (no OCR, no model, no guessing).
 In born-digital documents a strikethrough is a DRAWING: a thin horizontal vector line ("l"
 item), a thin filled bar ("re"/"qu" item, or a thin fill-only path), or — dashed or curve-drawn — a
 run of short segments / a flat cubic bezier ("c" item), all painted over the text. A word is struck
-when the merged stroke coverage through its STRIKE BAND reaches half its width; smaller coverage
-that still spans >= 2 characters is a genuine partial strike ('semi-' of 'semi-monthly', '19' of
-'192012'). The band is measured from the glyph baseline (the characters' origins) in ems of the
-height the glyphs are drawn at: STRIKE_BAND_LO..STRIKE_BAND_HI above the baseline (to
+where a stroke runs through its STRIKE BAND, fully or in part ('semi-' of 'semi-monthly', '19' of
+'192012'); where its character boxes are estimated, or the stroke enters it from outside, the
+grazing guards of :func:`_struck_span` drop a stroke end that only clips it. The band is measured
+from the glyph baseline (the characters' origins) in ems of the height the glyphs are drawn at:
+STRIKE_BAND_LO..STRIKE_BAND_HI above the baseline (to
 STRIKE_BAND_HI_LEVEL for a level stroke), so an underline drawn at or under the baseline and an
 overline or rule above the letters are not strikes, in every font. A word whose character origins
 are missing, on more than one baseline, or at odds with its box uses the box-share band instead
@@ -46,11 +47,12 @@ import threading
 import unicodedata
 from collections import namedtuple
 
-import pymupdf  # (formerly imported as the deprecated `fitz` alias)
+import pymupdf
 
-# word-level strike thresholds (fractions of word width covered by strike-band strokes)
-STRUCK_COV = 0.50        # >= this: struck (full when every character is struck, else partial)
-PARTIAL_COV = 0.25       # >= this AND >= 2 chars: partial strike; below = grazing stroke end
+# grazing guards (see _struck_span): where a word's character boxes are estimated, or the stroke
+# enters it from outside, a struck run is kept only at these shares of the word (its `coverage`)
+STRUCK_COV = 0.50        # >= this: kept, however few characters the run holds
+PARTIAL_COV = 0.25       # >= this AND >= 2 chars: kept; below = a grazing stroke end
 CHAR_STRUCK_COV = 0.50   # a character is struck when the strike covers this much of its width
 MIN_STROKE_LEN = 3.0     # pt; a strike stroke (or a chained run of dashes) is at least this long
 MAX_STROKE_SLOPE = math.tan(math.radians(12.0))  # a strike line leans at most this much...
@@ -1491,9 +1493,10 @@ def page_strikes(page, page_index, method="vector", words=None, _garbled=None, _
             out.append(r)
         elif _displaces(r, cov):
             out = [r if x is cov else x for x in out]
-    # annotations: add the record where nothing covers it, else GRAFT its forensics onto the
-    # covering record — a PDF annotation's appearance stream is also caught by the vector/flag
-    # paths, so a union that merely dropped it would lose the author/date/color evidence.
+    # annotations: add the record where nothing covers it, replace an overlay-only record it
+    # displaces (_displaces), else GRAFT its forensics onto the covering record: a PDF
+    # annotation's appearance stream is also caught by the vector/flag paths, so a union that
+    # merely dropped it would lose the author/date/color evidence.
     for a in native_annot_strikes(page, page_index, words, _chars=chars, _garbled=_garbled):
         cov = _covering_record(out, a)
         if cov is None:

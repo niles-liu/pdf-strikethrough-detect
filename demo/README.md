@@ -1,8 +1,8 @@
-# Demo — Gradio app
+# Demo: Gradio app
 
 A drag-and-drop web UI: drop in a PDF or a scan and see the detected strikethroughs boxed on the
-page, plus the struck-aware markdown and the surviving clean text. It's the adoption front door —
-the fastest way for someone to see what the package does without writing any code.
+page, plus the struck-aware markdown and the surviving clean text. Live at
+[huggingface.co/spaces/niles-liu/strikethrough-demo](https://huggingface.co/spaces/niles-liu/strikethrough-demo).
 
 ## Run locally
 
@@ -21,14 +21,11 @@ PDFs only, skipping scanned pages and declining image uploads with a note.
 1. Create a new **Gradio** Space. As of October 2026, Hugging Face needs a PRO account to host a
    new Gradio Space on free CPU hardware; an existing Space keeps building and running for free.
 2. Add `demo/app.py` as the Space's `app.py`, and `demo/requirements.txt` as its `requirements.txt`.
-3. Push — the Space builds and serves the same UI. On a free account, `hf upload` fails with
+3. Push: the Space builds and serves the same UI. On a free account, `hf upload` fails with
    `402 Payment Required` even when the Space exists, because it tries to create the Space first;
    push with `huggingface_hub.HfApi().upload_folder(..., repo_type="space")` instead.
 4. Check the startup log for `OCR unavailable`. RapidOCR pulls in headless OpenCV, so the Space
    needs no system packages; that line means an OCR dependency failed to install or load.
-
-Launch it alongside the StrikeNet model card (see `training/`) so the demo and the model land
-together.
 
 ## Notes
 

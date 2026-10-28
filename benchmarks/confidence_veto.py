@@ -3,10 +3,10 @@
 Runs the scanned Azure-DI path over a directory of scanned, tightly-ruled table/form PDFs.
 
 Default mode reports the struck-final count per document, split by OCR confidence: the
-high-confidence population the 0.9.1 DI-confidence veto targets vs the low-confidence faint-scan
-residual left to a CNN retrain. This is the reproduction harness for the v0.9.1 correctness patch.
+high-confidence population the DI-confidence veto targets vs the low-confidence faint-scan
+residual left to a CNN retrain.
 
-``--ab`` mode is the reproduction harness for the **v0.10.0 printed-rule veto** (issue #7): it runs
+``--ab`` mode measures the **printed-rule veto** (issue #7): it runs
 each document twice, with ``ScanConfig()`` and with ``ScanConfig.ruled_forms()``, and reports the
 change. When the corpus ships a `ground-truth.json` it scores TP / FP / FN against it instead of
 quoting raw counts — a raw struck-final count is NOT a false-positive count, because it includes the

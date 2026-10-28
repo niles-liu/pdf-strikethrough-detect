@@ -18,8 +18,8 @@ Document Intelligence, whose struck words drop to 0.43-0.94 while clean text sit
 Other engines score differently (RapidOCR clusters near 1.0), so the functions that take a
 ``ScanConfig`` default to ``ScanConfig.confidence_free()``, except ``detect_pdf`` with a
 ``di_result``. That config disables every confidence-dependent decision (chain rejection,
-ink-fail rescue, and the confidence term of the evidence score), so detection rests on geometry +
-the CNN alone.
+ink-fail rescue, the DI-confidence veto, line support's clean-text check, and the confidence term
+of the evidence score), so detection rests on geometry + the CNN alone.
 Pass ``ScanConfig.azure_di()`` when you give Azure DI words to ``detect_scanned_image``,
 ``analyze_scanned_page`` or ``scanned.classify_lines``.
 """
@@ -50,7 +50,7 @@ class Word:
             raise ValueError(
                 f"Word.bbox must be normalized page fractions in [0,1], got {self.bbox!r} "
                 "(these look like pixel coordinates — divide by the image width/height)")
-        x0, y0, x1, y1 = self.bbox             # corners in order: (x1, y0, x0, y1) matched nothing
+        x0, y0, x1, y1 = self.bbox             # corners put in order: a swapped box would match nothing
         object.__setattr__(self, "bbox", (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
         if self.confidence is not None:        # a plain float, so dump_crops can json.dump it
             object.__setattr__(self, "confidence", float(self.confidence))
@@ -103,8 +103,8 @@ def words_from_azure_di(di_page) -> list[Word]:
     pw = di_page.get("width")
     ph = di_page.get("height")
     if not pw or not ph:
-        # falling back to 1.0 turned the polygons (in inches) into inch-unit "fractions" far
-        # outside [0,1] that silently detect nothing — fail loudly instead.
+        # a fallback of 1.0 would leave the polygons in inches, "fractions" far outside [0, 1]
+        # that silently detect nothing: fail loudly instead
         raise ValueError(
             "Azure DI page is missing a non-zero 'width'/'height'; cannot normalize word "
             f"polygons to page fractions (got width={pw!r}, height={ph!r})")

@@ -9,11 +9,12 @@ native pages are still fully processed. A ``.docx`` reads strike formatting + tr
 straight from the markup (no OCR).
 
 Batch: pass several files, a directory, or a glob (`detect *.pdf --jobs 4 --jsonl out.jsonl`), or
-ask for ``--jsonl``, and each file is processed independently — JSONL output (one result object
+ask for ``--jsonl``, and each file is processed independently: JSONL output (one result object
 per line, written as each file finishes), optional multiprocessing across files (``--jobs N``),
 and one bad file never aborts the run (its line carries an ``error`` key). The mode follows the
 form of the arguments, not the number of files they match: a directory holding one file is still
-a batch. Per-file output flags (--markdown/--overlay/cloud results/--pages) are single-file only.
+a batch. Per-file flags (--markdown, --clean-text, --provenance, --overlay, --dump-crops,
+--on-garbled, the cloud results and --pages) are ignored in batch mode, with a warning.
 
 Results go to stdout (UTF-8 when written to '-') and status lines to stderr, so `--json -` and
 `--markdown -` pipe cleanly. ``--telemetry FILE`` appends one JSON line per document to FILE: the
@@ -352,8 +353,8 @@ def _cmd_detect_single(args, path):
             print("", file=sys.stderr, flush=True)          # newline after the last page
     progress = _progress if sys.stderr.isatty() else None
 
-    # no-word-source on an uncovered scanned page raises with 'raise'; skip when the user opted out
-    # of OCR entirely (--ocr none and no cloud result), else let it raise so the gap is loud.
+    # skip an uncovered scanned page only when the user opted out of OCR (--ocr none and no cloud
+    # result); otherwise raise, so the gap is loud
     have_words = di_result is not None or words_by_page is not None
     on_missing_ocr = "skip" if (args.ocr == "none" and not have_words) else "raise"
     try:

@@ -18,7 +18,7 @@ pip install -e ".[dev,markdown]"
 pytest tests/ -q
 ```
 
-The suite is self-contained — it synthesizes its own PDFs and images, so no fixtures to download.
+The suite is self-contained: it synthesizes its own PDFs and images, so no fixtures to download.
 It runs in well under a minute on CPU.
 
 ## Linting
@@ -44,29 +44,22 @@ pip install -e ".[torch]" onnx       # torch's ONNX exporter imports onnx
 python tools/export_model.py --ckpt path/to/strike_verdict_cnn.pt
 ```
 
-The exported `meta.json` records the crop/pad geometry the model was trained with; the loader
-asserts it matches the code constants in `cnn.py`, so a mismatched re-export fails loudly rather
-than silently feeding off-distribution crops.
-
 ## Adding a test document
 
-The most useful contribution is a real redline PDF the detector gets wrong. If you can share one
-(public documents only, please), open an issue with the PDF and a note on which words are struck.
-For scanned samples, `examples/scanned_quickstart.py` shows how a born-digital PDF is rasterized
-into a synthetic scan for testing.
+The most useful contribution is a real redline PDF the detector gets wrong. Open a
+["contribute a failing page"](.github/ISSUE_TEMPLATE/failing-page.md) issue (public documents
+only, please); it also says what to send when the file can't be shared. For scanned samples,
+`examples/scanned_quickstart.py` shows how a born-digital PDF is rasterized into a synthetic scan.
 
 ## PRs
 
 - Keep changes focused; one concern per PR.
 - Add a regression test for any bug fix or new behavior (the suite is where the project's
   correctness guarantees live).
-- Run `pytest` and `ruff check .` before opening the PR — CI runs both across Linux/macOS/Windows
-  and Python 3.10–3.14.
+- Run `pytest` and `ruff check .` before opening the PR. CI runs ruff once, and pytest on Linux
+  (Python 3.10 to 3.14) and on Windows and macOS (3.10 and 3.13).
 - Update `CHANGELOG.md` under the `## [Unreleased]` heading.
 - **Before blaming a red check on your diff, look at which step failed.** A job that dies in
-  `Set up job` at `Getting action download info` (`Service Unavailable` / `Bad Gateway` /
-  `Internal Server Error`, two retries, then abort) never reached checkout, install or pytest — it is
-  a GitHub Actions outage, not your code. The tell is a job that "failed" after several minutes when
-  its green siblings finish in well under one. Re-run the failed jobs rather than reverting; an
-  outage strikes a random subset of jobs per run, so an unrelated branch failing different jobs in
-  the same window is confirmation. This cost PR #10 a needless revert on 2026-08-06 (see #12).
+  `Set up job` at `Getting action download info` (`Service Unavailable`, `Bad Gateway` or
+  `Internal Server Error`) never reached your code: it is a GitHub Actions outage. Re-run the
+  failed jobs rather than reverting.

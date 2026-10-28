@@ -292,8 +292,8 @@ def test_short_tick_or_box_of_any_kind_over_one_digit_is_not_a_strike(draw):
 
 def test_fraction_bar_beside_a_full_size_character_is_not_a_strike():
     # TeX sets '(0, 3/2, 2]' with a small 3 over a small 2 and the comma at full size, and the
-    # extractor reads '2,' as one word: the 4.5 pt bar crosses that word's middle band, but it sits
-    # above the small 2's own middle band
+    # extractor reads '2,' as one word: the 4.5 pt bar crosses that word's strike band, but it sits
+    # above the small 2's own strike band
     doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((72, 200), "over (0, ", fontsize=10)

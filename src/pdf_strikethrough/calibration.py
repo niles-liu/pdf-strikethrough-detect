@@ -1,4 +1,4 @@
-"""Threshold calibration for the CNN operating point (R-cal).
+"""Threshold calibration for the CNN operating point.
 
 StrikeNet emits a strike probability in [0, 1]; a deployment turns that into a struck/clean
 decision at a threshold. These helpers pick that threshold *from labeled data* instead of the
@@ -67,7 +67,7 @@ def threshold_for_precision(probs, labels, target_precision):
     p, y = _as_arrays(probs, labels)
     if not 0.0 < target_precision <= 1.0:
         raise ValueError("target_precision must be in (0, 1]")
-    order = np.argsort(-p)                        # consider words in descending-probability order
+    order = np.argsort(-p)
     ps, ys = p[order], y[order]
     tp = np.cumsum(ys)
     fp = np.cumsum(~ys)

@@ -19,25 +19,23 @@ dataset and fetched and verified the same way, so that benchmark needs no Azure 
 | [`confirmation_rate.py`](confirmation_rate.py) | "99.8% of vector detections confirmed by the flag signal (99.6–100% per doc)" (README + `native.py`) | just the PDFs |
 | [`scanned_recovery.py`](scanned_recovery.py) | the "Choosing an OCR backend" recovery table: RapidOCR, and Azure DI under its default calibration and `confidence_free()` | the PDFs + the cached DI results + `[rapidocr]` |
 | [`prep_scanned_di.py`](prep_scanned_di.py) | *(one-time asset generator for the above)* rasterizes struck pages, runs Azure DI once, caches the result | an Azure DI key in the repo `.env` |
-| [`confidence_veto.py`](confidence_veto.py) | the ruled-forms precision numbers (issues #4, #7) — `--ab` scores the printed-rule veto, `--switches` scores all four combinations of the two provisional switches | a **private** ruled-form corpus + per-doc `di-result.json` + a `ground-truth.json` label set |
+| [`confidence_veto.py`](confidence_veto.py) | the ruled-forms precision numbers (issues #4, #7): `--ab` scores the printed-rule veto, `--switches` scores all four combinations of the two provisional switches | a **private** ruled-form corpus + per-doc `di-result.json` + a `ground-truth.json` label set |
 
-`confirmation_rate.py` needs only the PDFs and no cloud access — start there. `scanned_recovery.py`
+`confirmation_rate.py` needs only the PDFs and no cloud access; start there. `scanned_recovery.py`
 is the reproducible scanned-path benchmark on this (born-digital) corpus: it rasterizes the redline
 pages into image-only "scans" and scores recovery against the native detector's known strikes.
 
 `confidence_veto.py` is the odd one out: it scores **precision on degraded ruled forms**, and the
 corpus it needs is private (real ruled-form paperwork), so it is not reproducible from this
-repo alone — point it at your own labeled set with `PDF_STRIKETHROUGH_CORPUS_DIR`. It is still the
+repo alone: point it at your own labeled set with `PDF_STRIKETHROUGH_CORPUS_DIR`. It is still the
 script that produces every ruled-forms figure quoted in the README and CHANGELOG, and it scores
 against a label set rather than counting detections, because **a struck-final count is not a
-false-positive count** — it includes the real strikes.
+false-positive count**: it includes the real strikes.
 
 [`frontier/`](frontier/) holds a pre-registered benchmark against frontier models: can they do this
-package's job, finding struck text and keeping it out of the live text? Its results are in
-[`frontier/RESULTS.md`](frontier/RESULTS.md); its rules in [`frontier/PREREG.md`](frontier/PREREG.md),
-the reasons in [`frontier/PLAN.md`](frontier/PLAN.md), and each change to a rule in
-[`frontier/DEVIATIONS.md`](frontier/DEVIATIONS.md); its prompts in [`frontier/prompts/`](frontier/prompts/);
-and its code, with how to re-score the run, in [`frontier/README.md`](frontier/README.md).
+package's job, finding struck text and keeping it out of the live text? Start at
+[`frontier/README.md`](frontier/README.md), which links its results, rules, reasons, deviations and
+prompts and says how to re-score the run.
 Its requests, responses, scores and labels are in the dataset above, under `frontier/`.
 
 ## Manifest schema
@@ -64,13 +62,13 @@ Its requests, responses, scores and labels are in the dataset above, under `fron
 }
 ```
 
-- `name`, `file`, `url`, `sha256` — required for every entry. `file` is resolved under `corpus_dir`.
-- `scanned_pages` — optional; the original page indices `scanned_recovery.py` rasterizes and
+- `name`, `file`, `url`, `sha256`: required for every entry. `file` is resolved under `corpus_dir`.
+- `scanned_pages`: optional; the original page indices `scanned_recovery.py` rasterizes and
   scores, which are the pages the cached DI result was captured on. Entries without it are not part
   of that benchmark.
-- `scanned_pdf` — the rasterized pages `prep_scanned_di.py` sent to Azure DI, kept under
+- `scanned_pdf`: the rasterized pages `prep_scanned_di.py` sent to Azure DI, kept under
   `corpus_dir` for reference. The benchmark rebuilds the same raster in memory and does not read it.
-- `scanned_di_result`, `scanned_di_url`, `scanned_di_sha256` — the cached Azure DI analyze-result
+- `scanned_di_result`, `scanned_di_url`, `scanned_di_sha256`: the cached Azure DI analyze-result
   JSON for those pages, where to download it, and its digest. `fetch_corpus.py` downloads and
   verifies it like a PDF, and `scanned_recovery.py` checks the digest before reading it.
   `prep_scanned_di.py` writes all three except the URL, which is set once the file is uploaded.
@@ -88,5 +86,5 @@ python scanned_recovery.py
 ```
 
 Each script errors clearly if the manifest is empty, a file is missing (printing its download URL),
-or a sha256 doesn't match — so a stale or drifted corpus fails loudly instead of quietly changing
+or a sha256 doesn't match, so a stale or drifted corpus fails loudly instead of quietly changing
 the numbers.

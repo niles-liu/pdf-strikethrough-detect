@@ -4,11 +4,12 @@ struck-aware markdown, the surviving clean text, and grouped deletion passages.
   native page   -> exact vector detection (no OCR, no model)
   scanned page  -> geometry + OCR words -> layer-1 classify -> layer-2 CNN verdict
 
-The CNN verdict layer mirrors the corpus-validated gate: 'auto' words are kept only when the
-CNN confirms at p_hi (crops too small to score are kept — no counter-evidence); on 'review'
-words (the geometry can't decide) the CNN is the decider. With ScanConfig.line_support, a short
-word the CNN leaves unconfirmed is kept when it has a stroke of its own and the line through it
-strikes confirmed words on both sides of it.
+In the CNN verdict layer, 'auto' words are kept only when the CNN confirms at p_hi (crops too
+small to score are kept: no counter-evidence), and on 'review' words (the geometry can't decide)
+the CNN is the decider. With confidence gating (the Azure-DI path), a struck word OCR'd above
+max_clean_conf without corroborating strike geometry is vetoed. With ScanConfig.line_support, a
+short word the CNN leaves unconfirmed is kept when it has a stroke of its own and the line
+through it strikes confirmed words on both sides of it.
 """
 from __future__ import annotations
 
@@ -32,15 +33,17 @@ from .types import SCHEMA_VERSION
 
 log = logging.getLogger(__name__)   # "pdf_strikethrough.detect"; DEBUG diagnostics, opt-in
 
-IMG_COVER_SCANNED = 0.70    # raster images cover >= this frac of the page -> scanned
+IMG_COVER_SCANNED = 0.70    # raster images cover >= this frac of the page -> scanned, unless the
+                            # page is born-digital text over drawings (see classify_page_source)
 HIGH_DPI_CAP = 300          # scanned rasters above this are worked at RENDER_DPI (see _working_dpi)
 MAX_RENDER_MPIX = 128       # hard per-page raster ceiling; a bigger page is downsampled to fit
 LINE_SUPPORT_MAX_CHARS = 3     # ScanConfig.line_support (see _line_support): a word this short
 LINE_SUPPORT_MIN_RUN = 0.65    # may ride its stroke's confirmed neighbors when the stroke's band
                                # holds one unbroken stretch of ink across this much of the word
 NATIVE_TIERS = ("vector", "flag", "annot")   # exact native records: the CNN never overrules them
-# Standalone raster inputs detect_image_file (and the CLI) accept — a photo/scan/fax that never
-# was a PDF. Multi-page TIFFs are one frame per page.
+# The file suffixes the CLI (and batch mode) route to detect_image_file, which itself reads any
+# image Pillow opens: a photo, scan or fax that never was a PDF. Multi-page TIFFs are one frame
+# per page.
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 TELEMETRY_VERSION = 1       # of the telemetry=True report's shape; bumped as SCHEMA_VERSION is
 CNN_PROB_EDGES = tuple(i / 10 for i in range(11))   # its cnn_prob bins; the last one holds 1.0
@@ -66,8 +69,8 @@ class EncryptedPdfError(ValueError):
 def _raise_if_encrypted(doc):
     """The single encryption gate for the whole package (open_pdf and detect_pdf both route
     through it). Gates on ``is_encrypted``, which a successful ``doc.authenticate(password)``
-    resets to False — NOT ``needs_pass``, which stays True forever after authenticate() and so
-    made the exact recover-and-retry workflow the error message recommends fail."""
+    resets to False. ``needs_pass`` stays True after authenticate(), so gating on it would fail the
+    recover-and-retry workflow the error message recommends."""
     if getattr(doc, "is_encrypted", False):
         raise EncryptedPdfError(
             "PDF is password-protected; open it with pymupdf and call doc.authenticate(password) "
@@ -221,9 +224,10 @@ def _render_rgb(page, dpi=RENDER_DPI):
 def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     """Score every non-weak struck record with the CNN and set verdict/final in place.
     Returns the list of records that survive (tier != 'weak'), each with 'final' bool.
-    Gate semantics (corpus-validated): auto words need CNN confirmation at p_hi — a scored
-    non-confirmation drops them; an unscoreable crop offers no counter-evidence and is kept.
-    Review words are decided by the CNN outright.
+    Gate semantics: auto words need CNN confirmation at p_hi (a scored non-confirmation drops
+    them; an unscoreable crop offers no counter-evidence and is kept), and review words are
+    decided by the CNN. With ``config.confidence_gating``, the DI-confidence veto then drops a
+    struck word OCR'd above ``max_clean_conf`` that has no strike geometry (``conf_veto: True``).
 
     `config` may carry ``cnn_p_hi``/``cnn_p_lo`` operating-point overrides (see ScanConfig);
     when set they replace the model's shipped thresholds for this pass. `crop_sink`, if given, is
@@ -260,22 +264,19 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
         elif h["tier"] == "auto":
             h["cnn_agrees"] = (p >= meta["p_hi"]) if p is not None else None
             h["final"] = h["cnn_agrees"] is not False
-            # verdict must not contradict final: a CNN-dropped 'auto' word used to keep
-            # verdict="struck" while final=False (misleading). Report the CNN's actual read on a
-            # drop; kept words (CNN confirmed, or crop too small to score) stay "struck".
+            # verdict must not contradict final: a dropped 'auto' word reports the CNN's own read;
+            # kept words (CNN confirmed, or crop too small to score) stay "struck".
             h["verdict"] = "struck" if h["final"] else cnn.verdict_of(p, meta)
         else:                                              # review (incl. orphans)
             h["verdict"] = cnn.verdict_of(p, meta) if p is not None else "unsure"
             h["final"] = h["verdict"] == "struck"
 
-    # The DI-confidence veto (issue #4·A, 0.9.1). On the calibrated-confidence (DI) path a word
-    # that OCRs ABOVE max_clean_conf is clean printed text (a struck word's OCR is damaged to
-    # at-or-below it — same boundary as the chain gate's strict >). If such a word ALSO lacks
-    # corroborating strike geometry (no in-band line with ink on both sides — i.e. it rode the CNN
-    # alone, or a one-sided rule / underline), the struck verdict is StrikeNet over-firing on a
-    # faint scan. Downgrade it. Guardrails: never on confidence alone (a genuinely struck word keeps
-    # its geometry, so it is spared) and never on the confidence-free path (RapidOCR etc.), so
-    # recall there cannot regress.
+    # The DI-confidence veto. On the calibrated-confidence (DI) path a word OCR'd ABOVE
+    # max_clean_conf is clean printed text (a struck word's OCR is damaged to at or below it, the
+    # chain gate's boundary). If it also lacks corroborating strike geometry (no in-band line with
+    # ink on both sides: it rode the CNN alone, or a one-sided rule or underline), the struck
+    # verdict is StrikeNet over-firing on a faint scan, so it is downgraded. Never on confidence
+    # alone, and never on the confidence-free path, so recall there cannot regress.
     if getattr(config, "confidence_gating", False):
         max_clean = getattr(config, "max_clean_conf", 1.0)
         for h in kept:
@@ -647,8 +648,8 @@ def _native_word_seq(page, words=None):
 
 
 def _match_native_seq(page, recs, words=None):
-    """Reading-order [(text, bbox_frac, rec_or_None)] for a native page. Both detectors emit
-    get_text('words') boxes, so records match by exact (bbox, text) key; a same-text spatial
+    """Reading-order [(text, bbox_frac, rec_or_None)] for a native page. Every native detector
+    emits get_text('words') boxes, so records match by exact (bbox, text) key; a same-text spatial
     fallback (record center inside the word box) covers any residual float drift. Text is compared
     without U+0336 overlays, and a matched word takes its record's text, since a vector record
     drops the overlays its span strikes. ``words`` optionally supplies this page's
@@ -844,8 +845,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         include_markdown: also assemble struck-aware ``markdown``, surviving ``clean_text``, and
             grouped deletion ``passages`` (cheap; reuses the words already extracted).
         method: native-page detector — 'vector' (default), 'flag', 'annot', or 'both' — see
-            :func:`pdf_strikethrough.native.page_strikes`. (Renamed from ``native_method`` in
-            0.6.0 to match ``strikethroughs_in_pdf``/``page_strikes`` and the CLI ``--method``.)
+            :func:`pdf_strikethrough.native.page_strikes`.
         native_method: DEPRECATED alias for ``method``, kept for 0.5.x compatibility; emits a
             ``DeprecationWarning``. Passing both with different values raises ``ValueError``.
         on_missing_ocr: what to do when a scanned page is hit with no `ocr`, `di_result` or
@@ -928,7 +928,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             pt = tel.page(pno, sources[pno]) if tel is not None else None
             if sources[pno] == "native":
                 with _clock(pt, "detect"):
-                    nat_words = page.get_text("words")   # extracted once, for both detectors
+                    nat_words = page.get_text("words")   # once: detectors, garbled check, markdown
                     chars = native._PageChars(page)
                     garb = native._garbled_words(page, nat_words, chars)
                     recs = native.page_strikes(page, pno, method, words=nat_words, _garbled=garb,
