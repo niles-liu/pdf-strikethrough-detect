@@ -1,4 +1,4 @@
-"""Active-learning crop export (R-active): turn a detection run into a labeling set.
+"""Active-learning crop export: turn a detection run into a labeling set.
 
 The scanned pipeline scores each candidate word with StrikeNet; the borderline ones (tier
 'review') and the geometry-strong ones it double-checks (tier 'auto') are exactly the crops worth

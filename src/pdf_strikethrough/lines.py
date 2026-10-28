@@ -319,12 +319,11 @@ def _spine_straightness(ink, center, u, length, run_px):
     scanned printed-rule veto reads a LOW value as "drawn rule, drop the detection", so an
     unmeasurable line must never come back low or a real strike is silently lost.
 
-    TRIED AND REJECTED (2026-07-29): **detrending** the deviations — residual RMS about a fitted
-    line instead of scatter about their mean — to stop a spine/ink angular mismatch (a linear ramp)
-    from inflating the wobble of dotted pre-printed rules. Measured, it missed them anyway (their
-    wobble is jitter across sparse dots, not a ramp) and halved the real strikes' margin above the
-    veto bar.
-    Dotted fill-in rules are underlines below the baseline; they need a positional discriminator.
+    Wobble is the deviations' scatter about their mean, not the residual about a fitted line.
+    Detrending, meant to stop a spine/ink angle mismatch inflating dotted pre-printed rules' wobble,
+    missed those rules anyway (their wobble is jitter across sparse dots) and halved the real
+    strikes' margin above the veto bar. Dotted fill-in rules are underlines below the baseline;
+    they need a positional discriminator.
     """
     if not np.isfinite(run_px):
         return float("inf")
@@ -447,7 +446,7 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
     """Union-find merge of collinear fragments. Returns [(seg, member_fragments), ...] so failed
     groups can be re-stitched tighter. `scale` rescales the pixel-space stitch tolerances."""
     # floor the pixel-space stitch tolerances so they don't collapse below a couple of pixels at
-    # low dpi (at 72 dpi a raw *scale would leave sub-pixel gaps/dy that never stitch)
+    # low dpi (unfloored, dy falls under 2 px below about 67 dpi, the gap under 6 px below 46)
     dy = max(2.0, STITCH_DY_PX * scale) if dy is None else dy
     max_gap = max(6.0, STITCH_GAP_PX * scale)
     n = len(frags)
@@ -515,7 +514,9 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     scale = dpi / float(RENDER_DPI)
     min_len = int(MIN_LINE_LEN_IN * dpi)
     fill_halfwidth = max(2, int(round(2 * scale)))
-    # floored: unfloored, a 2-px strike at 72 dpi faces a "> 1.44 px" gate and is rejected
+    # floored at 2 px, so a 2-px pen stroke passes both thresholds at low dpi (unfloored, the
+    # thin bar is 1.44 px at 72 dpi, and the thickness cap, before its 1 px slack, falls under 2 px
+    # below ~44 dpi)
     max_run = max(2.0, MAX_STROKE_RUN_PX * scale) + RUN_SLACK_PX
     thin_run = max(2.0, THIN_STROKE_RUN_PX * scale)
     stem_gap, stem_band = int(round(STEM_GAP_PX * scale)), max(2, int(round(STEM_BAND_PX * scale)))

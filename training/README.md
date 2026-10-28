@@ -31,7 +31,7 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
 
 - **Preprocessing can't drift.** Crops are re-standardized through the same `cnn.std_crop` the
   detector uses at inference, and the export records the crop geometry (`crop_h/crop_w/pad_x/pad_y`)
-  into the meta — `cnn._check_geometry` refuses to load a model whose geometry disagrees with the
+  into the meta, and `cnn._check_geometry` refuses to load a model whose geometry disagrees with the
   code constants.
 - **Thresholds are calibrated, not guessed.** `p_hi` is a split-conformal threshold on held-out
   struck-word probabilities (`--alpha` sets the recall floor, `1 - alpha`); `p_lo`
@@ -52,5 +52,5 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
 - **Dev-only dependencies.** Training needs `torch`, and exporting needs `onnx`, which torch's ONNX
   exporter imports (`pip install torch onnx`; the script checks for both before it trains). The
   package itself runs on ONNX Runtime with no torch dependency.
-- **A meaningful model needs a real corpus.** A handful of crops from one PDF will overfit — this
-  is the pipeline, not a substitute for collecting a labeled set (see `benchmarks/`).
+- **A meaningful model needs a real corpus.** A handful of crops from one PDF will overfit: this
+  is the pipeline, not a substitute for collecting a labeled set.

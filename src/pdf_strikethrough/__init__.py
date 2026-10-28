@@ -1,8 +1,8 @@
-"""pdf_strikethrough — detect struck-through (deleted) text in PDFs and scanned document images.
+"""pdf_strikethrough: detect struck-through (deleted) text in PDFs and scanned document images.
 
 Quick start
 -----------
-Native / born-digital PDF (strikethroughs are vector drawings — detection is EXACT, no OCR):
+Native / born-digital PDF (strikethroughs are vector drawings, so detection is EXACT, no OCR):
 
     import pdf_strikethrough as st
     for w in st.strikethroughs_in_pdf("contract.pdf"):
@@ -11,15 +11,12 @@ Native / born-digital PDF (strikethroughs are vector drawings — detection is E
 
 Any PDF (routes native/scanned per page; scanned needs an OCR backend):
 
-    from pdf_strikethrough.ocr import rapidocr_backend
-    from pdf_strikethrough.scanned import ScanConfig
-    res = st.detect_pdf("scan.pdf", ocr=rapidocr_backend(),
-                        scan_config=ScanConfig.confidence_free())
+    res = st.detect_pdf("scan.pdf", ocr=st.rapidocr_backend())
     struck = [w for w in res["words"] if w["final"]]
 
-Beyond PDFs — an image file, a Word document, or a pre-fetched cloud-OCR result:
+Beyond PDFs: an image file, a Word document, or a pre-fetched cloud-OCR result:
 
-    st.detect_image_file("scan.tiff", ocr=rapidocr_backend())   # .png/.jpg/.tiff (multi-page)
+    st.detect_image_file("scan.tiff", ocr=st.rapidocr_backend())   # .png/.jpg/.tiff (multi-page)
     st.strikethroughs_in_docx("contract.docx")                  # w:strike + tracked w:del
     st.detect_pdf("doc.pdf", words_by_page=st.words_from_textract(resp))   # Textract / DocAI
 
@@ -76,7 +73,7 @@ __all__ = [
     # CNN
     "score_word", "score_crops", "std_crop", "word_crop_px", "verdict_of", "get_model_meta",
     "ensure_model",
-    # active learning + calibration
+    # active learning
     "dump_crops",
     # typing
     "StruckWord", "DetectResult", "Passage", "GarbledWord", "Telemetry",

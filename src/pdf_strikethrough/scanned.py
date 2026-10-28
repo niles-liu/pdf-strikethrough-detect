@@ -5,8 +5,8 @@ Given the strokes from :func:`pdf_strikethrough.lines.strike_lines` and a list o
 char-level spans and full/partial resolution. This is layer 1 (geometry + OCR); the CNN verdict
 (layer 2) is applied by the orchestrator in :mod:`pdf_strikethrough.detect`.
 
-Ported from a corpus-validated pipeline; decoupled from Azure Document Intelligence — the only
-DI-specific piece was the confidence calibration, now captured in :class:`ScanConfig`.
+Engine-independent: the only piece specific to Azure Document Intelligence is the confidence
+calibration, captured in :class:`ScanConfig`.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ PARTIAL_ISO_MAX_OFF = 0.08   # isolated partial (line strikes nothing else): mus
 INK_MAX_OFF         = 0.40   # pixel test still considered up to this |off| (box-lies rescue)
 INK_MIN_FRAC        = 0.35   # min fraction of covered columns with glyph ink above resp. below
 INK_ONESIDE_MAX     = 0.15   # a side with less ink than this is "empty"; an underline or table
-                             # rule has ink on ONE side and ~none on the other (issue #4·B)
+                             # rule has ink on ONE side and ~none on the other
 GLYPH_INK_RULE_LEN_IN = 0.25 # the INK_* tests read glyph ink: horizontal runs at least this long
                              # (50 px @200 dpi) are rules or underlines and are left out, so the
                              # rule under an underlined word is not its "ink below". TRIED 1/6 in
@@ -45,14 +45,12 @@ STROKE_SNAP_MIN_RUN = 0.80   # ...the row band whose unbroken ink run covers the
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 FILL_UNMEASURED     = 0.80   # score_struck's fill for a caller-built line without one
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
-                             # strike, unless it shows through-glyph ink on BOTH sides (issue #4·B)
-# --- printed-rule veto (issue #7 / v0.10.0), opt-in via ScanConfig.ruled_forms(): a degraded-scan
-# table rule / form line rides a dead-straight, near-solid path, while a pen or typed strike
-# crossing raised glyphs SHATTERS (fill drops) and WANDERS (wobble rises). Geometry-only, so it
-# needs no OCR confidence. PROVISIONAL and thin: calibrated on ONE positive document -- the
-# benchmark corpus holds 3 real strikes, all the same morphology, and they clear both bars. Do not
-# tighten these without more labeled positives; the measured distribution is in the corpus
-# ground-truth.json _calibration.
+                             # strike, unless it shows through-glyph ink on BOTH sides
+# --- printed-rule veto (issue #7), opt-in via ScanConfig.ruled_forms(): a degraded-scan table
+# rule / form line rides a dead-straight, near-solid path, while a pen or typed strike crossing
+# raised glyphs SHATTERS (fill drops) and WANDERS (wobble rises). Geometry-only, so it needs no
+# OCR confidence. PROVISIONAL and thin: calibrated on ONE positive document (3 real strikes, all
+# the same morphology, clearing both bars). Do not tighten these without more labeled positives.
 PRINTED_RULE_FILL_MAX     = 0.88  # fill above this = a solid drawn rule, not a shattered strike
 PRINTED_RULE_STRAIGHT_MAX = 1.80  # wobble px @RENDER_DPI below this = a drawn rule, not a strike
 TWIN_MIN_LEN_IN     = 0.60   # substantial line: >=2 fully-struck words, or one word + long line
@@ -95,8 +93,9 @@ class ScanConfig:
     one default to ``confidence_free()`` instead, except ``detect_pdf`` with a ``di_result``.
 
     ``confidence_free()`` disables EVERY confidence-dependent decision: the chain-rejection
-    gate, the ink-fail rescue, and the confidence term in the evidence score (the remaining
-    geometry terms are renormalized so the auto/review/weak thresholds keep their meaning).
+    gate, the ink-fail rescue, the DI-confidence veto, line support's clean-text check, and the
+    confidence term in the evidence score (the remaining geometry terms are renormalized so the
+    auto/review/weak thresholds keep their meaning).
     Use it for engines whose confidence doesn't separate struck from clean text (e.g. RapidOCR);
     detection then rests on geometry + the CNN alone.
 
@@ -109,11 +108,10 @@ class ScanConfig:
     outside the v1.0 stability contract and may be removed. See its docstring.
 
     ``rescue_clean_chains`` controls the chain gate's escape hatch (see :func:`classify_lines`). Set
-    it False on degraded ruled forms, where it is a dominant false-positive source: corpus FP 113
-    default, 96 with this alone, 38 with the printed-rule veto alone, 25 with both — recall
-    unchanged throughout. Deliberately NOT bundled into ``ruled_forms()``; the two overlap on only
-    4 FPs and each costs recall on its own terms. ⚠ Unlike the veto it needs calibrated
-    confidences, so it is **inert when ``confidence_gating`` is off**. Rationale and per-switch
+    it False on degraded ruled forms, where it is a dominant false-positive source. Deliberately
+    NOT bundled into ``ruled_forms()``: the two switches overlap little and each costs recall on
+    its own terms. ⚠ Unlike the veto it needs calibrated confidences, so it is **inert when
+    ``confidence_gating`` is off**. Rationale and per-switch
     measurements: the ``rescue_clean_chains`` entry in ``CHANGELOG.md``, reproducible with
     ``benchmarks/confidence_veto.py --switches``.
 
@@ -123,7 +121,7 @@ class ScanConfig:
     the rule is ink below the underline. Ruled text is then judged like unruled text. A long solid
     line through a word's middle band with no glyph ink on either side is judged on all ink, so
     one of a double rule stays a rule. ``ScanConfig(glyph_ink=False)``, or
-    ``dataclasses.replace(preset, glyph_ink=False)``, measures on all ink, as before.
+    ``dataclasses.replace(preset, glyph_ink=False)``, measures on all ink.
 
     ``line_support`` (on by default; off in ``precision_first()``) keeps a word of three characters
     or fewer, not counting surrounding punctuation, that StrikeNet leaves unconfirmed when the line
@@ -133,7 +131,8 @@ class ScanConfig:
     is never kept. Kept records carry ``line_support: True``. See
     :func:`pdf_strikethrough.detect._line_support`."""
     confidence_gating: bool = True
-    max_clean_conf: float = 0.955     # fill<FILL_STRONG: some struck word must OCR at or below this
+    max_clean_conf: float = 0.955     # a struck word OCRs at or below this: the chain gate
+                                      # (fill<FILL_STRONG), the DI-confidence veto, line support
     inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued at OCR conf <= this
     page_edited_min: float = 0.03     # frac words conf<=0.90 >= this -> page has pen edits
     cnn_p_hi: float | None = None     # override the CNN struck threshold; None = the model's
@@ -165,7 +164,7 @@ class ScanConfig:
 
     @classmethod
     def ruled_forms(cls, veto_printed_rules=True, **kw):
-        """**PROVISIONAL** (0.10.0) — precision bias for DEGRADED, HEAVILY-RULED scans (e.g.
+        """**PROVISIONAL**: a precision bias for DEGRADED, HEAVILY-RULED scans (e.g.
         printed forms or tables) where a faint table/form rule crossing text mimics a pen strike and
         the CNN over-fires on it. Turns on the printed-rule veto (:func:`_is_printed_rule`): any
         detected line that is solid and/or dead-straight is treated as printed furniture rather than
@@ -441,8 +440,8 @@ def _is_printed_rule(ln):
     Keyed on stored line geometry only (no raster access). See the PRINTED_RULE_* constants.
 
     A True answer DROPS the detection, so a missing or None metric must read as "not a rule" — both
-    directions here fail safe. ``classify_lines`` accepts caller-built line dicts, and defaulting an
-    absent `fill` to a high number (as this did before 0.10.0) silently discarded every detection.
+    directions here fail safe. ``classify_lines`` accepts caller-built line dicts, where reading an
+    absent `fill` as a high number would discard every detection.
     """
     fill, wobble = ln.get("fill"), ln.get("straightness")
     return ((fill is not None and fill > PRINTED_RULE_FILL_MAX)
@@ -538,11 +537,11 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
         def ink_gate(off, wends, wpx, conf):
             """(passes, in_band, both_ink) for the line at `wends` through the word at `wpx`."""
             in_band = abs(off) <= STRIKE_TOL
-            # Through-glyph ink at this word (see _ink_above_below). As of 0.9.1 this runs for EVERY
-            # hit — it was skipped for in-band lines, so a full-width table rule rode high fill
-            # straight to tier 'auto' (issue #4). `both_ink` requires substantial ink on both sides;
-            # `one_sided` is the underline/rule signature (well on one side, ~none on the other) and
-            # is kept distinct so a real strike over SPARSE text still reads as two-sided, not one.
+            # Through-glyph ink at this word (see _ink_above_below), for EVERY hit: if in-band
+            # lines skipped it, a full-width table rule would ride high fill straight to 'auto'.
+            # `both_ink` requires substantial ink on both sides; `one_sided` is the underline/rule
+            # signature (well on one side, ~none on the other) and is kept distinct so a real
+            # strike over SPARSE text still reads as two-sided, not one.
             above, below = _ink_above_below(side_ink, wends, run_px, wpx)
             both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
             one_sided = _one_sided(above, below)
@@ -556,10 +555,9 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 rescue = (config.confidence_gating and in_band
                           and conf is not None and conf <= config.inkfail_max_conf)
                 return both_ink or rescue, in_band, both_ink
-            # Issue #4·B (0.9.1): a long, solid (high-fill) in-band line with ink on only ONE side
-            # is a table rule / underline, not a strike. Previously in-band long lines skipped the
-            # ink test entirely and rode high fill straight to 'auto'. Real strikes SHATTER on the
-            # glyphs (fill < FILL_STRONG) and keep ink on BOTH sides, so they are spared.
+            # A long, solid (high-fill) in-band line with ink on only ONE side is a table rule or
+            # underline, not a strike. Real strikes SHATTER on the glyphs (fill < FILL_STRONG) and
+            # keep ink on BOTH sides, so they are spared.
             return not (long_solid and one_sided), in_band, both_ink
 
         hits, weak_band = [], []
@@ -593,7 +591,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
             if not passes:
                 continue
             ink_ok = not in_band
-            # Strike-geometry corroboration (0.9.1): a genuine strike crosses the x-height (in-band)
+            # Strike-geometry corroboration: a genuine strike crosses the x-height (in-band)
             # and keeps substantial ink on BOTH sides, solid or broken up. The DI-confidence veto
             # (detect.apply_cnn_verdict) spares a high-OCR-confidence word only with it.
             strike_geom = in_band and both_ink
