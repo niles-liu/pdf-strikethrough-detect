@@ -388,6 +388,25 @@ All notable changes to this project are documented here. The format follows
   found 350 and 710 more struck words, and marked 97 and 10 more live ones. A scanned page's
   detection takes 1.5 to 3.2% longer on average, OCR aside, and up to 1.17 times as long on one
   page. `scanned.STROKE_SNAP_PX = 0` gives the previous behavior.
+- **The scanned path dropped 2 to 3 pt strikes over words with few ascenders or descenders.** A
+  thick bar through the middle of the x-height leaves two to four rows of it above and below the
+  bar, and the ink tests read glyph ink from 2 px past the stroke's edges, which takes those rows.
+  Finding no ink on one side, they took a long line for a table rule and a short one for no
+  strike. A word either test drops under a thick line (`run_px` above 4 px at 200 dpi, scaled
+  with the dpi, and above 2 px) up to 4 in long is now tried again with the glyph ink read from
+  the stroke's edges, when the line runs through the word's middle band and covers at least 45%
+  of it; rows next to the line inked across the word are taken for the stroke's own. The ink
+  test's verdict on a word it passed before is unchanged. With `ScanConfig(glyph_ink=False)`
+  there is no retry. On newly generated synthetic pages from the frontier benchmark, the half not
+  used to tune, struck sub-tokens found rose from 2,797 to 2,852 of 3,560 (2 to 3 pt strikes from
+  195 to 237 of 330), with none lost and no live sub-tokens newly marked; Senate bills published
+  before its cutoff and the dev pages of its public redline corpus are unchanged. On 2,160
+  synthetic strike-free pages with a 2 to 3 pt bar below, on or above the text, the words put to
+  StrikeNet rose from 1,691 to 1,727 (short glyph chains, mostly in bold text), and none was
+  marked either way. On 103 handwritten pages of BRESSAY's validation split, read by RapidOCR, live
+  words marked rose from 1,722 to 1,777 of 43,628 with no struck word gained: thick pen strokes
+  in the handwriting read like short thick strikes. Detection time per scanned page moved by under
+  0.5%, OCR aside. `scanned.INK_GAP_THICK_PX = 2` gives the previous behavior.
 - **`benchmarks/confidence_veto.py` split its counts where the veto does not.** Its default mode
   counted a word read at exactly `max_clean_conf` (0.955) as high-confidence, but the veto acts
   only above it. The split now uses the veto's boundary. One reported word on its ruled-table set
