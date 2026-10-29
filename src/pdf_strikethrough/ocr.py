@@ -27,15 +27,22 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
 class Word:
-    """One recognized word. bbox in page fractions (x0, y0, x1, y1); confidence 0..1 or None."""
+    """One recognized word. bbox in page fractions (x0, y0, x1, y1); confidence 0..1 or None.
+    `handwritten` is True when the OCR engine marks the word handwritten and False when it marks
+    it printed: Azure DI's styles (``words_from_azure_di(..., styles=...)``; a word in no
+    handwritten style is False) and AWS Textract's ``TextType`` set it. None when the adapter
+    reads no such mark, as the RapidOCR, Tesseract and Document AI adapters do. It picks the
+    words ``ScanConfig(handwriting="styled")`` sends to StrikeNet, and is left out of equality and
+    the hash, so two Words differing only in it compare equal."""
     text: str
     bbox: tuple
     confidence: float | None = None
+    handwritten: bool | None = field(default=None, compare=False)
 
     def __post_init__(self):
         # bboxes are used as dict keys downstream — coerce lists/ndarrays to a hashable tuple
@@ -54,6 +61,8 @@ class Word:
         object.__setattr__(self, "bbox", (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
         if self.confidence is not None:        # a plain float, so dump_crops can json.dump it
             object.__setattr__(self, "confidence", float(self.confidence))
+        if self.handwritten is not None:
+            object.__setattr__(self, "handwritten", bool(self.handwritten))
 
 
 def _bbox_from_points(points, w, h):
@@ -74,21 +83,21 @@ def _clip_to_page(bbox):
 
 
 def _page_words(items):
-    """Words from one page's (text, box, confidence) triples, each box in page fractions as a cloud
-    service gave it: clamped to the page, or dropped when it is not finite. When most of the page's
-    boxes lie past 1.5 they are left as given, so `Word` refuses them with its pixel-coordinates
-    error."""
+    """Words from one page's (text, box, confidence[, handwritten]) items, each box in page
+    fractions as a cloud service gave it: clamped to the page, or dropped when it is not finite.
+    When most of the page's boxes lie past 1.5 they are left as given, so `Word` refuses them with
+    its pixel-coordinates error."""
     items = [it for it in items if all(math.isfinite(v) for v in it[1])]
     # A stray box past the edge is one word among a page's (RapidOCR's ran to x 1.57). A box in the
     # wrong units, pixels or inches where page fractions belong, puts nearly every word on the page
     # past 1.5, so that page still fails loudly.
-    clamp = 2 * sum(max(abs(v) for v in box) > 1.5 for _, box, _ in items) <= len(items)
-    return [Word(text, _clip_to_page(box) if clamp else box, conf) for text, box, conf in items]
+    clamp = 2 * sum(max(abs(v) for v in it[1]) > 1.5 for it in items) <= len(items)
+    return [Word(it[0], _clip_to_page(it[1]) if clamp else it[1], *it[2:]) for it in items]
 
 
 # --------------------------------------------------------------------- Azure Document Intelligence
 
-def words_from_azure_di(di_page) -> list[Word]:
+def words_from_azure_di(di_page, styles=None) -> list[Word]:
     """Convert one Azure DI ``pages[i]`` dict (prebuilt-layout / read) into Words. DI word
     polygons are in the page's own units; page width/height give the fractions. Polygons are read
     in the shapes the REST API and the Python SDKs emit; a page whose words carry no usable polygon
@@ -96,6 +105,10 @@ def words_from_azure_di(di_page) -> list[Word]:
     placed wholly off the page keeps its text, on a zero-width box at the edge. A page where most
     word boxes lie past 1.5 page widths or heights, as with polygons in the wrong units, still
     raises ValueError.
+
+    `styles` is the analyze result's ``styles`` list (``analyzeResult["styles"]``, for the whole
+    document). With it, each word carries ``handwritten``: True when its span lies in a style DI
+    marks ``isHandwritten``, else False; without it, None. ``detect_pdf(di_result=...)`` passes it.
 
     Only ``detect_pdf(di_result=...)`` applies the DI calibration by default: pass
     ``config=ScanConfig.azure_di()`` when you give these words to ``detect_scanned_image``,
@@ -108,6 +121,10 @@ def words_from_azure_di(di_page) -> list[Word]:
         raise ValueError(
             "Azure DI page is missing a non-zero 'width'/'height'; cannot normalize word "
             f"polygons to page fractions (got width={pw!r}, height={ph!r})")
+    if styles is not None and not isinstance(styles, (list, tuple)):
+        raise TypeError("styles must be the analyze result's 'styles' list, got "
+                        f"{type(styles).__name__}")
+    hand = None if styles is None else _handwritten_spans(styles)
     items, unreadable = [], 0
     for w in di_page.get("words", []):
         text = w.get("content", "")
@@ -129,13 +146,39 @@ def words_from_azure_di(di_page) -> list[Word]:
             continue
         xs, ys = [p[0] for p in pts], [p[1] for p in pts]
         items.append((text, (min(xs) / pw, min(ys) / ph, max(xs) / pw, max(ys) / ph),
-                      w.get("confidence")))
+                      w.get("confidence"), None if hand is None else _in_spans(w, hand)))
     out = _page_words(items)
     unreadable += len(items) - len(out)                       # a box that is not finite
     if unreadable and not out:
         raise ValueError(f"none of the {unreadable} Azure DI word(s) on this page has a polygon "
                          "this adapter can read (expected 8 numbers or 4 {x, y} points)")
     return out
+
+
+def _handwritten_spans(styles):
+    """The (offset, end) character spans of the styles DI marks ``isHandwritten``."""
+    out = []
+    for style in styles or ():
+        style = _as_dict(style)
+        if not (hasattr(style, "get") and style.get("isHandwritten", style.get("is_handwritten"))):
+            continue
+        for sp in style.get("spans") or ():
+            sp = _as_dict(sp)
+            off, n = sp.get("offset"), sp.get("length")
+            if isinstance(off, int) and isinstance(n, int):
+                out.append((off, off + n))
+    return out
+
+
+def _in_spans(word, spans):
+    """Whether a DI word's own span lies in one of `spans` (most of its characters)."""
+    sp = word.get("span") or (word.get("spans") or [None])[0]
+    sp = _as_dict(sp) if sp is not None else None
+    if not hasattr(sp, "get") or not isinstance(sp.get("offset"), int):
+        return False
+    off, n = sp["offset"], max(1, int(sp.get("length") or 0))
+    inside = sum(max(0, min(off + n, b) - max(off, a)) for a, b in spans)
+    return 2 * inside > n
 
 
 # --------------------------------------------------------------------------- AWS Textract
@@ -154,7 +197,8 @@ def words_from_textract(result) -> "dict[int, list[Word]]":
     """Convert an AWS Textract ``AnalyzeDocument``/``DetectDocumentText`` result into per-page
     Words: ``{0-based page: [Word, ...]}``. Textract ``WORD`` blocks already carry a normalized
     ``Geometry.BoundingBox`` (Left/Top/Width/Height in [0,1]) and a 0..100 ``Confidence`` (scaled
-    to 0..1 here). Blocks tag their 1-based ``Page`` on multi-page input (absent ⇒ page 1). Each
+    to 0..1 here), and a ``TextType`` of ``HANDWRITING`` or ``PRINTED`` that sets
+    ``Word.handwritten``. Blocks tag their 1-based ``Page`` on multi-page input (absent ⇒ page 1). Each
     page's ``PAGE`` block makes it a key, so a page with no usable words, such as a blank scanned
     page, maps to an empty list, as in ``words_from_docai()``. A box that runs past the edge of the
     page is clamped to it, and a page where most boxes lie past 1.5 raises ValueError, as in
@@ -185,7 +229,9 @@ def words_from_textract(result) -> "dict[int, list[Word]]":
             continue
         conf = block.get("Confidence")
         conf = float(conf) / 100.0 if conf is not None else None
-        items.append((text, (left, top, left + width, top + height), conf))
+        kind = block.get("TextType")                          # HANDWRITING or PRINTED
+        hand = True if kind == "HANDWRITING" else False if kind == "PRINTED" else None
+        items.append((text, (left, top, left + width, top + height), conf, hand))
     return {page: _page_words(items) for page, items in items_by_page.items()}
 
 

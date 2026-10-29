@@ -340,12 +340,42 @@ def _line_support(recs, tagged, ink, config, dpi=RENDER_DPI):
                 break
 
 
+def _handwriting_route(struck, words, mode):
+    """ScanConfig.handwriting: the handwritten words (``Word.handwritten`` with "styled", every
+    word with "all") leave the line finder's records and each goes to the CNN whole, a 'review'
+    record it decides at p_hi, with ``score`` 0.0: the route does not score the line finder's
+    geometry. It keeps the strike geometry and line of the word's record when the line path would
+    score that record (not 'weak'), so the DI-confidence veto and line support read it as they do
+    there. The line finder still ran on every word, so the printed words' records saw the
+    handwritten words' lines. Records keep their reading order."""
+    hand = {(w.bbox, w.text) for w in words if (w.text or "").strip()
+            and (mode == "all" or w.handwritten)}
+    if not hand:
+        return struck
+    # the line finder's evidence on a word the line path would have scored (not 'weak'), so the
+    # DI-confidence veto and line support read it as they do there
+    seen = {(h["bbox_frac"], h["text"]): h for h in struck if h["tier"] != "weak"}
+    out = [h for h in struck if (h["bbox_frac"], h["text"]) not in hand]
+    for w in words:
+        if (w.bbox, w.text) in hand:
+            hand.discard((w.bbox, w.text))     # one record per word, as the line path keeps
+            ln = seen.get((w.bbox, w.text), {})
+            out.append({"text": w.text, "chars": w.text, "char_span": (0, len(w.text)),
+                        "partial": False, "bbox_frac": w.bbox, "conf": w.confidence, "off": None,
+                        "wcov": 1.0, "line_idx": list(ln.get("line_idx") or []), "twin": False,
+                        "geom_corroborated": bool(ln.get("geom_corroborated")),
+                        "score": 0.0, "tier": "review", "handwriting": True})
+    out.sort(key=lambda h: (round(h["bbox_frac"][1], 3), h["bbox_frac"][0]))
+    return out
+
+
 def detect_scanned_image(gray, words, config=ScanConfig.confidence_free(), meta=None,
                          dpi=RENDER_DPI, crop_sink=None):
     """Struck-word records for a single scanned page image + its OCR words. `gray` is a HxW
     grayscale array (RGB / float inputs are coerced); `dpi` must be the resolution the image
     was rendered/scanned at (positive). Runs layer-1 classification, the CNN verdict, then (with
-    ``config.line_support``) the short-word line rule. `config` defaults to
+    ``config.line_support``) the short-word line rule; with ``config.handwriting``, handwritten
+    words go to the CNN alone (see :class:`ScanConfig`). `config` defaults to
     ``ScanConfig.confidence_free()``, as ``detect_pdf`` without a ``di_result`` does; pass
     ``ScanConfig.azure_di()`` for words from Azure Document Intelligence."""
     from .lines import ink_mask, to_gray_u8
@@ -357,6 +387,8 @@ def detect_scanned_image(gray, words, config=ScanConfig.confidence_free(), meta=
     if tiers is not None:                  # telemetry: layer 1's tiers, the weak ones included
         for h in struck:
             tiers[h["tier"]] = tiers.get(h["tier"], 0) + 1
+    if getattr(config, "handwriting", "off") != "off":
+        struck = _handwriting_route(struck, words, config.handwriting)
     recs = apply_cnn_verdict(struck, gray, meta, config=config, crop_sink=crop_sink)
     if getattr(config, "line_support", False):
         _line_support(recs, tagged, ink, config, dpi)
@@ -707,6 +739,16 @@ def _di_pages(di_result):
         f"(REST JSON or sdk_result.as_dict()), got {type(di_result).__name__}")
 
 
+def _di_styles(di_result):
+    """The analyze result's ``styles`` (one list for the whole document), or None when it has
+    none: what marks words handwritten (``words_from_azure_di(..., styles=...)``)."""
+    d = di_result.as_dict() if hasattr(di_result, "as_dict") else di_result
+    if hasattr(d, "get") and "analyzeResult" in d:
+        d = d["analyzeResult"]
+    styles = d.get("styles") if hasattr(d, "get") else None
+    return styles if isinstance(styles, list) else None
+
+
 def _resolve_native_method(method, native_method):
     """Back-compat shim for the 0.6.0 rename. detect_pdf's native-page selector is now
     ``method`` (matching ``strikethroughs_in_pdf``/``page_strikes`` and the CLI ``--method``);
@@ -899,6 +941,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                          "for scanned pages, with a different calibration)")
     wbp = _normalize_words_by_page(words_by_page)
     di_pages = _di_pages(di_result)
+    di_styles = _di_styles(di_result) if di_pages is not None else None
     doc, close = _open_doc(source)
     try:
         page_indices = _normalize_pages(pages, doc.page_count)
@@ -950,7 +993,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                     _warnings.warn(note, stacklevel=2)
                     warns.append(note)
                 if di_pages is not None and pno in di_pages:
-                    page_words = words_from_azure_di(di_pages[pno])
+                    page_words = words_from_azure_di(di_pages[pno], styles=di_styles)
                 elif wbp is not None and pno in wbp:
                     page_words = wbp[pno]
                 elif ocr is not None:

@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`ScanConfig(handwriting=...)`, experimental and off by default, judges handwritten words by
+  StrikeNet rather than by the line finder,** which looks for near-straight strokes and finds few
+  pen strikes. With `"styled"`, each word the OCR engine marks handwritten gets one `review` record
+  for the whole word in place of the line finder's (`handwriting: True`, `score` 0.0), marked
+  struck at or above `cnn_p_hi` (the model's `p_hi` by default); with `"all"`, every word does,
+  for pages known to be handwritten. The line finder still runs on every word, and the record
+  keeps its strike geometry and line, so the DI-confidence veto and line support treat it as on
+  the line path; with `"off"` the output is unchanged. It is a Python setting, applied by
+  `detect_scanned_image` (so `detect_pdf`, `detect_image_file` and `dump_crops`); the CLI has no
+  switch for it. `Word` gains `handwritten` (True or False when the engine marks the word
+  handwritten or printed, None when it marks neither), left out of equality and the hash: Azure
+  Document Intelligence's `isHandwritten` styles set it through
+  `words_from_azure_di(page, styles=...)`, which `detect_pdf(di_result=...)` passes, and AWS
+  Textract's `TextType` through `words_from_textract`. With the other adapters `"styled"`
+  routes nothing. Struck handwriting is rare, so with the shipped model most of what this route flags is
+  live text; measure precision on your own pages first.
 - **`benchmarks/frontier/` holds a pre-registered benchmark against frontier models.** Can they do
   this package's job, finding struck text and keeping it out of the live text? `PLAN.md` gives the
   reasons and `PREREG.md` the binding protocol, tagged `prereg-1` (2026-10-16) and `prereg-2`

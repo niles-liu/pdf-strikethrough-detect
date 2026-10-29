@@ -168,7 +168,23 @@ class ScanConfig:
     Such a crop is mostly padding at the CNN's input width, so a struck "of" or "a" scores low
     inside a confirmed struck run. With ``confidence_gating``, a word read above ``max_clean_conf``
     is never kept. Kept records carry ``line_support: True``. See
-    :func:`pdf_strikethrough.detect._line_support`."""
+    :func:`pdf_strikethrough.detect._line_support`.
+
+    ``handwriting`` (**experimental**, off by default) judges handwritten words by StrikeNet
+    rather than by the line finder, which looks for near-straight strokes and finds few pen
+    strikes: each such word's records from the line finder are replaced by one ``review`` record
+    for the whole word (``handwriting: True``, ``score`` 0.0: the route does not score the line
+    finder's geometry), marked struck when the CNN scores it at or above ``cnn_p_hi`` (the
+    model's ``p_hi`` by default). The line finder still runs on every word, and the record keeps
+    the strike geometry and line of a record the line path scores, so the DI-confidence veto and
+    line support treat it as on the line path. ``"styled"`` takes the words the OCR engine marks
+    handwritten (``Word.handwritten``: Azure DI's styles and AWS Textract's ``TextType`` set it;
+    the other adapters leave it None, so it routes nothing); ``"all"`` takes every word, for
+    pages known to be handwritten. ``detect_scanned_image`` applies it (so ``detect_pdf``,
+    ``detect_image_file`` and ``dump_crops`` do); ``analyze_scanned_page`` and
+    ``apply_cnn_verdict`` ignore it, as they do ``line_support``. Struck handwriting is rare, so
+    most of what the shipped model flags this way is live text: measure precision on your own
+    pages before relying on it."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # a struck word OCRs at or below this: the chain gate
                                       # (fill<FILL_STRONG), the DI-confidence veto, line support
@@ -181,6 +197,7 @@ class ScanConfig:
     glyph_ink: bool = True            # ink tests ignore long horizontal runs (rules, underlines)
     line_support: bool = True         # keep a short unconfirmed word inside a confirmed struck run
                                       # (detect._line_support)
+    handwriting: str = "off"          # "off", "styled" or "all": handwritten words to the CNN alone
 
     def __post_init__(self):
         # every number here is a confidence, a page fraction or a probability: a float in [0, 1]
@@ -195,6 +212,9 @@ class ScanConfig:
         p_lo, p_hi = self.cnn_p_lo, self.cnn_p_hi
         if p_lo is not None and p_hi is not None and p_lo > p_hi:
             raise ValueError(f"ScanConfig.cnn_p_lo ({p_lo}) is above cnn_p_hi ({p_hi})")
+        if self.handwriting not in ("off", "styled", "all"):
+            raise ValueError("ScanConfig.handwriting must be 'off', 'styled' or 'all', got "
+                             f"{self.handwriting!r}")
 
     @classmethod
     def azure_di(cls):

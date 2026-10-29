@@ -23,7 +23,7 @@ from .detect import RENDER_DPI, detect_image_file, detect_pdf
 # Fields copied from each scored record into its manifest row (present-if-set).
 _CROP_EVIDENCE = ("page", "text", "chars", "tier", "verdict", "final", "partial",
                   "score", "cnn_prob", "cnn_agrees", "conf", "off", "wcov", "bbox_frac",
-                  "line_support")
+                  "line_support", "handwriting")
 
 
 def _save_crop_png(std, path):

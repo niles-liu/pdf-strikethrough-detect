@@ -64,7 +64,8 @@ class StruckWord(TypedDict, total=False):
     docx_date: Optional[str]     # tracked-deletion timestamp (w:del/@w:date)
     docx_id: Optional[str]       # tracked-deletion id (w:del/@w:id)
     # scanned only
-    score: float                 # layer-1 geometric score
+    score: float                 # layer-1 geometric score (0.0 on the handwriting route's
+                                 # records, which do not score the line finder's geometry)
     cnn_prob: Optional[float]    # StrikeNet probability (None if the crop was too small to score)
     cnn_agrees: Optional[bool]   # 'auto' records: did the CNN confirm at p_hi? (None if unscored)
     conf: Optional[float]        # OCR word confidence, if the backend supplied one
@@ -77,6 +78,8 @@ class StruckWord(TypedDict, total=False):
     line_support: bool           # True when ScanConfig.line_support kept this short word: the CNN
                                  # left it unconfirmed, but it has a stroke of its own and its line
                                  # strikes confirmed words on both sides of it
+    handwriting: bool            # True on a record of the ScanConfig.handwriting route: the word
+                                 # judged whole by StrikeNet in place of the line finder's records
 
 
 class Passage(TypedDict, total=False):
