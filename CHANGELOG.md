@@ -407,6 +407,20 @@ All notable changes to this project are documented here. The format follows
   words marked rose from 1,722 to 1,777 of 43,628 with no struck word gained: thick pen strokes
   in the handwriting read like short thick strikes. Detection time per scanned page moved by under
   0.5%, OCR aside. `scanned.INK_GAP_THICK_PX = 2` gives the previous behavior.
+- **The scanned path dropped words under slanted strikes.** The two-sided ink test read the glyph
+  ink above and below a line level with the line's height at the middle of the word. A strike
+  leaning 3 degrees or more moves several px across a word, so that level band took the glyph ink
+  above the stroke at one end and below it at the other, and the struck word read as ink on one
+  side only. A word in the strike band the tests drop under a line whose height changes by at
+  least 1 px across it is now tried again with the ink read along the line, column by column; the
+  ink test's verdict on a word it passed before is unchanged. On newly generated synthetic pages
+  from the frontier benchmark, the half not used to tune, struck sub-tokens found rose from 2,852
+  to 2,872 of 3,560 (slanted strikes from 241 to 249 of 289), with none lost; one word struck at
+  its end, already found, took three more of its live characters. Senate bills published before
+  its cutoff and the dev pages of its public redline corpus found 2 more each on the tune half and
+  none fewer. On synthetic strike-free pages, a tilted underline or rule running into the end of a
+  word can now mark it: 63 to 66 live words marked on 1,920 such pages.
+  `scanned.INK_ALONG_SLOPE_PX = 0` gives the previous behavior.
 - **`benchmarks/confidence_veto.py` split its counts where the veto does not.** Its default mode
   counted a word read at exactly `max_clean_conf` (0.955) as high-confidence, but the veto acts
   only above it. The split now uses the veto's boundary. One reported word on its ruled-table set
