@@ -274,9 +274,10 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     # The DI-confidence veto. On the calibrated-confidence (DI) path a word OCR'd ABOVE
     # max_clean_conf is clean printed text (a struck word's OCR is damaged to at or below it, the
     # chain gate's boundary). If it also lacks corroborating strike geometry (no in-band line with
-    # ink on both sides: it rode the CNN alone, or a one-sided rule or underline), the struck
-    # verdict is StrikeNet over-firing on a faint scan, so it is downgraded. Never on confidence
-    # alone, and never on the confidence-free path, so recall there cannot regress.
+    # ink on both sides, nor a double strike's pair: it rode the CNN alone, or a one-sided rule or
+    # underline), the struck verdict is StrikeNet over-firing on a faint scan, so it is
+    # downgraded. Never on confidence alone, and never on the confidence-free path, so recall
+    # there cannot regress.
     if getattr(config, "confidence_gating", False):
         max_clean = getattr(config, "max_clean_conf", 1.0)
         for h in kept:

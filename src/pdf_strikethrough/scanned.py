@@ -63,6 +63,24 @@ STROKE_SNAP_PX      = 4      # a word the ink tests drop is tried again at the s
                              # stroke, so its "ink below" falls under the glyphs. 0 turns it off
 STROKE_SNAP_MIN_RUN = 0.80   # ...the row band whose unbroken ink run covers the most of the columns
                              # the word shares with the line, and at least this share of them
+PAIR_REACH          = 0.30   # a word the ink tests drop passes them when a second unbroken
+                             # stroke runs beside its line, within this share of the box height,
+                             # with glyph ink between the two and their middle in the strike band:
+                             # a double strike, each of whose lines sits off the middle of the
+                             # x-height with a few rows of it outside. 0 turns it off
+PAIR_MAX_LEN_IN     = 4.0    # ...under a line at most this long: across the page it is the ruling
+                             # of lined paper; a pen stroke above it makes a pair. 0 turns it off
+PAIR_MAX_RUN_PX     = 4.0    # ...and at most this thick (px at RENDER_DPI, scaled with the dpi,
+                             # never under 2 px; lines.THIN_STROKE_RUN_PX): a double strike's lines
+                             # are thin; in handwriting a pen stroke or a ruling beside another
+                             # makes a pair, and a thick line has the thick retry. 0 turns it off
+PAIR_LEN_RATIO      = 0.5    # ...and only when the two strokes run about as long as each other, the
+                             # shorter at least this share of the longer (_stroke_length): a double
+                             # strike's lines are drawn together, while beside a pen stroke the
+                             # other is a ruling or a stroke of its own. 0 turns it off
+PAIR_MAX_WOBBLE     = 1.3    # ...and under a line straighter than this (wobble, px at RENDER_DPI;
+                             # unmeasured counts as not straight): a printed line runs straight, a
+                             # pen stroke wobbles. 0 turns it off
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 FILL_UNMEASURED     = 0.80   # score_struck's fill for a caller-built line without one
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
@@ -471,6 +489,104 @@ def _stroke_row_dy(ink, line_ends_px, line_run_px, x0_px, x1_px, max_dy):
     return int(dys[best]) if runs[best] >= need else 0
 
 
+def _reach(flags, gap):
+    """How far a stroke starting at flags[0] runs: the index of its last True before the first
+    `gap` + 1 False in a row (breaks of up to `gap` are bridged), 0 when it has none."""
+    off = ~np.asarray(flags, bool)
+    stop = off.size
+    if off.size > gap:
+        hole = np.flatnonzero(np.convolve(off.astype(int), np.ones(gap + 1, int), "valid") > gap)
+        stop = int(hole[0]) if hole.size else off.size
+    on = np.flatnonzero(~off[:stop])
+    return int(on[-1]) if on.size else 0
+
+
+def _stroke_length(ink, line_ends_px, line_run_px, dy, x_mid, scale=1.0):
+    """Length (px) of the stroke through the row `dy` px off the line (+ = down), followed along
+    the line's slope both ways from column `x_mid` and past the line's ends (a ruling runs on
+    across the page): a column is on it when ink lies within the line's half thickness plus 2 px
+    of that row, and breaks of up to 3 px are bridged, both scaled by `scale` (the dpi over
+    RENDER_DPI)."""
+    (sx, sy), (ex, ey) = line_ends_px
+    H, W = ink.shape
+    xs = np.arange(W)
+    ys = sy + (xs - sx) * ((ey - sy) / (ex - sx) if ex != sx else 0.0) + dy
+    half = line_run_px / 2.0 + 2.0 * scale
+    top = np.clip((ys - half).astype(int), 0, H)
+    bot = np.clip((ys + half).astype(int) + 1, 0, H)
+    rows = top[None, :] + np.arange(max(int((bot - top).max()), 0))[:, None]
+    on = ((ink[np.minimum(rows, H - 1), xs] != 0) & (rows < bot)).any(axis=0)
+    gap, xm = max(1, int(round(3 * scale))), int(min(max(x_mid, 0), W - 1))
+    return _reach(on[xm:], gap) + _reach(on[xm::-1], gap)
+
+
+def _partner_stroke(ink, glyph, line_ends_px, line_run_px, x0_px, x1_px, dys, min_run_px=0.0,
+                    len_ratio=0.0, scale=1.0):
+    """The offset (px, + = down) of a second stroke beside the line, or 0: the nearest of `dys`
+    whose band (the line's thickness) holds an unbroken run of ink over STROKE_SNAP_MIN_RUN of
+    columns x0_px to x1_px and at least `min_run_px` long, the line's own band holding one too,
+    while the rows between the two bands hold `glyph` ink in at least INK_MIN_FRAC of the columns
+    and the row midway is not a stroke too. That band is the first on the stroke to pass: usually
+    the one reaching its edge nearest the line, so the offset falls short of the stroke's middle by
+    up to about the line's thickness; when nearer bands are not in `dys` or fail the test for glyph
+    ink between, it lies further onto the stroke, as far as its far edge. Two strokes with glyph
+    ink between them run through the glyphs: a double strike. A double rule has
+    nothing between its lines, one thick stroke has no gap, and the bars of one glyph (P, B, E, =)
+    are shorter than `min_run_px`. With `len_ratio`, the two strokes must also run about as long as
+    each other, the shorter at least that share of the longer (:func:`_stroke_length` through the
+    line and through that band, from the middle of x0_px to x1_px, `scale` the dpi over
+    RENDER_DPI): when the nearest stroke that passes the rest does not, there is no partner."""
+    (sx, sy), (ex, ey) = line_ends_px
+    H, W = ink.shape
+    if not len(dys) or not np.isfinite([sx, sy, ex, ey, line_run_px]).all():
+        return 0
+    x0 = max(int(x0_px), int(min(sx, ex)), 0)
+    x1 = min(int(x1_px), int(max(sx, ex)), W - 1)
+    if x1 <= x0:
+        return 0
+    xs = np.arange(x0, x1 + 1)
+    ys = sy + ((xs - sx) / (ex - sx) if ex != sx else np.zeros(len(xs))) * (ey - sy)
+    half = line_run_px / 2.0
+    bands = np.array(sorted({0, *(int(d) for d in dys)}))
+    tops = (ys[None, :] + bands[:, None] - half).astype(int)    # (band, column): rows top..bot-1
+    bots = (ys[None, :] + bands[:, None] + half).astype(int) + 1
+    first = tops[0]
+    rows = first[None, :] + np.arange(int((bots - first).max()))[:, None]
+    inside = (rows >= 0) & (rows < H)
+    at = (rows[inside], np.broadcast_to(xs, rows.shape)[inside])
+    cols = np.arange(len(xs))
+    cums = []
+    for mask in (ink, glyph):
+        win = np.zeros(rows.shape, bool)
+        win[inside] = mask[at] != 0
+        cums.append(np.vstack([np.zeros((1, len(xs)), np.int32),
+                               np.cumsum(win, axis=0, dtype=np.int32)]))
+    cum, gcum = cums
+    need = max(STROKE_SNAP_MIN_RUN * len(xs), min_run_px)
+
+    def stroke(i):
+        return _longest_run((cum[bots[i] - first, cols] - cum[tops[i] - first, cols]) > 0) >= need
+
+    own = int(np.flatnonzero(bands == 0)[0])
+    if not stroke(own):
+        return 0
+    for d in sorted(dys, key=abs):
+        i = int(np.flatnonzero(bands == int(d))[0])
+        if not stroke(i):
+            continue
+        lo, hi = (bots[own], tops[i]) if d > 0 else (bots[i], tops[own])
+        between = (gcum[np.maximum(hi, lo) - first, cols] - gcum[lo - first, cols]) > 0
+        mid = np.clip((ys + d / 2.0).astype(int), 0, H - 1)    # one thick stroke: no gap
+        if between.mean() >= INK_MIN_FRAC and _longest_run(ink[mid, xs] != 0) < need:
+            if len_ratio > 0:
+                a, b = (_stroke_length(ink, line_ends_px, line_run_px, dy, (x0 + x1) / 2.0, scale)
+                        for dy in (0, d))
+                if min(a, b) < len_ratio * max(a, b):
+                    return 0
+            return int(d)
+    return 0
+
+
 def _own_stroke(ink, line_ends_px, line_run_px, x0_px, x1_px, beside_ink=None):
     """(run, excess) for a word under a line. `run` is the longest unbroken stretch of band ink as
     a fraction of the word's columns: a stroke through the word is one stretch, while glyph ink at
@@ -524,7 +640,12 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
     not INK_GAP_PX: a thick bar leaves only a few rows of the x-height beside it. Under a line
     that wobbles (INK_GAP_THICK_STEM_WOBBLE), or whose wobble is not measured, only when the line
     is at least INK_GAP_THICK_STEM_RATIO times as thick as the median ink run in the rows that
-    reading adds: beside a pen stroke they are its own uneven edge and strokes of the same pen."""
+    reading adds: beside a pen stroke they are its own uneven edge and strokes of the same pen.
+    Last, it passes when a second stroke about as long runs beside the line with glyph ink between
+    the two and their middle in the band (PAIR_REACH, :func:`_partner_stroke`): a double strike,
+    one of whose lines the finder gave. Only under a line at most PAIR_MAX_LEN_IN long and
+    PAIR_MAX_RUN_PX thick whose wobble is measured and under PAIR_MAX_WOBBLE: in handwriting the
+    ruling of lined paper or a pen stroke would make a pair with another stroke beside it."""
     pix_h, pix_w = gray.shape
     if ink is None:
         ink = ink_mask(gray)
@@ -677,12 +798,43 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 # read as glyph ink on both sides.
                 passes, in_band, both_ink = ink_gate(off, wends, wpx, conf, INK_GAP_THICK_PX,
                                                      skip_full=True)
+            if (not passes and PAIR_REACH > 0 and wcov >= MIN_WORD_XOVER and config.glyph_ink
+                    and (PAIR_MAX_LEN_IN <= 0 or ln.get("len_in", 0.0) <= PAIR_MAX_LEN_IN)
+                    and (PAIR_MAX_RUN_PX <= 0
+                         or run_px <= max(2.0, PAIR_MAX_RUN_PX * dpi / RENDER_DPI))
+                    and (PAIR_MAX_WOBBLE <= 0
+                         or (wobble is not None and wobble < PAIR_MAX_WOBBLE))):
+                # A double strike: the finder gives one of its lines, off the middle of the
+                # x-height, and the rows of glyph ink outside it lie within the gap. Passed when
+                # a second stroke about as long runs beside the line with glyph ink between the
+                # two, and their middle is in the band, the second stroke taken at the nearest
+                # band on it that puts the middle there and passes the rest: usually its edge
+                # nearest the line, or, when the line lies out of the band on the side away from
+                # it, further onto it, up to its far edge. `off` moves to that middle; spans are
+                # still read at the line, or at the stroke's row where the retry above moved it.
+                # The line's own band must be a stroke, so a line stitched beside one is paired
+                # only after that move. Glyph ink only: on all ink, a thick bar between two rules
+                # has its own rows between them. Not under a line across the page, the ruling of
+                # lined paper, nor a thick or wobbly one, a pen stroke: in handwriting either one
+                # with another stroke beside it would make a pair.
+                box_h = max(wpx[3] - wpx[1], 1e-9)
+                reach, near = int(PAIR_REACH * box_h), int(np.ceil(run_px)) + 2
+                dys = [d for d in range(-reach, reach + 1)
+                       if abs(d) >= near and abs(off + d / (2 * box_h)) <= STRIKE_TOL]
+                pair = _partner_stroke(ink, side_ink, wends, run_px, max(x0, wpx[0]),
+                                       min(x1, wpx[2]), dys, STROKE_RUN_MIN_CHARS
+                                       * (wpx[2] - wpx[0]) / max(len(txt), 1),
+                                       PAIR_LEN_RATIO, dpi / RENDER_DPI)
+                if pair:
+                    off += pair / (2 * box_h)
+                    passes = in_band = both_ink = True
             if not passes:
                 continue
             ink_ok = not in_band
             # Strike-geometry corroboration: a genuine strike crosses the x-height (in-band)
-            # and keeps substantial ink on BOTH sides, solid or broken up. The DI-confidence veto
-            # (detect.apply_cnn_verdict) spares a high-OCR-confidence word only with it.
+            # and keeps substantial ink on BOTH sides, solid or broken up, or is a double strike's
+            # pair. The DI-confidence veto (detect.apply_cnn_verdict) spares a high-OCR-confidence
+            # word only with it.
             strike_geom = in_band and both_ink
             wbox = (wx0, wy0, wx1, wy1)
             if wcov >= MIN_WORD_XOVER:
@@ -773,8 +925,8 @@ def consolidate_struck(hits, tagged, use_conf=True):
             "line_idx": sorted({h["line_idx"] for h in hs}),
         }
         rec["twin"] = any(h.get("twin") for h in hs)
-        # True when any fragment carries genuine strike geometry (in-band, ink on both sides).
-        # The DI-confidence veto keeps such a word even at high OCR confidence.
+        # True when any fragment carries genuine strike geometry (in-band with ink on both sides,
+        # or a double strike's pair): the DI-confidence veto keeps it even at high OCR confidence.
         rec["geom_corroborated"] = any(h.get("strike_geom") for h in hs)
         rec["score"] = score_struck(rec, tagged, use_conf=use_conf)
         rec["tier"] = ("auto" if rec["score"] >= AUTO_SCORE

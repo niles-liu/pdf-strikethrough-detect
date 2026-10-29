@@ -421,6 +421,42 @@ All notable changes to this project are documented here. The format follows
   `scanned.INK_GAP_THICK_PX = 2` gives the previous behavior,
   `scanned.INK_GAP_THICK_STEM_RATIO = 0` turns the stem test off, and
   `scanned.INK_GAP_THICK_STEM_WOBBLE = 0` applies it to every line.
+- **The scanned path could drop a double strike when it found only one of its two lines.** Each
+  line of a double strike sits off the middle of the x-height, and the line finder gives one of
+  them, or one stitched along the glyph pieces beside it, which the retry at the stroke's own row
+  first moves onto the stroke. The ink tests read glyph ink from 2 px past that line, which skips
+  the one to three rows of the x-height on its outer side, so the struck word read as a table rule
+  or as ink on one side only. A word the ink tests drop now passes them when its line covers at
+  least 45% of it and a second unbroken stroke runs beside that line within 30% of the box
+  height, with glyph ink between them in at least 35% of the columns and a gap between the two
+  strokes, both strokes at least one and a half character widths long and about as long as each
+  other, and their middle in the word's middle band. StrikeNet still judges it, and like a word
+  with ink on both sides of its line the word counts as strike geometry (`geom_corroborated`): the
+  DI-confidence veto spares it, and `ScanConfig.line_support` can keep it when it has three
+  characters or fewer and StrikeNet does not confirm it. Only a word the ink tests drop is tried,
+  so a double-struck word they pass without ink on both sides of its line (under an in-band line
+  of 0.5 in or more, or, with Azure DI words read at 0.974 or below, through the confidence rescue
+  under a shorter one) gains no strike geometry, and the veto still drops it when it was read
+  above 0.955. Only under a line at most 4 in long, at
+  most 4 px thick (at 200 dpi, scaled with the dpi, with a 2 px floor) and straight
+  (`straightness` under 1.3 px, an unmeasured one counting as not straight): in handwriting, the
+  ruling of lined paper or a pen stroke beside another stroke made pairs. A double rule has
+  nothing between its lines, a double underline's middle is below the word's middle band, and one
+  glyph's bars (a P's bowl, an equals sign) are shorter. Glyph ink only: with
+  `ScanConfig(glyph_ink=False)` there is no pair test. On newly generated synthetic pages from the
+  frontier benchmark, the half no value was fitted to, struck sub-tokens found rose from 2,849 to
+  2,870 of 3,560 (double strikes from 247 to 268 of 300), and on 100 pages from a further
+  generator seed, from 5,674 to 5,731 of 7,057, with none lost and no live sub-tokens newly
+  marked; Senate bills published before its cutoff and the dev pages of its public redline corpus
+  found and marked the same. On BRESSAY's handwritten pages, read by RapidOCR, no mark changes on
+  its training split, and on its validation split 2 of the 43,628 live words are newly marked, on
+  2 pages, plus 2 OCR words on a third page that the live-word count does not register (a live
+  word marked only in its last letter, and a word matching nothing in the ground truth); with
+  Azure Document Intelligence words, on the 70 of those pages that have them, no mark changes. A
+  scanned page's detection takes 0.7% longer on synthetic pages and 0.3% on the bills, OCR aside.
+  `scanned.PAIR_REACH = 0` gives the previous behavior, and setting `scanned.PAIR_MAX_LEN_IN`,
+  `PAIR_MAX_RUN_PX`, `PAIR_LEN_RATIO` or `PAIR_MAX_WOBBLE` to 0 turns that limit off. With
+  `scanned.STROKE_SNAP_PX = 0`, a line stitched beside a stroke is not paired either.
 - **`benchmarks/confidence_veto.py` split its counts where the veto does not.** Its default mode
   counted a word read at exactly `max_clean_conf` (0.955) as high-confidence, but the veto acts
   only above it. The split now uses the veto's boundary. One reported word on its ruled-table set

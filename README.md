@@ -374,9 +374,11 @@ live text as if deleted (RAG / indexing). Calibrate the threshold from your own 
 `recall_first(cnn_p_hi=…)`.
 
 **Underlines on table rules.** A line below a word's middle band counts as a strike only with glyph
-ink on both sides of it, measured without the page's horizontal runs of 0.25 in or more (table
-rules, underlines; `lines.rule_mask` finds them), so an underlined number sitting on a table rule
-is not read as struck. `ScanConfig(glyph_ink=False)` measures on all ink.
+ink on both sides of it, or with glyph ink between it and a second stroke above it, their middle in
+the band (a double strike's lower line). The glyph ink is measured without the page's horizontal
+runs of 0.25 in or more (table rules, underlines; `lines.rule_mask` finds them), so an underlined
+number sitting on a table rule is not read as struck. `ScanConfig(glyph_ink=False)` measures on
+all ink, with no double-strike test.
 
 **Short words.** A struck word of three characters or fewer, not counting surrounding punctuation,
 fills little of the CNN's input and often scores below the struck threshold.
