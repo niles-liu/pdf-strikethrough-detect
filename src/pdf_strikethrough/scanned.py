@@ -15,8 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .lines import (RENDER_DPI, THIN_STROKE_RUN_PX, ink_mask, rule_mask, strike_lines,
-                    to_gray_u8)
+from .lines import (RENDER_DPI, STEM_MIN_RUNS, THIN_STROKE_RUN_PX, ink_mask, rule_mask,
+                    strike_lines, to_gray_u8)
 
 # --- per-word classification tunables (geometry; engine-independent) ---
 STRIKE_TOL          = 0.16   # half-width of the strike band (fraction of word-box height)
@@ -29,6 +29,27 @@ INK_MAX_OFF         = 0.40   # pixel test still considered up to this |off| (box
 INK_MIN_FRAC        = 0.35   # min fraction of covered columns with glyph ink above resp. below
 INK_ONESIDE_MAX     = 0.15   # a side with less ink than this is "empty"; an underline or table
                              # rule has ink on ONE side and ~none on the other
+INK_GAP_PX          = 2      # the ink above and below is read from this many px past the stroke
+STROKE_ROW_FILL     = 0.90   # on the thick retry, a row just past the line's band inked across
+                             # this share of the columns is the stroke's own and is skipped
+INK_GAP_THICK_PX    = 0      # a word the ink tests drop under a thick line (run_px above
+                             # THIN_STROKE_RUN_PX scaled with the dpi, and above 2 px) is tried
+                             # again from this many px past it: a 2-3 pt bar covers most of the
+                             # x-height and leaves 2-4 rows of glyph ink beside it, inside
+                             # INK_GAP_PX. INK_GAP_PX or more turns it off
+INK_GAP_THICK_MAX_LEN_IN = 4.0  # ...for a line up to this long: a thick bar across the page is the
+                             # ruling of lined paper, and words written on it reach down into it
+INK_GAP_THICK_STEM_RATIO = 1.5  # ...and for a line at least this many times as thick as the
+                             # median ink run along it in the rows the retry adds (the stem test):
+                             # under a printed bar they are the struck letters' stems, beside a pen
+                             # stroke its own uneven edge and strokes of the same pen. A test
+                             # like lines.STEM_RATIO's, read closer in; here too few runs to
+                             # measure means no retry. 0 turns it off
+INK_GAP_THICK_STEM_WOBBLE = 1.2  # ...the stem test, applied only to a line whose straightness
+                             # (wobble, px at RENDER_DPI) is at least this or unmeasured: a pen
+                             # stroke rarely runs straighter, and under a straight printed bar the
+                             # letters' stems can be nearly as thick as the bar (bold text, low
+                             # dpi). 0 applies it to every line
 GLYPH_INK_RULE_LEN_IN = 0.25 # the INK_* tests read glyph ink: horizontal runs at least this long
                              # (50 px @200 dpi) are rules or underlines and are left out, so the
                              # rule under an underlined word is not its "ink below". TRIED 1/6 in
@@ -216,12 +237,15 @@ def _glyph_ink(ink, dpi=RENDER_DPI):
     return ink & ~rule_mask(ink, max(1, int(round(GLYPH_INK_RULE_LEN_IN * dpi))))
 
 
-def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):
-    """Fractions of covered columns with glyph ink above resp. below the stroke. A strike runs
-    THROUGH glyphs -> ink both sides; an underline has ink above only; a glyph chain has ~none
-    above. The stroke y is interpolated from the LINE ENDPOINTS at the center of the word's
-    overlap with the line. `ink` is the mask to measure: glyph ink (:func:`_glyph_ink`) unless
-    ``ScanConfig.glyph_ink`` is off."""
+def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=None, skip_full=False):
+    """Fractions of covered columns with glyph ink above resp. below the stroke, read from `gap`
+    px past its edges (INK_GAP_PX when None). A strike runs THROUGH glyphs -> ink both sides; an
+    underline has ink above only; a glyph chain has ~none above. The stroke y is interpolated from
+    the LINE ENDPOINTS at the center of the word's overlap with the line. With `skip_full`, rows
+    just past the band inked across STROKE_ROW_FILL of the columns, as many as the gap is short of
+    INK_GAP_PX on each side, are the stroke's own and are skipped too: read from close in, the
+    stroke's last row would count as glyph ink. `ink` is the mask to measure: glyph ink
+    (:func:`_glyph_ink`) unless ``ScanConfig.glyph_ink`` is off."""
     (sx, sy), (ex, ey) = line_ends_px
     wx0, wy0, wx1, wy1 = word_bbox_px
     x0, x1 = max(sx, wx0), min(ex, wx1)
@@ -230,14 +254,48 @@ def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=2):
     xm = (x0 + x1) / 2.0
     t = 0.0 if ex == sx else (xm - sx) / (ex - sx)
     ly = sy + t * (ey - sy)
-    half = line_run_px / 2.0 + gap
+    half = line_run_px / 2.0 + (INK_GAP_PX if gap is None else gap)
     H, W = ink.shape
     top0, top1 = max(0, int(wy0)), max(0, int(ly - half))
     bot0, bot1 = min(H, int(ly + half) + 1), min(H, int(wy1) + 1)
     cols = slice(max(0, int(x0)), min(W, int(x1) + 1))
+    if skip_full:
+        for _ in range(max(0, INK_GAP_PX - (INK_GAP_PX if gap is None else int(gap)))):
+            if top1 > top0 and ink[top1 - 1, cols].mean() >= STROKE_ROW_FILL:
+                top1 -= 1
+            if bot1 > bot0 and ink[bot0, cols].mean() >= STROKE_ROW_FILL:
+                bot0 += 1
     above = ink[top0:top1, cols].any(axis=0).mean() if top1 > top0 else 0.0
     below = ink[bot0:bot1, cols].any(axis=0).mean() if bot1 > bot0 else 0.0
     return float(above), float(below)
+
+
+def _edge_runs(ink, line_ends_px, line_run_px, word_bbox_px, near, far):
+    """Median length of the ink runs along the line, over the columns the word shares with it, in
+    the rows `near` + 1 to `far` px past its band on each side: the rows a reading of the ink beside
+    it from `near` px adds to one from `far` px (:func:`_ink_above_below`, which reads at the
+    line's height at the word's middle; these rows follow the line column by column). None with
+    fewer than lines.STEM_MIN_RUNS runs, or no rows to read."""
+    (sx, sy), (ex, ey) = line_ends_px
+    H, W = ink.shape
+    c0 = max(0, int(max(word_bbox_px[0], min(sx, ex))))
+    c1 = min(W, int(min(word_bbox_px[2], max(sx, ex))) + 1)
+    k = np.arange(int(near) + 1, int(far) + 1)[:, None]
+    if c1 - c0 < 2 or k.size == 0:
+        return None
+    xs = np.arange(c0, c1)
+    ly = np.full(xs.shape, (sy + ey) / 2.0) if ex == sx else sy + (xs - sx) * (ey - sy) / (ex - sx)
+    half = line_run_px / 2.0
+    runs = []
+    for yy in (np.floor(ly - half).astype(int)[None, :] - k,
+               np.floor(ly + half).astype(int)[None, :] + k):
+        ok = (yy >= 0) & (yy < H)
+        sel = np.zeros(yy.shape, dtype=bool)
+        sel[ok] = ink[yy[ok], np.broadcast_to(xs, yy.shape)[ok]]
+        d = np.diff(np.pad(sel, ((0, 0), (1, 1))).astype(np.int8), axis=1).ravel()
+        runs.append(np.flatnonzero(d == -1) - np.flatnonzero(d == 1))
+    runs = np.concatenate(runs)
+    return float(np.median(runs)) if runs.size >= STEM_MIN_RUNS else None
 
 
 def _one_sided(above, below):
@@ -461,7 +519,12 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
     for a solid table rule or put through the chain gate, and it scores as FILL_UNMEASURED.
 
     A word the ink tests drop is tried again at its stroke's own row, within STROKE_SNAP_PX of the
-    line (scaled with `dpi`): a stitched line can run a few px off a thin or light stroke."""
+    line (scaled with `dpi`): a stitched line can run a few px off a thin or light stroke. Under a
+    thick line it is then tried with the ink beside the line read from INK_GAP_THICK_PX px past it,
+    not INK_GAP_PX: a thick bar leaves only a few rows of the x-height beside it. Under a line
+    that wobbles (INK_GAP_THICK_STEM_WOBBLE), or whose wobble is not measured, only when the line
+    is at least INK_GAP_THICK_STEM_RATIO times as thick as the median ink run in the rows that
+    reading adds: beside a pen stroke they are its own uneven edge and strokes of the same pen."""
     pix_h, pix_w = gray.shape
     if ink is None:
         ink = ink_mask(gray)
@@ -533,21 +596,25 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                     "box_chars": box_chars}
 
         run_px = ln.get("run_px", 3.0)
+        wobble = ln.get("straightness")
 
-        def ink_gate(off, wends, wpx, conf):
-            """(passes, in_band, both_ink) for the line at `wends` through the word at `wpx`."""
+        def ink_gate(off, wends, wpx, conf, gap=None, skip_full=False):
+            """(passes, in_band, both_ink) for the line at `wends` through the word at `wpx`, the
+            ink beside it read from `gap` px past its edges."""
             in_band = abs(off) <= STRIKE_TOL
             # Through-glyph ink at this word (see _ink_above_below), for EVERY hit: if in-band
             # lines skipped it, a full-width table rule would ride high fill straight to 'auto'.
             # `both_ink` requires substantial ink on both sides; `one_sided` is the underline/rule
             # signature (well on one side, ~none on the other) and is kept distinct so a real
             # strike over SPARSE text still reads as two-sided, not one.
-            above, below = _ink_above_below(side_ink, wends, run_px, wpx)
+            above, below = _ink_above_below(side_ink, wends, run_px, wpx, gap, skip_full)
             both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
             one_sided = _one_sided(above, below)
             if long_solid and config.glyph_ink and max(above, below) < INK_ONESIDE_MAX:
                 # No glyph ink on either side: judge it on all ink, where the partner of a double
-                # rule, which glyph ink leaves out, is the ink on its one side.
+                # rule, which glyph ink leaves out, is the ink on its one side. On the thick retry
+                # too this reads from INK_GAP_PX: from the bar's edges, a rule just past it would
+                # read as ink beside it.
                 one_sided = _one_sided(*_ink_above_below(ink, wends, run_px, wpx))
             if (not in_band) or short_line:
                 # OCR damage is the tiebreaker — only meaningful when confidences are calibrated,
@@ -588,6 +655,28 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                     wends = ((sx, sy + dy), (ex, ey + dy))
                     off += dy / max(wpx[3] - wpx[1], 1e-9)
                     passes, in_band, both_ink = ink_gate(off, wends, wpx, conf)
+            if (not passes and in_band and wcov >= MIN_WORD_XOVER and config.glyph_ink
+                    and INK_GAP_THICK_PX < INK_GAP_PX
+                    and ln.get("len_in", 0.0) <= INK_GAP_THICK_MAX_LEN_IN
+                    and run_px > max(2.0, THIN_STROKE_RUN_PX * dpi / RENDER_DPI)
+                    and (INK_GAP_THICK_STEM_RATIO <= 0
+                         or (wobble is not None and wobble < INK_GAP_THICK_STEM_WOBBLE)
+                         or run_px >= INK_GAP_THICK_STEM_RATIO
+                         * (_edge_runs(side_ink, wends, run_px, wpx, INK_GAP_THICK_PX, INK_GAP_PX)
+                            or float("inf")))):
+                # A thick bar through the middle of the x-height covers most of it: the few rows of
+                # glyph ink beside it lie within the thin stroke's gap. Try again with the ink read
+                # from closer in, for a line across the word: an underline or a rule over the text
+                # is out of the band, and a glyph chain in bold text crosses a letter or two. Rows
+                # just past the band inked across the word are the stroke's own (the line's y can be
+                # a fraction of a px off) and are skipped. Glyph ink only: on all ink, a rule beside
+                # the bar would read as ink beside it. And for a line that wobbles, or whose wobble
+                # is not measured, only when it is clearly thicker than the ink runs in the rows the
+                # closer reading adds: under a printed bar they are the stems of the struck letters,
+                # beside a pen stroke its own uneven edge and strokes of the same pen, which would
+                # read as glyph ink on both sides.
+                passes, in_band, both_ink = ink_gate(off, wends, wpx, conf, INK_GAP_THICK_PX,
+                                                     skip_full=True)
             if not passes:
                 continue
             ink_ok = not in_band

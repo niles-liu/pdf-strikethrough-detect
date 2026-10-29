@@ -6,7 +6,7 @@ import pytest
 from scipy import ndimage
 
 import pdf_strikethrough as st
-from pdf_strikethrough import lines
+from pdf_strikethrough import lines, scanned
 from pdf_strikethrough.ocr import Word
 from pdf_strikethrough.scanned import ScanConfig
 
@@ -72,6 +72,25 @@ def test_blurred_3pt_strike_is_kept():
     is lost as before."""
     gray, words = _page("a summer was over now, we saw a nurse", "tiro", 9, (1, 2), 3.0, blur=0.6)
     assert _struck(gray, words)[0] == ["summer", "was"]
+
+
+@pytest.mark.parametrize("text,strike,font,size,width,found", [
+    ("he was over now as we came", (1, 4), "cour", 11, 2.0, ["as", "now", "over", "was"]),
+    ("so we can use one", (2, 4), "helv", 9, 2.5, ["can", "one", "use"]),
+    ("one more case", (0, 0), "tiro", 11, 2.0, ["one"])])
+def test_thick_strike_over_words_without_ascenders(text, strike, font, size, width, found,
+                                                   monkeypatch):
+    """A 2 or 2.5 pt strike leaves two to four rows of the x-height above and below it. Over
+    words without ascenders or descenders, read from 2 px past the strike, that is no ink above:
+    a long line read as a table rule, a short one as no strike. Read from its edges
+    (INK_GAP_THICK_PX = 0) the words are found, also with the stem test applied to every line;
+    at 2, the release's reading, none is."""
+    gray, words = _page(text, font, size, strike, width)
+    assert _struck(gray, words)[0] == found
+    monkeypatch.setattr(scanned, "INK_GAP_THICK_STEM_WOBBLE", 0)
+    assert _struck(gray, words)[0] == found
+    monkeypatch.setattr(scanned, "INK_GAP_THICK_PX", 2)
+    assert _struck(gray, words)[0] == []
 
 
 def test_thick_line_with_no_text_beside_it_is_kept():
