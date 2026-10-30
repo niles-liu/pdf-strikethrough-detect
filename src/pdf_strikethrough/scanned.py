@@ -81,6 +81,10 @@ PAIR_LEN_RATIO      = 0.5    # ...and only when the two strokes run about as lon
 PAIR_MAX_WOBBLE     = 1.3    # ...and under a line straighter than this (wobble, px at RENDER_DPI;
                              # unmeasured counts as not straight): a printed line runs straight, a
                              # pen stroke wobbles. 0 turns it off
+RESCUE_RETRIES      = True   # a word the OCR-confidence rescue passes (under a short line, without
+                             # ink on both sides) still goes through the retries above, so one
+                             # that gives it strike geometry (in the band with ink on both sides,
+                             # or a pair) does so for the DI-confidence veto. False turns it off
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 FILL_UNMEASURED     = 0.80   # score_struck's fill for a caller-built line without one
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
@@ -645,7 +649,10 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
     the two and their middle in the band (PAIR_REACH, :func:`_partner_stroke`): a double strike,
     one of whose lines the finder gave. Only under a line at most PAIR_MAX_LEN_IN long and
     PAIR_MAX_RUN_PX thick whose wobble is measured and under PAIR_MAX_WOBBLE: in handwriting the
-    ruling of lined paper or a pen stroke would make a pair with another stroke beside it."""
+    ruling of lined paper or a pen stroke would make a pair with another stroke beside it.
+
+    A word the OCR-confidence rescue passes goes through the same retries (RESCUE_RETRIES), and
+    one is taken only when it gives strike geometry; otherwise the rescue stands at the line."""
     pix_h, pix_w = gray.shape
     if ink is None:
         ink = ink_mask(gray)
@@ -768,6 +775,17 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
             wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
             wends = ends
             passes, in_band, both_ink = ink_gate(off, ends, wpx, conf)
+            # A pass that rests on the confidence rescue alone gives the word no strike geometry,
+            # so the DI-confidence veto can still drop it. The retries run for it too, and one is
+            # taken only when it gives strike geometry (in the band with ink on both sides, or a
+            # pair), and then sets `off` and the row the span is read at as for any word a retry
+            # passes; a partial word's stroke-row retry is not taken when it would move the
+            # word past PARTIAL_ISO_MAX_OFF, where an isolated partial strike is dropped.
+            # Otherwise the rescue stands as it was, at the line (a retry can move the word out of
+            # the band where the rescue applies).
+            rescued = RESCUE_RETRIES and passes and not both_ink and short_line
+            if rescued:
+                saved, passes = (in_band, both_ink, off, wends), False
             if not passes and snap_px:
                 # The line may run a few px off the stroke (a thin or light one, stitched to glyph
                 # pieces), so the ink "below" it is under the glyphs. Try again at the stroke's row.
@@ -776,6 +794,13 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                     wends = ((sx, sy + dy), (ex, ey + dy))
                     off += dy / max(wpx[3] - wpx[1], 1e-9)
                     passes, in_band, both_ink = ink_gate(off, wends, wpx, conf)
+                    # a partial word is kept off the middle only beside a strong hit on its line
+                    # (`off` compared rounded, as a hit stores it and that filter reads it)
+                    passes = passes and not (rescued and not (
+                        in_band and both_ink
+                        and (wcov >= MIN_WORD_XOVER
+                             or abs(round(off, 2)) <= PARTIAL_ISO_MAX_OFF
+                             or abs(round(saved[2], 2)) > PARTIAL_ISO_MAX_OFF)))
             if (not passes and in_band and wcov >= MIN_WORD_XOVER and config.glyph_ink
                     and INK_GAP_THICK_PX < INK_GAP_PX
                     and ln.get("len_in", 0.0) <= INK_GAP_THICK_MAX_LEN_IN
@@ -798,6 +823,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 # read as glyph ink on both sides.
                 passes, in_band, both_ink = ink_gate(off, wends, wpx, conf, INK_GAP_THICK_PX,
                                                      skip_full=True)
+                passes = passes and not (rescued and not (in_band and both_ink))
             if (not passes and PAIR_REACH > 0 and wcov >= MIN_WORD_XOVER and config.glyph_ink
                     and (PAIR_MAX_LEN_IN <= 0 or ln.get("len_in", 0.0) <= PAIR_MAX_LEN_IN)
                     and (PAIR_MAX_RUN_PX <= 0
@@ -828,6 +854,8 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 if pair:
                     off += pair / (2 * box_h)
                     passes = in_band = both_ink = True
+            if rescued and not passes:
+                (in_band, both_ink, off, wends), passes = saved, True
             if not passes:
                 continue
             ink_ok = not in_band
