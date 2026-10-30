@@ -440,6 +440,10 @@ st.ensure_model(
 - The files are cached in `~/.cache/pdf_strikethrough/models/` under the first 12 characters of
   the model's sha256, or in `cache_dir=`. A cached file whose digest matches is used without a
   download, so once a model is cached a restart needs no network.
+- A later call may leave out `meta_url` and `meta` to reuse the cached meta. Each call that passes
+  one records which meta was verified with which model, and a call without one raises
+  `ValueError` unless that record pairs this model with the meta as it is now. A folder from
+  before the record is trusted if it is the model's default folder or already holds the model.
 - A file whose digest does not match raises `ValueError` and is not written, and the loader keeps
   the model it had. With `meta_url` the meta's digest is required too, since its thresholds decide
   what counts as struck; or pass the meta itself as `meta={...}`. To fall back to the packaged

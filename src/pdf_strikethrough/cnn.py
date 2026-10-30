@@ -41,6 +41,9 @@ SHADE_WHITE_FRAC = 0.85           # shaded-crop white point, as a fraction of th
                                   # the edge of the safe range, not a measured optimum.
 
 _MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env var
+_META_RECORD = "strike_verdict_cnn.meta.verified.json"  # ensure_model's record: the sha256 of
+                                  # each model in the folder -> the sha256 of the meta verified or
+                                  # written with it
 _lock = threading.Lock()
 _model = None                     # lazy singleton: (score_fn, meta dict)
 
@@ -75,6 +78,15 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
     required `meta_sha256` (the thresholds decide what counts as struck), or as a `meta` dict
     written verbatim. A digest that is not 64 hex characters raises ``ValueError``.
 
+    With neither, the meta already in the cache is reused only for the model it was verified with:
+    each call given `meta_url` or `meta` records the model's sha256 with the meta's in the cache
+    folder (when the record can be written), and a call with neither raises ``ValueError``,
+    writing no file, unless that record pairs this model with the meta as it is now. A folder with
+    no record (one written before there was a record) is trusted as before when it is this
+    model's default folder or already holds this model; pass `meta_url` or `meta` once to record
+    it. The model and its meta are both verified before either is written, so a rejected download
+    leaves the cache as it was.
+
     Downloads land in `cache_dir` (default:
     ``~/.cache/pdf_strikethrough/models/<sha256[:12]>``); an already-present, hash-matching file is
     reused. Accepts ``http(s)`` and ``file`` URLs. Returns the cache directory (already applied via
@@ -92,18 +104,19 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
         return d
 
     def _fetch_verify(u, digest, dest):
+        """The verified bytes at `u`, or None when `dest` already holds them. Writes nothing."""
         scheme = urllib.parse.urlparse(u).scheme
         if scheme not in ("http", "https", "file"):
             raise ValueError(f"unsupported URL scheme {scheme!r} (use http, https, or file)")
         if dest.exists() and hashlib.sha256(dest.read_bytes()).hexdigest() == digest:
-            return
+            return None
         with urllib.request.urlopen(u, timeout=timeout) as r:
             data = r.read()
         got = hashlib.sha256(data).hexdigest()
         if got != digest:
             raise ValueError(f"sha256 mismatch for {u}: expected {digest}, got {got} "
                              "(download rejected; nothing was written)")
-        dest.write_bytes(data)
+        return data
 
     sha256 = _digest(sha256, "sha256")
     if meta_url is not None:
@@ -111,20 +124,67 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
             raise ValueError("meta_url needs meta_sha256: the meta JSON holds the struck/clean "
                              "thresholds, so it is verified like the model (or pass meta={...})")
         meta_sha256 = _digest(meta_sha256, "meta_sha256")
+    default_dir = cache_dir is None
     if cache_dir is None:
         cache_dir = pathlib.Path.home() / ".cache" / "pdf_strikethrough" / "models" / sha256[:12]
     cache_dir = pathlib.Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    _fetch_verify(url, sha256, cache_dir / "strike_verdict_cnn.onnx")
+    model_path = cache_dir / "strike_verdict_cnn.onnx"
     meta_path = cache_dir / "strike_verdict_cnn.meta.json"
-    if meta_url is not None:
-        _fetch_verify(meta_url, meta_sha256, meta_path)
-    elif meta is not None:
-        meta_path.write_text(json.dumps(meta), encoding="utf-8")
-    elif not meta_path.exists():
-        raise ValueError(
-            "no model meta: pass meta_url=(+meta_sha256) or meta={...} (the ONNX loader needs "
-            "strike_verdict_cnn.meta.json — thresholds + crop geometry — alongside the model)")
+    record_path = cache_dir / _META_RECORD
+
+    def _read_record():
+        """(record, whether there is one); an unreadable record is one that vouches for nothing."""
+        try:
+            got, have = json.loads(record_path.read_text(encoding="utf-8")), True
+        except FileNotFoundError:
+            got, have = {}, False
+        except (OSError, ValueError, RecursionError):
+            got, have = {}, True
+        return (got if isinstance(got, dict) else {}), have
+
+    if meta_url is None and meta is None:
+        if not meta_path.exists():
+            raise ValueError(
+                "no model meta: pass meta_url=(+meta_sha256) or meta={...} (the ONNX loader needs "
+                "strike_verdict_cnn.meta.json, with the thresholds and crop geometry, alongside "
+                "the model)")
+        # A shared cache_dir can hold another model's thresholds. Without a record, the meta
+        # came with the model already there, or, in the default folder, with this model.
+        record, have_record = _read_record()
+        if have_record:
+            ok = record.get(sha256) == _file_sha256(meta_path)
+        else:
+            ok = default_dir or (model_path.exists() and _file_sha256(model_path) == sha256)
+        if not ok:
+            raise ValueError(
+                f"the meta cached in {cache_dir} was not verified for this model (sha256 "
+                f"{sha256}): pass meta_url=(+meta_sha256) or meta={{...}}")
+        model_data, meta_data = _fetch_verify(url, sha256, model_path), None
+    else:
+        model_data = _fetch_verify(url, sha256, model_path)
+        if meta_url is not None:
+            meta_data, meta_digest = _fetch_verify(meta_url, meta_sha256, meta_path), meta_sha256
+        else:
+            meta_data = json.dumps(meta).encode("utf-8")
+            meta_digest = hashlib.sha256(meta_data).hexdigest()
+            if meta_path.exists() and meta_path.read_bytes() == meta_data:
+                meta_data = None
+        # The record is written first: if writing the model or the meta then fails, it already
+        # names the meta this model needs. It is read just before it is written, so entries other
+        # calls wrote by then are kept. One that cannot be written is skipped; a later call with
+        # neither meta argument is then refused or falls back as above.
+        record, _ = _read_record()
+        if record.get(sha256) != meta_digest:
+            try:
+                record_path.write_text(json.dumps({**record, sha256: meta_digest}),
+                                       encoding="utf-8")
+            except OSError:
+                pass
+    if model_data is not None:
+        model_path.write_bytes(model_data)
+    if meta_data is not None:
+        meta_path.write_bytes(meta_data)
     set_model_dir(str(cache_dir))
     return str(cache_dir)
 
