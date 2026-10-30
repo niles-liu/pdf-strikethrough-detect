@@ -44,6 +44,11 @@ _MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env v
 _META_RECORD = "strike_verdict_cnn.meta.verified.json"  # ensure_model's record: the sha256 of
                                   # each model in the folder -> the sha256 of the meta verified or
                                   # written with it
+_OWN_FILES = {n.casefold() for n in ("strike_verdict_cnn.onnx", "strike_verdict_cnn.meta.json",
+                                     "strike_verdict_cnn.pt", _META_RECORD)}
+_DEVICE_NAMES = {"con", "prn", "aux", "nul", "conin$", "conout$",
+                 *(f"{d}{i}" for d in ("com", "lpt") for i in range(10))}  # Windows devices
+_BAD_NAME_CHARS = frozenset('\\:<>"|?*' + "".join(map(chr, range(32))))  # not in a Windows name
 _lock = threading.Lock()
 _model = None                     # lazy singleton: (score_fn, meta dict)
 
@@ -86,6 +91,19 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
     model's default folder or already holds this model; pass `meta_url` or `meta` once to record
     it. The model and its meta are both verified before either is written, so a rejected download
     leaves the cache as it was.
+
+    A model that keeps its weights in external data files (torch's newer exporter writes them by
+    default) needs each file hosted beside the model, at its location relative to the model's URL,
+    and its sha256 listed in the meta's ``external_data``, the shape :func:`get_model_meta`
+    reports: ``[{"location": ..., "sha256": ...}, ...]``. Each is downloaded and verified with the
+    model and the meta, before any of them is written. A file the meta does not list, a listed
+    file the model does not name, a location that is not a plain relative path to a file of its
+    own inside the cache folder, or a model URL with a query string raises ``ValueError`` before
+    any of the files is downloaded. The files are written
+    weights first and the meta last, then hashed again; the loader refuses a folder whose files
+    do not match its meta's ``external_data``. For such a model `sha256` covers the graph, not the
+    weights, and the cached-meta record and the default folder go by it: give retrained weights
+    under the same graph file their own `cache_dir`.
 
     Downloads land in `cache_dir` (default:
     ``~/.cache/pdf_strikethrough/models/<sha256[:12]>``); an already-present, hash-matching file is
@@ -143,6 +161,70 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
             got, have = {}, True
         return (got if isinstance(got, dict) else {}), have
 
+    def _fetch_external(model_bytes, meta_bytes):
+        """[(location, path, verified bytes or None, sha256)] for each external data file the
+        model names, pinned by the meta's ``external_data``, every location checked before the
+        first download and nothing written."""
+        if urllib.parse.urlparse(url).query:
+            raise ValueError("a model with external data files cannot be fetched from a URL with "
+                             "a query string (a signed URL): the files' URLs are the model's with "
+                             "the file name swapped, which drops it")
+        listed = json.loads(meta_bytes.decode("utf-8"))
+        listed = (listed.get("external_data") if isinstance(listed, dict) else None) or []
+        if not isinstance(listed, list):
+            raise ValueError("the meta's external_data must be a list of {location, sha256}")
+        pinned = {}
+        for e in listed:
+            loc = e.get("location") if isinstance(e, dict) else None
+            if not isinstance(loc, str):
+                raise ValueError(f"the meta's external_data entry {e!r} has no location")
+            digest = _digest(e.get("sha256"), f"external_data sha256 for {loc!r}")
+            if pinned.setdefault(loc, digest) != digest:
+                raise ValueError(f"the meta's external_data lists {loc!r} twice")
+        locations = _external_data_locations(model_bytes)
+        missing = [loc for loc in locations if loc not in pinned]
+        if missing:
+            raise ValueError(
+                f"the model names external data files {missing} that the meta's external_data "
+                "gives no sha256 for: list each file as get_model_meta() reports it for the model "
+                "loaded from its folder, and remove from the model the tensors no node reads, "
+                "whose files it leaves out")
+        extra = sorted(set(pinned) - set(locations))
+        if extra:                                  # the loader would refuse the folder
+            raise ValueError(f"the meta's external_data lists {extra}, which the model does not "
+                             "name: list only the model's own external data files")
+        root, keys, folders, out = cache_dir.resolve(), set(), set(), []
+        for loc in locations:
+            parts = loc.split("/")
+            names = [p.casefold() for p in parts]                 # Windows ignores case
+            key, above = "/".join(names), {"/".join(names[:i]) for i in range(1, len(names))}
+            dest = cache_dir.joinpath(*parts)
+            # Refused: a part Windows cannot hold or would rename (a trailing dot or space, so
+            # also "." and ".."), a device, a short name (STRIKE~1.JSO can be the meta), the
+            # folder's own files, and two locations naming one file, or a file and its folder.
+            if (any(c in _BAD_NAME_CHARS for c in loc)
+                    or any(not p or p != p.rstrip(". ") or len(p) > 255 or re.search(r"~\d", p)
+                           for p in parts)
+                    or any(n.split(".")[0] in _DEVICE_NAMES for n in names)
+                    or key in _OWN_FILES or key in keys or key in folders
+                    or above & (_OWN_FILES | keys)
+                    or not dest.resolve().is_relative_to(root)):
+                raise ValueError(f"external data location {loc!r} is not a plain relative path "
+                                 "to a file of its own inside the cache folder")
+            keys.add(key)
+            folders |= above
+        for loc in locations:
+            u = urllib.parse.urljoin(url, urllib.parse.quote(loc))
+            dest = cache_dir.joinpath(*loc.split("/"))
+            try:
+                data = _fetch_verify(u, pinned[loc], dest)
+            except OSError as e:
+                if hasattr(e, "add_note"):                         # Python 3.11+
+                    e.add_note(f"fetching the model's external data {loc!r} from {u}")
+                raise
+            out.append((loc, dest, data, pinned[loc]))
+        return out
+
     if meta_url is None and meta is None:
         if not meta_path.exists():
             raise ValueError(
@@ -160,7 +242,7 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
             raise ValueError(
                 f"the meta cached in {cache_dir} was not verified for this model (sha256 "
                 f"{sha256}): pass meta_url=(+meta_sha256) or meta={{...}}")
-        model_data, meta_data = _fetch_verify(url, sha256, model_path), None
+        model_data, meta_data, meta_digest = _fetch_verify(url, sha256, model_path), None, None
     else:
         model_data = _fetch_verify(url, sha256, model_path)
         if meta_url is not None:
@@ -170,6 +252,15 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
             meta_digest = hashlib.sha256(meta_data).hexdigest()
             if meta_path.exists() and meta_path.read_bytes() == meta_data:
                 meta_data = None
+    model_bytes = model_path.read_bytes() if model_data is None else model_data
+    external = []
+    if b"location" in model_bytes and _external_data_locations(model_bytes):
+        meta_bytes = meta_path.read_bytes() if meta_data is None else meta_data
+        external = _fetch_external(model_bytes, meta_bytes)
+        external += [("strike_verdict_cnn.onnx", model_path, model_data, sha256),
+                     ("strike_verdict_cnn.meta.json", meta_path, meta_data,
+                      hashlib.sha256(meta_bytes).hexdigest())]
+    if meta_digest is not None:
         # The record is written first: if writing the model or the meta then fails, it already
         # names the meta this model needs. It is read just before it is written, so entries other
         # calls wrote by then are kept. One that cannot be written is skipped; a later call with
@@ -181,10 +272,25 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
                                        encoding="utf-8")
             except OSError:
                 pass
-    if model_data is not None:
-        model_path.write_bytes(model_data)
-    if meta_data is not None:
-        meta_path.write_bytes(meta_data)
+    if external:
+        # The weights, then the model, then the meta, so a write that fails (a file another
+        # process has open) leaves the old meta, whose pins the loader then finds do not match
+        # the files beside it, or which still matches them. Then every file is hashed again: two
+        # names for one file, or another process writing here, would leave other bytes.
+        for loc, dest, data, digest in external:
+            if data is not None:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+        for loc, dest, data, digest in external:
+            if not dest.is_file() or _file_sha256(dest) != digest:
+                raise ValueError(f"{loc!r} does not read back as written: another location in "
+                                 "the model names the same file here, or another process wrote "
+                                 "to the folder")
+    else:
+        if model_data is not None:
+            model_path.write_bytes(model_data)
+        if meta_data is not None:
+            meta_path.write_bytes(meta_data)
     set_model_dir(str(cache_dir))
     return str(cache_dir)
 
@@ -366,6 +472,16 @@ def _file_sha256(path):
     return h.hexdigest()
 
 
+def _pins(pins, onnx_path):
+    """A meta's ``external_data`` as {location: sha256}; one that is not a list of
+    ``{location, sha256}`` raises ``ValueError``."""
+    try:
+        return {e["location"]: e["sha256"].strip().lower() for e in pins}
+    except (TypeError, KeyError, AttributeError):
+        raise ValueError(f"{onnx_path}: its meta's external_data must be a list of "
+                         "{location, sha256}") from None
+
+
 def _load_model():
     """Try ONNX Runtime first, then a torch checkpoint. Returns (score_fn, meta)."""
     model_dir = _current_model_dir()
@@ -400,12 +516,19 @@ def _load_model():
 
         meta["runtime"] = "onnx"
         meta["sha256"] = hashlib.sha256(model_bytes).hexdigest()
-        meta.pop("external_data", None)          # computed here, never taken from the meta JSON
+        pins = meta.pop("external_data", None)   # computed here, never taken from the meta JSON
         # The session is built, so every file it read is a regular file beside the model. A
         # location that is not (a stale entry on a tensor nothing reads, a pipe) is skipped.
         paths = [(loc, os.path.join(model_dir, loc)) for loc in external]
         files = [{"location": loc, "sha256": _file_sha256(p)} for loc, p in paths
                  if os.path.isfile(p)]
+        # A meta that pins a model's external data (ensure_model writes one) must match the files:
+        # a folder whose weights and meta come from two models is refused, not scored.
+        if files and pins is not None and _pins(pins, onnx_path) != {
+                f["location"]: f["sha256"] for f in files}:
+            raise ValueError(f"{onnx_path}: the external data files beside the model do not "
+                             "match the sha256 its meta's external_data gives them (a folder "
+                             "holding two models' files?)")
         if files:
             meta["external_data"] = files
         return score, meta

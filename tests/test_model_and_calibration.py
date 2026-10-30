@@ -3,7 +3,9 @@ model cannot be loaded without, and calibration helpers that read the labels and
 ``dump_crops`` manifest actually holds."""
 import hashlib
 import json
+import os
 import pathlib
+import subprocess
 
 import numpy as np
 import pytest
@@ -226,6 +228,336 @@ def test_meta_json_cannot_supply_the_digests_and_callers_get_a_copy(tmp_path):
         cnn.set_model_dir(str(e))
         st.get_model_meta()["external_data"].append({"location": "extra"})
         assert len(st.get_model_meta()["external_data"]) == 1
+    finally:
+        cnn.set_model_dir(None)
+
+
+# ------------------------------------------------- ensure_model and a model's external data
+
+def _hosted_external(tmp_path, location="w.bin", weight=2.0):
+    """A host folder with an external-data model and its weights file; the meta that pins it."""
+    host = tmp_path / "host"
+    (host / location).parent.mkdir(parents=True, exist_ok=True)
+    (host / "strike_verdict_cnn.onnx").write_bytes(_external_add_model(location))
+    (host / location).write_bytes(np.float32(weight).tobytes())
+    _, meta, _ = _packaged()
+    pinned = [{"location": location,
+               "sha256": hashlib.sha256((host / location).read_bytes()).hexdigest()}]
+    return (host / "strike_verdict_cnn.onnx", hashlib.sha256(_external_add_model(location))
+            .hexdigest(), {**json.loads(meta.read_text()), "external_data": pinned})
+
+
+@pytest.mark.parametrize("location", ["w.bin", "weights/w.bin", "w x.bin", "w#1.bin", "w%41.bin"])
+def test_ensure_model_fetches_the_external_data_its_meta_pins(tmp_path, location):
+    model, sha, meta = _hosted_external(tmp_path, location)
+    c = tmp_path / "c"
+    try:
+        st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+        assert (c / location).read_bytes() == np.float32(2.0).tobytes()
+        score, got = cnn._ensure_loaded()
+        assert score(np.zeros(1, np.float32))[0] == pytest.approx(1 / (1 + np.exp(-2.0)))
+        assert got["external_data"] == meta["external_data"]   # what get_model_meta() reports
+    finally:
+        cnn.set_model_dir(None)
+
+
+def test_external_data_pinned_by_a_meta_url_and_reused_offline(tmp_path):
+    model, sha, meta = _hosted_external(tmp_path)
+    meta_file = tmp_path / "host" / "strike_verdict_cnn.meta.json"
+    meta_file.write_text(json.dumps(meta))
+    meta_sha = hashlib.sha256(meta_file.read_bytes()).hexdigest()
+    c = tmp_path / "c"
+    try:
+        st.ensure_model(model.as_uri(), sha, meta_url=meta_file.as_uri(), meta_sha256=meta_sha,
+                        cache_dir=str(c))
+        (tmp_path / "host" / "w.bin").unlink()                  # the host is gone
+        cnn.set_model_dir(None)
+        st.ensure_model(model.as_uri(), sha, meta_url=meta_file.as_uri(), meta_sha256=meta_sha,
+                        cache_dir=str(c))
+        assert st.get_model_meta()["external_data"] == meta["external_data"]
+    finally:
+        cnn.set_model_dir(None)
+
+
+def test_tampered_external_data_is_rejected_and_not_written(tmp_path):
+    model, sha, meta = _hosted_external(tmp_path)
+    (tmp_path / "host" / "w.bin").write_bytes(np.float32(-5.0).tobytes())
+    c = tmp_path / "c"
+    with pytest.raises(ValueError, match="sha256 mismatch"):
+        st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+    assert not (c / "w.bin").exists()
+    assert cnn._MODEL_DIR_OVERRIDE is None
+
+
+@pytest.mark.parametrize("listed", [None, [], [{"location": "other.bin", "sha256": "0" * 64}]])
+def test_external_data_the_meta_does_not_pin_is_refused(tmp_path, listed):
+    model, sha, meta = _hosted_external(tmp_path)
+    meta = {k: v for k, v in meta.items() if k != "external_data"}
+    if listed is not None:
+        meta["external_data"] = listed
+    c = tmp_path / "c"
+    with pytest.raises(ValueError, match="gives no sha256"):
+        st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+    assert not (c / "w.bin").exists()
+    assert cnn._MODEL_DIR_OVERRIDE is None
+
+
+def test_a_pin_for_a_file_the_model_does_not_name_is_refused(tmp_path):
+    """The loader would refuse the folder at the first score, so ensure_model refuses it first."""
+    model, sha, meta = _hosted_external(tmp_path)
+    meta["external_data"].append({"location": "other.bin", "sha256": "0" * 64})
+    c = tmp_path / "c"
+    with pytest.raises(ValueError, match="does not name"):
+        st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+    assert [p.name for p in c.rglob("*")] == []
+    assert cnn._MODEL_DIR_OVERRIDE is None
+
+
+@pytest.mark.parametrize("listed, match", [
+    ({"location": "w.bin"}, "list"),
+    (["w.bin"], "no location"),
+    ([{"sha256": "0" * 64}], "no location"),
+    ([{"location": "w.bin", "sha256": "abc"}], "64-character"),
+    ([{"location": "w.bin", "sha256": "0" * 64}, {"location": "w.bin", "sha256": "1" * 64}],
+     "twice"),
+])
+def test_a_malformed_external_data_list_is_refused(tmp_path, listed, match):
+    model, sha, meta = _hosted_external(tmp_path)
+    with pytest.raises(ValueError, match=match):
+        st.ensure_model(model.as_uri(), sha, meta={**meta, "external_data": listed},
+                        cache_dir=str(tmp_path / "c"))
+    assert cnn._MODEL_DIR_OVERRIDE is None
+
+
+@pytest.mark.parametrize("location", ["../w.bin", "/w.bin", "C:w.bin", "a\\w.bin", "a//w.bin",
+                                      "./w.bin"])
+def test_an_external_location_outside_the_cache_is_refused(tmp_path, location):
+    host = tmp_path / "host"
+    host.mkdir()
+    (host / "strike_verdict_cnn.onnx").write_bytes(_external_add_model(location))
+    _, meta, _ = _packaged()
+    meta = {**json.loads(meta.read_text()),
+            "external_data": [{"location": location, "sha256": "0" * 64}]}
+    c = tmp_path / "deep" / "c"
+    with pytest.raises(ValueError, match="plain relative path"):
+        st.ensure_model((host / "strike_verdict_cnn.onnx").as_uri(),
+                        hashlib.sha256(_external_add_model(location)).hexdigest(), meta=meta,
+                        cache_dir=str(c))
+    assert [p.name for p in (tmp_path / "deep").rglob("*")] == ["c"]   # nothing written
+    assert cnn._MODEL_DIR_OVERRIDE is None
+
+
+def _host(tmp_path, locations, write=True):
+    """A host folder with a model whose first location is read by its node, the rest by nothing,
+    each file written (`write`), and a meta pinning all of them."""
+    host = tmp_path / "host"
+    host.mkdir(exist_ok=True)
+    model = _external_add_model(locations[0], unused=locations[1:])
+    (host / "strike_verdict_cnn.onnx").write_bytes(model)
+    _, meta, _ = _packaged()
+    data = np.float32(2.0).tobytes()
+    pins = [{"location": loc, "sha256": hashlib.sha256(data).hexdigest()} for loc in locations]
+    for loc in locations if write else []:
+        (host / loc).parent.mkdir(parents=True, exist_ok=True)
+        (host / loc).write_bytes(data)
+    return (host / "strike_verdict_cnn.onnx", hashlib.sha256(model).hexdigest(),
+            {**json.loads(meta.read_text()), "external_data": pins})
+
+
+def test_a_failed_external_fetch_writes_nothing(tmp_path):
+    model, sha, meta = _hosted_external(tmp_path)
+    c = tmp_path / "c"
+    st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))       # model A, working
+    cnn.set_model_dir(None)
+    before = {p.relative_to(c): p.read_bytes() for p in c.rglob("*") if p.is_file()}
+    # model B: the same graph file, other weights, and its weights missing on the host
+    (tmp_path / "host" / "w.bin").unlink()
+    meta_b = {**meta, "p_hi": 0.9, "external_data": [{"location": "w.bin", "sha256": "1" * 64}]}
+    with pytest.raises(OSError) as err:
+        st.ensure_model(model.as_uri(), sha, meta=meta_b, cache_dir=str(c))
+    assert {p.relative_to(c): p.read_bytes() for p in c.rglob("*") if p.is_file()} == before
+    assert cnn._MODEL_DIR_OVERRIDE is None
+    if hasattr(err.value, "add_note"):
+        assert any("'w.bin'" in n for n in err.value.__notes__)
+
+
+@pytest.mark.parametrize("locations", [
+    ["strike_verdict_cnn.meta.json"], ["STRIKE_VERDICT_CNN.ONNX"], ["strike_verdict_cnn.pt"],
+    ["strike_verdict_cnn.meta.verified.json"], ["NUL"], ["a/con.bin"], ["COM1.dat"],
+    ["W.bin", "w.bin"], ["w.bin", "w.bin."], ["w.bin", "w.bin "], ["a.bin", "../c.bin"],
+    ["a.bin", "b/../c.bin"], ["a /w.bin"], ["a./w.bin"], ["a<b.bin"], ["a\tb.bin"],
+    ["w" * 256 + ".bin"], ["STRIKE~2.JSO"], ["sub/STRIKE~1.ONN"], ["sub", "sub/w.bin"],
+    ["sub/w.bin", "SUB"], ["A/w.bin", "a"], ["strike_verdict_cnn.onnx/w.bin"]])
+def test_locations_that_are_not_a_file_of_their_own_are_refused_before_any_download(
+        tmp_path, locations):
+    model, sha, meta = _host(tmp_path, [loc for loc in locations if ".." not in loc], write=False)
+    if any(".." in loc for loc in locations):                   # the model names it all the same
+        model.write_bytes(_external_add_model(locations[0], unused=locations[1:]))
+        sha = hashlib.sha256(model.read_bytes()).hexdigest()
+        meta["external_data"] += [{"location": loc, "sha256": "0" * 64}
+                                  for loc in locations if ".." in loc]
+    c = tmp_path / "c"
+    with pytest.raises(ValueError, match="plain relative path"):
+        st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+    assert [p.name for p in c.rglob("*")] == []
+    assert cnn._MODEL_DIR_OVERRIDE is None
+
+
+def test_a_location_through_a_link_out_of_the_cache_is_refused(tmp_path):
+    model, sha, meta = _hosted_external(tmp_path, "sub/w.bin")
+    c, outside = tmp_path / "c", tmp_path / "outside"
+    c.mkdir()
+    outside.mkdir()
+    try:
+        os.symlink(outside, c / "sub", target_is_directory=True)
+    except OSError:
+        if os.name != "nt" or subprocess.run(["cmd", "/c", "mklink", "/J", str(c / "sub"),
+                                              str(outside)], capture_output=True).returncode:
+            pytest.skip("no permission to create a directory link here")
+    with pytest.raises(ValueError, match="plain relative path"):
+        st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+    assert list(outside.iterdir()) == []
+
+
+def test_a_signed_model_url_with_external_data_is_refused_up_front(tmp_path):
+    """The model and meta are already cached, so nothing is fetched; the files' URLs would lose
+    the query string, so the call says so rather than fail on a 403."""
+    model, sha, meta = _hosted_external(tmp_path)
+    c = tmp_path / "c"
+    st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+    with pytest.raises(ValueError, match="query string"):
+        st.ensure_model(model.as_uri() + "?sig=1", sha, meta=meta, cache_dir=str(c))
+    onnx, packaged_meta, packaged_sha = _packaged()             # one file: a query is fine
+    d = tmp_path / "d"
+    st.ensure_model(onnx.as_uri(), packaged_sha, meta=json.loads(packaged_meta.read_text()),
+                    cache_dir=str(d))
+    try:
+        st.ensure_model(onnx.as_uri() + "?sig=1", packaged_sha,
+                        meta=json.loads(packaged_meta.read_text()), cache_dir=str(d))
+    finally:
+        cnn.set_model_dir(None)
+
+
+def test_the_record_is_written_before_the_external_files(tmp_path, monkeypatch):
+    """A call stopped while writing the record has written nothing else: had it written new
+    weights first, the old record would vouch for the old meta beside them."""
+    model, sha, meta = _hosted_external(tmp_path)
+    c = tmp_path / "c"
+    st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+    before = {p.relative_to(c): p.read_bytes() for p in c.rglob("*") if p.is_file()}
+    (tmp_path / "host" / "w.bin").write_bytes(np.float32(3.0).tobytes())   # retrained weights
+    meta_b = {**meta, "p_hi": 0.9, "external_data": [
+        {"location": "w.bin",
+         "sha256": hashlib.sha256(np.float32(3.0).tobytes()).hexdigest()}]}
+    real = pathlib.Path.write_text
+
+    def stop_at_the_record(self, *a, **k):
+        if self.name == cnn._META_RECORD:
+            raise RuntimeError("stopped")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", stop_at_the_record)
+    with pytest.raises(RuntimeError):
+        st.ensure_model(model.as_uri(), sha, meta=meta_b, cache_dir=str(c))
+    assert {p.relative_to(c): p.read_bytes() for p in c.rglob("*") if p.is_file()} == before
+    cnn.set_model_dir(None)
+
+
+def test_a_file_that_does_not_read_back_as_written_is_refused(tmp_path, monkeypatch):
+    """Two names for one file (case, trailing dots, a device) are refused by name; whatever the
+    names miss, each file is hashed again after writing."""
+    model, sha, meta = _hosted_external(tmp_path)
+    real = pathlib.Path.write_bytes
+
+    def short_write(self, data):
+        return real(self, data[:-1] if self.name == "w.bin" else data)
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", short_write)
+    with pytest.raises(ValueError, match="does not read back"):
+        st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(tmp_path / "c"))
+    assert cnn._MODEL_DIR_OVERRIDE is None
+
+
+def test_weights_that_fail_to_write_leave_the_old_model_whole(tmp_path, monkeypatch):
+    """Model A cached, then retrained weights B under the same graph file, whose weights cannot
+    be written (ONNX Runtime holding the file open, say): the folder still loads A, its weights
+    with its meta, and a call with neither meta argument is refused."""
+    model, sha, meta = _hosted_external(tmp_path)
+    c = tmp_path / "c"
+    st.ensure_model(model.as_uri(), sha, meta=meta, cache_dir=str(c))
+    cnn.set_model_dir(None)
+    (tmp_path / "host" / "w.bin").write_bytes(np.float32(3.0).tobytes())
+    meta_b = {**meta, "p_hi": 0.9, "external_data": [
+        {"location": "w.bin", "sha256": hashlib.sha256(np.float32(3.0).tobytes()).hexdigest()}]}
+    real = pathlib.Path.write_bytes
+
+    def held_open(self, data):
+        if self.name == "w.bin":
+            raise PermissionError("in use")
+        return real(self, data)
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", held_open)
+    with pytest.raises(PermissionError):
+        st.ensure_model(model.as_uri(), sha, meta=meta_b, cache_dir=str(c))
+    monkeypatch.undo()
+    try:
+        cnn.set_model_dir(str(c))
+        score, got = cnn._ensure_loaded()
+        assert got["p_hi"] == meta["p_hi"] != 0.9
+        assert score(np.zeros(1, np.float32))[0] == pytest.approx(1 / (1 + np.exp(-2.0)))
+        with pytest.raises(ValueError, match="not verified for this model"):
+            st.ensure_model(model.as_uri(), sha, cache_dir=str(c))
+    finally:
+        cnn.set_model_dir(None)
+
+
+@pytest.mark.parametrize("pins, match", [
+    ([{"location": "w.bin", "sha256": "1" * 64}], "do not match"),
+    ([], "do not match"),
+    ([{"location": "w.bin", "sha256": None}], "must be a list"),
+    ("w.bin", "must be a list"),
+])
+def test_a_folder_whose_weights_and_meta_disagree_is_refused_at_load(tmp_path, pins, match):
+    d = _model_dir(tmp_path, _external_add_model())
+    (d / "w.bin").write_bytes(np.float32(2.0).tobytes())
+    meta = json.loads((d / "strike_verdict_cnn.meta.json").read_text())
+    (d / "strike_verdict_cnn.meta.json").write_text(json.dumps({**meta, "external_data": pins}))
+    try:
+        cnn.set_model_dir(str(d))
+        with pytest.raises(ValueError, match=match):
+            st.get_model_meta()
+    finally:
+        cnn.set_model_dir(None)
+
+
+def test_a_meta_whose_pins_match_loads_and_reports_them(tmp_path):
+    d = _model_dir(tmp_path, _external_add_model())
+    (d / "w.bin").write_bytes(np.float32(2.0).tobytes())
+    pins = [{"location": "w.bin",
+             "sha256": hashlib.sha256((d / "w.bin").read_bytes()).hexdigest().upper()}]
+    meta = json.loads((d / "strike_verdict_cnn.meta.json").read_text())
+    (d / "strike_verdict_cnn.meta.json").write_text(json.dumps({**meta, "external_data": pins}))
+    try:
+        cnn.set_model_dir(str(d))
+        assert st.get_model_meta()["external_data"] == [
+            {"location": "w.bin", "sha256": pins[0]["sha256"].lower()}]
+    finally:
+        cnn.set_model_dir(None)
+
+
+def test_a_meta_that_is_not_an_object_pins_nothing(tmp_path):
+    model, sha, _ = _hosted_external(tmp_path)
+    with pytest.raises(ValueError, match="gives no sha256"):
+        st.ensure_model(model.as_uri(), sha, meta=["not", "an", "object"],
+                        cache_dir=str(tmp_path / "c"))
+
+
+def test_a_model_without_external_data_never_reads_the_list(tmp_path):
+    onnx, meta, sha = _packaged()
+    try:
+        st.ensure_model(onnx.as_uri(), sha, cache_dir=str(tmp_path / "c"),
+                        meta={**json.loads(meta.read_text()), "external_data": "not a list"})
+        assert "external_data" not in st.get_model_meta()
     finally:
         cnn.set_model_dir(None)
 

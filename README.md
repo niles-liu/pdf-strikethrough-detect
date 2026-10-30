@@ -448,15 +448,22 @@ st.ensure_model(
   the model it had. With `meta_url` the meta's digest is required too, since its thresholds decide
   what counts as struck; or pass the meta itself as `meta={...}`. To fall back to the packaged
   weights when the host can't be reached, catch the exception, as the demo does.
-- It does not load the model: one that downloads but cannot load (a missing external data file, a
-  meta that disagrees with the code) fails at the first score, the previous model already dropped.
-  Call `st.get_model_meta()` right after it to find out at startup, and `cnn.set_model_dir(None)`
-  to go back to `PDF_STRIKETHROUGH_MODEL_DIR` or the packaged weights.
+- It does not load the model: one that downloads but cannot load (a meta that disagrees with the
+  code) fails at the first score, the previous model already dropped. Call `st.get_model_meta()`
+  right after it to find out at startup, and `cnn.set_model_dir(None)` to go back to
+  `PDF_STRIKETHROUGH_MODEL_DIR` or the packaged weights.
 - Called while another thread is reading a document, it takes effect from the next document: the
   one being read can finish with the new model's scores judged by the old model's thresholds.
-- It fetches the `.onnx` file and the meta, not external data files. For a model that keeps its
-  weights in them, copy the whole folder and point `PDF_STRIKETHROUGH_MODEL_DIR` or
-  `cnn.set_model_dir` at it.
+- A model that keeps its weights in external data files, as torch's newer exporter writes by
+  default, needs each file hosted beside the `.onnx` at the location the model gives, and its
+  sha256 in the meta's `external_data`, listed as `st.get_model_meta()` reports it for the model
+  loaded from its folder. Each file is checked like the model before anything is written, and a
+  file the meta does not list raises `ValueError`. The files' URLs are the model's with its file
+  name replaced by their location, so a model URL with a query string, such as a signed URL, is
+  refused. The loader refuses a folder whose files do not match its meta's `external_data`, so
+  when a write fails partway, the weights are not scored under another model's meta. Retrained
+  weights under the same graph file share its sha256 and so its default cache folder: give each
+  its own `cache_dir`.
 - The CLI has no URL option: set `PDF_STRIKETHROUGH_MODEL_DIR` to the folder `ensure_model`
   returns, or to one you downloaded the files to.
 

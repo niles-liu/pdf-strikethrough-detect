@@ -75,11 +75,34 @@ All notable changes to this project are documented here. The format follows
   retrained model can go into service without a new release of the package. `cnn.ensure_model`
   has done this since 0.9.0; the README now covers its cache, what a digest mismatch does, that it
   does not load the model (one that cannot load fails at the first score), when a new model takes
-  effect, the demo's fallback to the packaged weights, models with external data files, which it
-  does not fetch, and the CLI, which takes `PDF_STRIKETHROUGH_MODEL_DIR`, not a URL. No code
-  changes.
+  effect, the demo's fallback to the packaged weights, models with external data files (fetched
+  since the entry below), and the CLI, which takes `PDF_STRIKETHROUGH_MODEL_DIR`, not a URL. No
+  code changes.
+- **`ensure_model` fetches a model's external data files,** so a model exported with its weights
+  in them, as torch's newer exporter does by default, loads from a URL. Each file the model names
+  is downloaded from its location relative to the model's URL and checked against the sha256 the
+  meta lists under `external_data`, in the shape `get_model_meta()` reports (`[{"location": ...,
+  "sha256": ...}]`), with the model and the meta, before any of them is written. A file the meta
+  does not list, a listed file the model does not name, a malformed list, a location that is not
+  a plain relative path to a file of its own inside the cache folder (the cache's own file names,
+  Windows device and short names, names Windows cannot hold or would change, two names for one
+  file or a file and its folder, a symlink or junction out of the folder), or a model URL with a
+  query string raises `ValueError` before any of the files is downloaded. After the cached-meta
+  record, the files are written weights first, then the model, then the meta, and then every file
+  is hashed again. For such a model the sha256 covers the graph, not the
+  weights, so the cached-meta record and the default folder cannot tell retrained weights under
+  one graph file apart: give each its own `cache_dir`. A model with no external data never reads
+  the list.
 
 ### Changed
+- **The loader refuses a model whose external data files do not match its meta's
+  `external_data`.** A meta that lists them, as `ensure_model` now needs, must give each file's
+  sha256, so a folder holding one model's weights and another's meta raises `ValueError` at the
+  first score instead of scoring. A meta without the list loads as before, and the list is not
+  read for a model without external data.
+- **`ensure_model` refuses a model with external data files whose meta does not list them,**
+  including a folder copied by hand and then called with neither meta argument, which 0.12 used
+  as it was. List the files in the meta's `external_data`, or point `set_model_dir` at the folder.
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
   word struck with overlay characters, `text` is `of`, not `o̶f̶`; `char_span` and `chars` index
   that text, and `markdown`, `clean_text` and `passages` follow it. A word struck by overlays
