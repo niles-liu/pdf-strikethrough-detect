@@ -457,6 +457,20 @@ All notable changes to this project are documented here. The format follows
   `scanned.PAIR_REACH = 0` gives the previous behavior, and setting `scanned.PAIR_MAX_LEN_IN`,
   `PAIR_MAX_RUN_PX`, `PAIR_LEN_RATIO` or `PAIR_MAX_WOBBLE` to 0 turns that limit off. With
   `scanned.STROKE_SNAP_PX = 0`, a line stitched beside a stroke is not paired either.
+- **`ensure_model` could pair a cached meta with another model.** Called with neither `meta_url`
+  nor `meta`, it reused whatever meta its cache folder held, so in a `cache_dir` shared by two
+  models, or after a call whose meta was rejected once its model was written, one model ran with
+  the other's thresholds. Each call given `meta_url` or `meta` now records, in the cache folder
+  (`strike_verdict_cnn.meta.verified.json`), the model's sha256 with the sha256 of the meta it
+  verified or wrote, and a call with neither raises `ValueError`, writing no file, unless that
+  record pairs this model with the meta as it is now. A folder with no record, written before there
+  was one, is trusted as before when it is the model's default folder or already holds the model,
+  so one that an earlier version left holding a mismatched pair is still trusted until a call
+  passes `meta_url` or `meta` once. A meta placed by hand in a `cache_dir` that does not yet hold
+  the model is no longer trusted: pass `meta_url` or `meta` once. The model and the meta are now
+  both verified before either is written, so a rejected download leaves the cache as it was. The
+  record is written first and only when it changes; when it cannot be written, a later call with
+  neither may be refused.
 - **`benchmarks/confidence_veto.py` split its counts where the veto does not.** Its default mode
   counted a word read at exactly `max_clean_conf` (0.955) as high-confidence, but the veto acts
   only above it. The split now uses the veto's boundary. One reported word on its ruled-table set
