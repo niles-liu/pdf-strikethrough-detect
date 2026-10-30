@@ -15,8 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .lines import (RENDER_DPI, STEM_MIN_RUNS, THIN_STROKE_RUN_PX, ink_mask, rule_mask,
-                    strike_lines, to_gray_u8)
+from .lines import (RENDER_DPI, STEM_MIN_RUNS, THIN_STROKE_RUN_PX, _join_dashes, ink_mask,
+                    rule_mask, strike_lines, to_gray_u8)
 
 # --- per-word classification tunables (geometry; engine-independent) ---
 STRIKE_TOL          = 0.16   # half-width of the strike band (fraction of word-box height)
@@ -1029,6 +1029,7 @@ def analyze_scanned_page(gray, words, ink=None, config=ScanConfig.confidence_fre
     gray = to_gray_u8(gray)
     if ink is None:
         ink = ink_mask(gray)
+    ink = _join_dashes(ink, dpi)
     lines = strike_lines(gray, dpi=dpi, ink=ink)
     tagged, struck = classify_lines(lines, words, gray, ink=ink, config=config, dpi=dpi)
     struck = promote_context_orphans(struck, words)

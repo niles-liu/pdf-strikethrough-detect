@@ -164,6 +164,86 @@ def line_kernel(length, angle_deg):
     return k
 
 
+DASH_MIN_GAPS     = 0             # a dashed stroke: at least this many white breaks along a row
+DASH_GAP_MAX_PX   = 9             # between pieces of thin ink at most this far apart (px at
+DASH_PERIOD_TOL_PX = 1.0          # RENDER_DPI) end on one lattice x0 + k * period, within this
+                                  # either way. 0, the default, turns it off: a prototype,
+                                  # measured at 4
+DASH_LATTICE_SHARE = 0.75         # ...and at least this share of a chain's breaks on the lattice
+
+
+def _join_dashes(ink, dpi=RENDER_DPI):
+    """`ink` with the breaks of a dashed stroke filled in on its own rows, so that the line finder's
+    opening keeps the stroke whole and the scanned path reads it as one stroke. On each row, the
+    pieces of thin ink (on vertical runs no taller than THIN_STROKE_RUN_PX: a stroke's rows,
+    crossbars, serifs, not stems) are chained across separations of at most DASH_GAP_MAX_PX. A
+    chain's white breaks are a dashed stroke's when at least DASH_MIN_GAPS of them, and
+    DASH_LATTICE_SHARE of all, end on one lattice x0 + k * period (3 to 26 px at RENDER_DPI,
+    within a window of 2 * DASH_PERIOD_TOL_PX). The white breaks from the first such break to the
+    last are filled. Returns `ink` itself when nothing is filled."""
+    if DASH_MIN_GAPS <= 0:
+        return ink
+    ink = np.asarray(ink, dtype=bool)
+    h, w = ink.shape
+    scale = dpi / float(RENDER_DPI)
+    thin_px = max(2.0, THIN_STROKE_RUN_PX * scale)
+    max_gap = max(2, int(round(DASH_GAP_MAX_PX * scale)))
+    tol = DASH_PERIOD_TOL_PX * max(scale, 0.5)
+    lbl, _ = ndimage.label(ink, structure=np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]]))
+    size = np.bincount(lbl.ravel())
+    size[0] = 0
+    thin = size[lbl] <= thin_px
+    thin &= ink
+    pad = np.zeros((h, 1), np.int8)
+    d = np.diff(np.hstack([pad, thin.view(np.int8), pad]), axis=1)
+    rs, xs = np.nonzero(d == 1)                # thin runs: row, start x (row-major order)
+    _, xe = np.nonzero(d == -1)                # ...and end x, exclusive
+    if len(rs) <= DASH_MIN_GAPS:
+        return ink
+    sep = xs[1:] - xe[:-1]
+    link = (rs[1:] == rs[:-1]) & (sep <= max_gap)
+    if link.sum() < DASH_MIN_GAPS:
+        return ink
+    cs = np.cumsum(ink, axis=1, dtype=np.int32)
+    gy, g0, g1 = rs[1:], xe[:-1], xs[1:]       # the separation after each run
+    inked = cs[gy, g1 - 1] - np.where(g0 > 0, cs[gy, g0 - 1], 0)
+    white = link & (inked == 0)
+    out = None
+    # chains: maximal stretches of linked runs; only those with enough white breaks are read
+    brk = np.flatnonzero(~link)
+    starts = np.concatenate([[0], brk + 1])
+    ends = np.concatenate([brk, [len(link)]])  # links starts[k] .. ends[k]-1
+    periods = np.arange(3.0, 26.25, 0.25) * scale
+    for a, b in zip(starts, ends):
+        wi = np.flatnonzero(white[a:b]) + a
+        if len(wi) < DASH_MIN_GAPS:
+            continue
+        # the breaks' ends (where the next dash starts) on a lattice x0 + k * period: the period
+        # and phase that put the most of them within `tol`, at least DASH_LATTICE_SHARE of them
+        e = g1[wi].astype(np.float64)
+        best = (0, None, None)
+        for p in periods:
+            r = np.sort(np.mod(e - e[0], p))
+            r2 = np.concatenate([r, r + p])
+            j = np.searchsorted(r2, r + 2 * tol, side="right")
+            n = int((j - np.arange(len(r))).max())
+            if n > best[0]:
+                best = (n, p, r[int((j - np.arange(len(r))).argmax())])
+        n, p, ph = best
+        if n < max(DASH_MIN_GAPS, DASH_LATTICE_SHARE * len(wi)):
+            continue
+        res = np.mod(e - e[0] - ph, p)
+        on = wi[res <= 2 * tol]
+        if len(on) < DASH_MIN_GAPS:
+            continue
+        if out is None:
+            out = ink.copy()
+        lo, hi = on[0], on[-1]
+        for j in np.flatnonzero(white[lo:hi + 1]) + lo:
+            out[gy[j], g0[j]:g1[j]] = True
+    return ink if out is None else out
+
+
 def rule_mask(ink, min_len_px, tolerance_px=0):
     """The pixels of the bool mask `ink` lying on a horizontal run at least `min_len_px` long:
     table rules, underlines, form lines. A morphological opening with a 1 x `min_len_px` line, the
