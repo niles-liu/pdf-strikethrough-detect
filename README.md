@@ -354,7 +354,8 @@ python examples/rag_provenance.py         # clean_text vs provenance_text ([dele
   runs on unbroken across the glyphs, without changing the lines the first pass found.
 - **CNN** (`cnn.py`, StrikeNet, 79k params): resolves pixel-ambiguous cases: a thin strike over
   an ascender-less word is pixel-identical to a glyph chain, and only a learned model tells them
-  apart. Ships as ONNX; set `PDF_STRIKETHROUGH_MODEL_DIR` to use your own weights.
+  apart. Ships as ONNX; set `PDF_STRIKETHROUGH_MODEL_DIR` to use your own weights, or load them
+  from a URL (below).
 - **Attribution** (`scanned.py`): assigns strokes to OCR words with char spans, measured against
   the word's glyph ink and the stroke's own ink rather than the OCR box and the detected line's
   ends; a word is fully struck only when the stroke reaches its first and last character. A
@@ -415,9 +416,14 @@ not recorded ([model card](https://github.com/niles-liu/pdf-strikethrough-detect
 A ["contribute a failing page"](https://github.com/niles-liu/pdf-strikethrough-detect/issues/new?template=failing-page.md) report feeds the same
 loop, and [`demo/`](https://github.com/niles-liu/pdf-strikethrough-detect/tree/main/demo) is the Gradio app behind the live demo.
 
-**Hosted weights.** The shipped StrikeNet is also published on the Hugging Face Hub
-([`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet)); the digests are verified
-before the graph is ever loaded, so a tampered host can't swap the model or its thresholds:
+**Loading a model from a URL.** A model can be deployed without a new release of the package:
+host `strike_verdict_cnn.onnx` and its `strike_verdict_cnn.meta.json` at an `https`, `http` or
+`file` URL (the Hugging Face Hub, a storage bucket, a signed URL), and call `st.ensure_model` once
+at startup, before the first word is scored. It downloads both files, checks each against its
+sha256 before writing it, and points the loader at them, so a tampered host can't swap the model or
+its thresholds. The shipped StrikeNet is published this way on the Hub
+([`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet)), and the demo loads it like
+this:
 
 ```python
 import pdf_strikethrough as st
@@ -428,6 +434,25 @@ st.ensure_model(
     meta_sha256="4388b14715bfb1f51b56bb6c463d8f5c0847533316297890e70ac0b2234405d4",
 )
 ```
+
+- The files are cached in `~/.cache/pdf_strikethrough/models/` under the first 12 characters of
+  the model's sha256, or in `cache_dir=`. A cached file whose digest matches is used without a
+  download, so once a model is cached a restart needs no network.
+- A file whose digest does not match raises `ValueError` and is not written, and the loader keeps
+  the model it had. With `meta_url` the meta's digest is required too, since its thresholds decide
+  what counts as struck; or pass the meta itself as `meta={...}`. To fall back to the packaged
+  weights when the host can't be reached, catch the exception, as the demo does.
+- It does not load the model: one that downloads but cannot load (a missing external data file, a
+  meta that disagrees with the code) fails at the first score, the previous model already dropped.
+  Call `st.get_model_meta()` right after it to find out at startup, and `cnn.set_model_dir(None)`
+  to go back to `PDF_STRIKETHROUGH_MODEL_DIR` or the packaged weights.
+- Called while another thread is reading a document, it takes effect from the next document: the
+  one being read can finish with the new model's scores judged by the old model's thresholds.
+- It fetches the `.onnx` file and the meta, not external data files. For a model that keeps its
+  weights in them, copy the whole folder and point `PDF_STRIKETHROUGH_MODEL_DIR` or
+  `cnn.set_model_dir` at it.
+- The CLI has no URL option: set `PDF_STRIKETHROUGH_MODEL_DIR` to the folder `ensure_model`
+  returns, or to one you downloaded the files to.
 
 **Scope: validated scripts and layouts.** Detection assumes **horizontal, left-to-right** text; a
 strike is a near-horizontal stroke through a word's middle band. Reading-order assembly is
