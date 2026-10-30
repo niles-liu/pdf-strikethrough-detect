@@ -71,6 +71,13 @@ All notable changes to this project are documented here. The format follows
   the result is unchanged. The CLI's `--telemetry FILE` appends one report per document to FILE as
   a JSON line, batch mode included, where a file that fails gets a line with its error.
   `pdf_strikethrough.types.Telemetry` documents the shape, versioned by `telemetry_version`.
+- **The README documents loading a model from a URL as a supported way to deploy one,** so a
+  retrained model can go into service without a new release of the package. `cnn.ensure_model`
+  has done this since 0.9.0; the README now covers its cache, what a digest mismatch does, that it
+  does not load the model (one that cannot load fails at the first score), when a new model takes
+  effect, the demo's fallback to the packaged weights, models with external data files, which it
+  does not fetch, and the CLI, which takes `PDF_STRIKETHROUGH_MODEL_DIR`, not a URL. No code
+  changes.
 
 ### Changed
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
