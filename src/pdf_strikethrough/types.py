@@ -69,7 +69,9 @@ class StruckWord(TypedDict, total=False):
     cnn_agrees: Optional[bool]   # 'auto' records: did the CNN confirm at p_hi? (None if unscored)
     conf: Optional[float]        # OCR word confidence, if the backend supplied one
     geom_corroborated: bool      # in-band line with glyph ink on both sides (solid or shattered),
-                                 # i.e. real-strike geometry, which the DI-confidence veto spares
+                                 # or, for a word only the pair test passed, a double strike's two
+                                 # strokes: real-strike geometry, which the DI-confidence veto
+                                 # spares and ScanConfig.line_support requires
     conf_veto: bool              # True when the DI-confidence veto downgraded this record
                                  # (OCR conf > max_clean_conf AND no corroborating geometry)
     line_support: bool           # True when ScanConfig.line_support kept this short word: the CNN
