@@ -617,10 +617,15 @@ def _cmd_detect_batch(args, inputs):
                 from collections import deque
                 from concurrent.futures import ProcessPoolExecutor
                 from concurrent.futures.process import BrokenProcessPool
+                from multiprocessing import get_context
+                # spawned, as macOS and Windows already do: importing PyMuPDF 2.0 starts native
+                # threads (ONNX Runtime's among them), and a worker forked while they run can hang
+                # on a lock one of them held (Linux forks by default before Python 3.14)
+                spawn = get_context("spawn")
                 pending = list(inputs)
                 while pending:
                     # at most 2 * jobs files in flight, so an interrupt need not wait for the rest
-                    ex = ProcessPoolExecutor(max_workers=jobs)
+                    ex = ProcessPoolExecutor(max_workers=jobs, mp_context=spawn)
                     inflight, nxt, done, broke = deque(), 0, 0, False
                     try:
                         while done < len(pending):
@@ -649,7 +654,7 @@ def _cmd_detect_batch(args, inputs):
                     # a worker crash breaks the whole pool without saying which file did it: re-run
                     # the first unreported file alone, then carry on with the rest in a new pool
                     suspect = pending[done]
-                    with ProcessPoolExecutor(max_workers=1) as solo:
+                    with ProcessPoolExecutor(max_workers=1, mp_context=spawn) as solo:
                         try:
                             emit(_wait(solo.submit(_batch_worker, (suspect, opts))))
                         except BrokenProcessPool:

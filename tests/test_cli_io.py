@@ -194,7 +194,7 @@ class _FakePool:
     """A process pool that runs work in-process and "crashes" on files named crash*.pdf, the way a
     native crash breaks a real pool: deterministic, and the same on every platform."""
 
-    def __init__(self, max_workers=None):
+    def __init__(self, max_workers=None, mp_context=None):
         pass
 
     def submit(self, fn, item):
@@ -229,6 +229,24 @@ def test_a_crashing_file_costs_one_error_line_with_jobs(tmp_path, monkeypatch):
     payloads = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
     assert [os.path.basename(p["source"]) for p in payloads] == names
     assert [os.path.basename(p["source"]) for p in payloads if "error" in p] == ["crash.pdf"]
+
+
+def test_batch_workers_are_spawned_not_forked(tmp_path, monkeypatch):
+    # a worker forked while native threads run can hang; spawned, it starts clean
+    import concurrent.futures
+    starts = []
+
+    class Recording(_FakePool):
+        def __init__(self, max_workers=None, mp_context=None):
+            starts.append(mp_context.get_start_method())
+
+    names = ["a.pdf", "crash.pdf"]
+    for n in names:
+        (tmp_path / n).write_bytes(b"%PDF-1.4")
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Recording)
+    cli.main(["detect", *(str(tmp_path / n) for n in names), "--jsonl", str(tmp_path / "o.jsonl"),
+              "--jobs", "2"])
+    assert starts == ["spawn", "spawn"]          # the pool, then the crashed file's own pool
 
 
 def test_image_too_large_to_decode_is_a_clean_error(tmp_path, monkeypatch, capsys):

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Batch `--jobs` on Linux:** worker processes are spawned, as on macOS and Windows, instead of
+  forked. Importing PyMuPDF 2.0 starts native threads, and a worker forked while they ran could
+  hang. (#92)
+
 ## [0.13.0] - 2026-10-31
 
 Minor, not patch: it adds public API (telemetry, garbled-word flags, `ScanConfig.line_support`,
