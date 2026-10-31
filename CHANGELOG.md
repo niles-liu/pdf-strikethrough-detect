@@ -507,6 +507,18 @@ All notable changes to this project are documented here. The format follows
   links broke on PyPI, and its quick starts passed `ScanConfig.confidence_free()`, which `ocr=`
   already implies. The README, `CONTRIBUTING.md` and the benchmark docs now say each thing once,
   and most code comments no longer tell their own history. No code changes.
+- **Indic, Thai or pointed Hebrew text struck with U+0336 overlays was flagged as garbled.** An
+  overlay written after every character lands between a consonant and its vowel sign, which read
+  as a broken character map; with `on_garbled="drop"` the live characters of a partly struck word
+  left `clean_text`. The garbled check now skips the overlays.
+- **`clean_markdown()` kept a `_` or `*` struck with an overlay.** An overlay after one now strikes
+  it, except after emphasis markup that opens a word in pymupdf4llm's markdown.
+  `markdown.strip_struck` reads every `*` and `_` as text, since `detect_pdf`'s markdown has no
+  emphasis markup.
+- **A full disk under the CLI's `--telemetry` in batch mode ended the run with a traceback** and
+  exit code 1 after every result was written. Telemetry now stops with a warning and the run ends
+  as it would have. `--on-garbled` is now ignored with a warning for a `.docx`, an image file and
+  `--dump-crops`, as other flags that do not apply are.
 
 ## [0.12.1] — 2026-10-08
 
