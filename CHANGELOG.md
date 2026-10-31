@@ -517,7 +517,8 @@ All notable changes to this project are documented here. The format follows
   emphasis markup.
 - **A full disk under the CLI's `--telemetry` in batch mode ended the run with a traceback** and
   exit code 1 after every result was written. Telemetry now stops with a warning and the run ends
-  as it would have. `--on-garbled` is now ignored with a warning for a `.docx`, an image file and
+  as it would have.
+- **`--on-garbled` is now ignored with a warning** for a `.docx`, an image file and
   `--dump-crops`, as other flags that do not apply are.
 
 ## [0.12.1] — 2026-10-08
