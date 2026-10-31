@@ -790,7 +790,8 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
             # the band where the rescue applies). A rescue that first passes the word at the
             # stroke's row is held the same way, so the retries after it still run.
             held = None                      # the rescue's pass, while the retries run
-            alt = None                       # a held partial word's pass, for a line with no strong hit
+            alt = None                       # a held partial word's pass, for a line with no
+                                             # strong hit
             if RESCUE_RETRIES and passes and not both_ink and short_line:
                 held, passes = (in_band, both_ink, off, wends), False
             if not passes and snap_px:

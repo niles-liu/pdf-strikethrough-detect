@@ -327,7 +327,7 @@ def test_a_rescue_first_passing_at_the_stroke_row_still_gets_the_retries(monkeyp
 
 
 def _partial_beside_strong():
-    """Word A ("ab") wholly under a 0.35 in line, word B the first three of its twelve letters; the
+    """Word A ("ab") wholly under a 0.35-inch line, word B the first three of its twelve letters; the
     stroke 5 px under the finder line."""
     g = np.full((300, 900), 255, np.uint8)
     for x0, n in ((200, 2), (232, 12)):

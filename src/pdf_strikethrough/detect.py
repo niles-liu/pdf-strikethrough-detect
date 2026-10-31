@@ -842,8 +842,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         di_result: a pre-fetched Azure Document Intelligence analyze result as a DICT — the REST
             JSON, an {'analyzeResult': ...} envelope, or ``sdk_result.as_dict()``. When given,
             its per-page words are used instead of running `ocr` (and `scan_config` defaults to
-            Azure-DI calibration on those pages). Pages are matched by their ``pageNumber``, so a result for a
-            page range lines up with the PDF.
+            Azure-DI calibration on those pages). Pages are matched by their ``pageNumber``, so a
+            result for a page range lines up with the PDF.
         words_by_page: pre-fetched OCR words as ``{0-based page: list[Word]}`` (or a sequence
             indexed by page) — the provider-neutral counterpart to `di_result` for any cloud/OCR
             engine, e.g. ``words_from_textract(resp)`` / ``words_from_docai(doc)``. Used for the

@@ -284,7 +284,7 @@ def _cmd_detect_single(args, path):
     elif args.scan_config == "confidence-free":
         scan_config = st.ScanConfig.confidence_free()
     elif di_result is not None:
-        scan_config = None                   # detect_pdf: Azure DI's on the pages it covers
+        scan_config = None                   # detect_pdf: the DI calibration where it covers
     elif words_by_page is not None or args.ocr != "none":
         scan_config = st.ScanConfig.confidence_free()
     else:

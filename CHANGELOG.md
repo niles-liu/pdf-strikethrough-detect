@@ -520,13 +520,12 @@ All notable changes to this project are documented here. The format follows
   as it would have.
 - **`--on-garbled` is now ignored with a warning** for a `.docx`, an image file and
   `--dump-crops`, as other flags that do not apply are.
-- **Three places where this release's scanned-path changes met and disagreed.** A word the
-  OCR-confidence rescue first passed at its stroke's row skipped the thick-bar and pair retries,
-  so the DI-confidence veto dropped a double strike read at 0.96 to 0.974 that it kept at 0.975;
-  the rescue's pass is now held there too. A rescued partial word beside a strong hit was refused
-  its stroke-row retry, though only an isolated partial strike is dropped off the middle; it now
-  takes it. Line support read a short word's own stroke at the line's row when the word's strike
-  geometry came from the stroke's row a few px away; it now reads it there.
+- **Scanned pages: three fixes where this release's changes interacted.** A double strike whose
+  detected line ran just outside a word's middle band, read by Azure DI at 0.96 to 0.974, was
+  dropped by the DI-confidence veto, though the same word read at 0.975 was kept; it is now kept.
+  A partly struck word beside a fully struck word on the same line could lose its strike
+  geometry; it now keeps it. Line support could miss a short word's own stroke when the detected
+  line ran a few px off it; it now reads the stroke where the word's geometry was found.
 - **Pages an `ocr` backend read beside a partial `di_result` ran under the Azure DI calibration,**
   which misreads that backend's confidences. `detect_pdf` now picks the default calibration per
   page, and the CLI's `--di-result` follows it.
