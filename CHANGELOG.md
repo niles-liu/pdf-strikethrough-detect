@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-31
+
+Patch: one CLI fix. Detection output is identical to 0.13.0's.
+
 ### Fixed
 - **Batch `--jobs` on Linux:** worker processes are spawned, as on macOS and Windows, instead of
   forked. Importing PyMuPDF 2.0 starts native threads, and a worker forked while they ran could
