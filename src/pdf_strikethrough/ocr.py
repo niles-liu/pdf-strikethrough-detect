@@ -367,7 +367,7 @@ def rapidocr_backend(engine=None, *, drop_lone_cjk=True, **engine_kwargs):
     first of the next, across a line break too; a digit in between breaks the run), each one is
     removed: a word left empty is dropped, and one inside a word becomes a space. Real CJK goes too
     when it stands alone like that: ``100 円``, ``5 個`` and ``7 元`` lose the unit, and
-    ``Article 1 (第1条)`` reads ``(1)``. A page with CJK text, where the characters come in runs, is
+    ``Article 1 (第1条)`` reads ``( 1 )``. A page with CJK text, where the characters come in runs, is
     returned as read. CJK punctuation and fullwidth forms are kept. Pass ``drop_lone_cjk=False`` to
     keep every character; it applies to an `engine` you pass too. The CLI's ``--ocr rapidocr``
     always removes them.

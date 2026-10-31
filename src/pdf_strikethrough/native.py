@@ -810,8 +810,10 @@ _SCRIPT_STARTS = [r[0] for r in _SCRIPTS]
 _SCRIPT_SHARED = frozenset([0x0640, *range(0x064B, 0x0656), *range(0x0660, 0x066A), 0x0670,
                             0x0951, 0x0952, 0x0953, 0x0954, 0x0964, 0x0965, *range(0x1040, 0x104A)])
 # skipped when looking for the character a combining mark attaches to: the joiners, the combining
-# grapheme joiner, the dotted circle that stands in for a base, and the Vedic signs
-_MARK_SKIP = frozenset([0x200C, 0x200D, 0x034F, 0x25CC, *_SCRIPT_SHARED, *range(0x1CD0, 0x1D00)])
+# grapheme joiner, the dotted circle that stands in for a base, the Vedic signs, and U+0336, which
+# a strikethrough generator writes after every character, vowel signs included
+_MARK_SKIP = frozenset([0x200C, 0x200D, 0x034F, 0x25CC, 0x0336, *_SCRIPT_SHARED,
+                        *range(0x1CD0, 0x1D00)])
 # assigned in Unicode 14 to 18 inside those blocks: an older Python's tables call them unassigned
 _SCRIPT_RECENT = frozenset([
     0x061D, *range(0x0870, 0x0892), *range(0x0897, 0x08A0), 0x08B5,
@@ -1459,8 +1461,9 @@ def page_strikes(page, page_index, method="vector", words=None, _garbled=None, _
       'annot'  — explicit /StrikeOut markup annotations (Acrobat/Preview redlines), with
                  author/date/color forensics (see :func:`native_annot_strikes`)
       'both'   — union of all three: vector records, plus flag/annot records for words no
-                 earlier record covers (maximum recall)
-    In validation on 10 public redline PDFs (55.2k struck words), 99.8% of vector detections
+                 earlier record covers, or that replace a record struck by overlays alone
+                 (maximum recall)
+    In validation on 10 public redline PDFs (55.7k struck words), 99.8% of vector detections
     are independently confirmed by the flag signal (99.6-100% per document); the flag signal
     typically marks additional words on top — 'both' captures them. Reproduce with
     ``benchmarks/confirmation_rate.py``.
@@ -1570,8 +1573,10 @@ _STRIKE_SPAN = re.compile(r"~~(.*?)~~", re.S)
 # A struck span's stand-in while overlays are read, so an overlay right after the span strikes it
 # and not the text before it. A noncharacter: it never occurs in interchanged text.
 _SPAN_MARK = chr(0xFDD0)
-# An overlay right after emphasis markup ('**' or '_') sat on a space before it: it strikes nothing
-_OVERLAY_ON_MARKUP = re.compile(f"(?<=[*_]){OVERLAY}+")
+# In pymupdf4llm's markdown, an overlay right after emphasis markup ('**' or '_') opening a word sat
+# on the space before it: it strikes nothing. After a '*' or '_' inside a word it strikes that
+# character.
+_OVERLAY_ON_MARKUP = re.compile(rf"(?<![^\s])([*_]+){OVERLAY}+")
 
 
 def strip_struck_markdown(md):
@@ -1579,9 +1584,18 @@ def strip_struck_markdown(md):
     struck with U+0336 overlays go too, with the overlays.
 
     Caveat: '~~' is pymupdf4llm's encoding for struck spans; a document whose TEXT contains a
-    literal '~~' is inherently ambiguous in that format and may strip incorrectly. detect_pdf's
-    ``clean_text`` is assembled from word records instead and is immune."""
-    clean = _OVERLAY_ON_MARKUP.sub("", _STRIKE_SPAN.sub(_SPAN_MARK, md))
+    literal '~~' is inherently ambiguous in that format and may strip incorrectly. So is a '*' or
+    '_' struck with an overlay at the start of a word, which reads as emphasis markup and is kept.
+    detect_pdf's ``clean_text`` is assembled from word records instead and is immune."""
+    return _strip_struck(md, emphasis=True)
+
+
+def _strip_struck(md, emphasis):
+    """strip_struck_markdown; `emphasis` False for markdown with no emphasis markup (detect_pdf's),
+    where every '*' and '_' is text."""
+    clean = _STRIKE_SPAN.sub(_SPAN_MARK, md)
+    if emphasis:
+        clean = _OVERLAY_ON_MARKUP.sub(r"\1", clean)
     clean = _drop_overlaid(clean).replace(_SPAN_MARK, "")
     clean = re.sub(r"[ \t]{2,}", " ", clean)
     return re.sub(r"\n{3,}", "\n\n", clean)

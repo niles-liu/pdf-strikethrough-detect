@@ -123,7 +123,7 @@ class Telemetry(TypedDict, total=False):
     telemetry_version: int       # bumped when a key is removed, renamed or changes meaning
     package: str                 # the package version
     model: Optional[Dict[str, object]]   # get_model_meta()'s version and sha256 (+ external_data)
-                                         # of the model that scored; None when none was loaded
+                                         # of the model that scored; None with no scanned page
     seconds: float               # the whole call
     pages: List[PageTelemetry]
     tiers: Dict[str, int]        # the pages' tiers, summed

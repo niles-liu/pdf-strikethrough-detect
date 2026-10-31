@@ -345,6 +345,43 @@ def test_cli_batch_carries_on_when_telemetry_cannot_be_written(tmp_path, monkeyp
     assert "warning: --telemetry" in capsys.readouterr().err
 
 
+class _FullDisk(io.RawIOBase):
+    """A raw file that takes one write, then fails every one after it as a full disk does."""
+    def __init__(self):
+        self.n = 0
+
+    def writable(self):
+        return True
+
+    def write(self, b):
+        self.n += 1
+        if self.n >= 2:
+            raise OSError(28, "No space left on device")
+        return len(b)
+
+
+def test_cli_batch_ends_cleanly_when_the_telemetry_disk_fills(tmp_path, monkeypatch, capsys):
+    # the failed bytes stay in the file's buffer: closing it at the end must not raise them again
+    d = tmp_path / "in"
+    d.mkdir()
+    for name in ("a.pdf", "b.pdf", "c.pdf"):
+        _struck_pdf(d / name)
+    real, opened = cli._open_telemetry, []
+
+    def full_disk(path):
+        opened.append(path)
+        if len(opened) == 1:                 # the pre-check's open
+            return real(path)
+        return io.TextIOWrapper(io.BufferedWriter(_FullDisk()), encoding="utf-8")
+    monkeypatch.setattr(cli, "_open_telemetry", full_disk)
+    out = tmp_path / "out.jsonl"
+    assert cli.main(["detect", str(d), "--jsonl", str(out), "--telemetry",
+                     str(tmp_path / "tel.jsonl"), "--fail-if-found"]) == 3
+    assert len(_lines(out)) == 3
+    err = capsys.readouterr().err
+    assert "warning: --telemetry" in err and "3 file(s), 3 with struck text" in err
+
+
 def test_cli_ends_an_unfinished_last_line_and_escapes_a_bad_name(tmp_path):
     tel = tmp_path / "tel.jsonl"
     tel.write_bytes(b'{"telemetry_version": 1, "source": ')       # a run cut off mid-write

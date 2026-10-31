@@ -251,6 +251,16 @@ def test_supplied_words_need_no_glyph_or_size_floor():
     (f"keep {_ov('of')} ~~old~~ this {S}x", "keep this x"),
     (f"z~~abc~~{S}d{S} x", "z x"),               # an overlay after a struck span strikes it
     (f"keep **{S}{_ov('of')}** x", "keep **** x"),  # one after emphasis markup strikes nothing
+    (f"keep {_ov('old_rate')} and {_ov('a*b')} x", "keep and x"),  # a '_' or '*' in a word
+    (f"keep ~~old~~{_ov('_x')} y", "keep y"),
 ])
 def test_strip_struck_markdown_drops_overlaid_characters(md, clean):
     assert native.strip_struck_markdown(md) == clean
+
+
+def test_strip_struck_reads_every_star_and_underscore_as_text():
+    # detect_pdf's markdown writes no emphasis markup, so a struck '*' opening a word is struck
+    from pdf_strikethrough import markdown
+    md = f"keep {_ov('*a1')} {_ov('_note')} x"
+    assert markdown.strip_struck(md) == "keep x"
+    assert native.strip_struck_markdown(md) == "keep * _ x"      # pymupdf4llm's: read as markup

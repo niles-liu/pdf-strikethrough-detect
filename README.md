@@ -146,8 +146,8 @@ Greek or Cyrillic letters or U+FFFD.
 
 `telemetry=True` (on `detect_pdf` and `detect_image_file`) adds `res["telemetry"]`, a JSON-ready
 report for monitoring a deployment. It holds:
-- the package version, and the scoring model's `version` and `sha256` (`None` when no model was
-  loaded);
+- the package version, and the scoring model's `version` and `sha256` (`None` when no scanned page
+  was scored);
 - the seconds the call took;
 - per page: its source, the seconds it spent rendering, in OCR and in detection, its candidates per
   tier, and how many words were reported struck. A scanned page also gives its dpi and OCR word
