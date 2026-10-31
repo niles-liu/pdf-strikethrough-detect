@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.13.0] - 2026-11-01
+## [0.13.0] - 2026-10-31
 
 Minor, not patch: it adds public API (telemetry, garbled-word flags, `ScanConfig.line_support`,
 `lines.rule_mask`, the model's sha256). Results keep `schema_version` 1. Each PR linked below has
