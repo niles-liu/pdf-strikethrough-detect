@@ -207,8 +207,8 @@ class ScanConfig:
     @classmethod
     def azure_di(cls, **kw):
         """Azure Document Intelligence calibration: the defaults, with confidence gating on. `kw`
-        sets other fields."""
-        return cls(**{"confidence_gating": True, **kw})
+        sets other fields: ``azure_di(glyph_ink=False)``."""
+        return cls(**{**kw, "confidence_gating": True})
 
     @classmethod
     def ruled_forms(cls, veto_printed_rules=True, **kw):

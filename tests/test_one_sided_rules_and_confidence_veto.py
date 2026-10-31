@@ -126,7 +126,8 @@ def test_fix_a_corroborated_high_conf_word_survives_veto(monkeypatch):
 def test_fix_a_veto_spares_a_word_on_a_line_that_strikes_another_with_geometry(monkeypatch):
     """A crisp printed strike through two words DI reads at 0.99: one has ink on both sides of the
     bar, the other too little ink at it to show strike geometry. The line is a strike, so the veto
-    spares the second word too; alone on its own bar it is still dropped (the test above)."""
+    spares the second word too; alone on its own bar it is still dropped
+    (test_fix_a_confidence_veto_drops_high_conf_uncorroborated)."""
     _saturated_cnn(monkeypatch)
     gray = _blank()
     _glyphs(gray, 100, 380, 150, 250)           # ink on both sides of the bar

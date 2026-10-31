@@ -231,6 +231,7 @@ def test_the_calibration_presets_take_the_other_fields():
     off = ScanConfig.confidence_free(line_support=False)
     assert not off.confidence_gating and not off.line_support
     assert not ScanConfig.confidence_free(confidence_gating=True).confidence_gating
+    assert ScanConfig.azure_di(confidence_gating=False).confidence_gating
     di = ScanConfig.azure_di(glyph_ink=False)
     assert di.confidence_gating and not di.glyph_ink
     assert ScanConfig.azure_di() == ScanConfig() and ScanConfig.confidence_free() == off.__class__(

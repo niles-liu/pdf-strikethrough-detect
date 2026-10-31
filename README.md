@@ -171,7 +171,7 @@ originals as ground truth (3 documents, 24 pages, 2,170 known strikes; reproduce
 
 | Backend | Setup | Strike recovery | Word granularity |
 |---|---|---|---|
-| Azure Document Intelligence | cloud, paid | **96%** of known strikes with `confidence_free()`; 91% with the default DI calibration (see below) | exact word boxes |
+| Azure Document Intelligence | cloud, paid | **97.9%** of known strikes with `confidence_free()`; 95.2% with the default DI calibration (see below) | exact word boxes |
 | **RapidOCR** | `pip`, no binary | **96%** of known strikes | ~4× coarser (phrase-level) |
 | Tesseract | needs system binary | not benchmarked here | genuine word-level |
 
@@ -180,9 +180,11 @@ originals as ground truth (3 documents, 24 pages, 2,170 known strikes; reproduce
 struck or not. With `di_result` it uses the Azure DI calibration (`ScanConfig()`), since DI's struck
 words drop to 0.43–0.94. `detect_image_file`, `detect_scanned_image` and `analyze_scanned_page`
 run confidence-free unless given a config. The DI calibration's confidence gates were built for
-degraded ruled forms and drop some crisply struck words that DI still reads with high confidence,
-hence its 91%; on a clean scan of a printed redline, pass `scan_config=ScanConfig.confidence_free()`
-with `di_result`.
+degraded ruled forms. On a crisp printed scan DI reads a struck word as clean, so its confidence
+veto spares a word StrikeNet confirms when the word's line strikes other words with strike
+geometry; `confidence_free()` finds a few more struck words there and marks more live ones.
+`ScanConfig(...)` is the DI calibration whatever else it sets: for other engines start from
+`ScanConfig.confidence_free(...)`, which takes the same fields.
 
 `rapidocr_backend()` builds RapidOCR with its text-line orientation classifier off
 (`params={"Global.use_cls": False}`), since the classifier turns struck and underlined lines upside
@@ -377,16 +379,15 @@ live text as if deleted (RAG / indexing). Calibrate the threshold from your own 
 ink on both sides of it, or with glyph ink between it and a second stroke above it, their middle in
 the band (a double strike's lower line). The glyph ink is measured without the page's horizontal
 runs of 0.25 in or more (table rules, underlines; `lines.rule_mask` finds them), so an underlined
-number sitting on a table rule is not read as struck. `ScanConfig(glyph_ink=False)` measures on
-all ink, with no double-strike test.
+number sitting on a table rule is not read as struck. `ScanConfig.confidence_free(glyph_ink=False)`
+measures on all ink, with no double-strike test.
 
 **Short words.** A struck word of three characters or fewer, not counting surrounding punctuation,
 fills little of the CNN's input and often scores below the struck threshold.
 `ScanConfig.line_support` (on by default; off in `precision_first()`) keeps such a word when the
 line through it strikes confirmed words on both sides and the word has a stroke of its own: one
 unbroken run of ink at the line's height across at least 65% of the word, with more ink there than
-just above or below it. On the calibrated-confidence path a word read above `max_clean_conf` is
-never kept.
+just above or below it.
 
 **Degraded ruled forms (provisional).** On faint, heavily ruled scans (printed forms, dense tables)
 the classifier over-fires on printed rules crossing text. Two opt-in switches cut false positives
