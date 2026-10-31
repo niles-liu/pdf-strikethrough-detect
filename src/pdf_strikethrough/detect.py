@@ -229,6 +229,9 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     decided by the CNN. With ``config.confidence_gating``, the DI-confidence veto then drops a
     struck word OCR'd above ``max_clean_conf`` that has no strike geometry (``conf_veto: True``).
 
+    It does not apply ``ScanConfig.line_support``, which needs the page's lines and ink:
+    :func:`detect_scanned_image` runs it after this pass.
+
     `config` may carry ``cnn_p_hi``/``cnn_p_lo`` operating-point overrides (see ScanConfig);
     when set they replace the model's shipped thresholds for this pass. `crop_sink`, if given, is
     a list that receives ``(std_crop, record)`` for every scored word (used by the active-learning
@@ -320,15 +323,18 @@ def _line_support(recs, tagged, ink, config, dpi=RENDER_DPI):
         x0, x1 = h["bbox_frac"][0], h["bbox_frac"][2]
         for li in h.get("line_idx") or ():
             ln = tagged[li]
-            if not any(s.get("strike_geom") and s["text"] == h["text"]
-                       and s["bbox_frac"] == h["bbox_frac"] for s in ln.get("struck", ())):
+            hit = next((s for s in ln.get("struck", ()) if s.get("strike_geom")
+                        and s["text"] == h["text"] and s["bbox_frac"] == h["bbox_frac"]), None)
+            if hit is None:
                 continue
             on_line = [f["bbox_frac"] for f in confirmed if li in (f.get("line_idx") or ())]
             if not (any(b[2] <= x0 + 1e-3 for b in on_line)
                     and any(b[0] >= x1 - 1e-3 for b in on_line)):
                 continue
             bx0, by0, bx1, by1 = ln["bbox_px"]
-            ends = ln.get("ends_px") or ((bx0, (by0 + by1) / 2), (bx1, (by0 + by1) / 2))
+            # read at the stroke's row where a retry found the geometry there, not at the line
+            ends = (hit.get("stroke_ends") or ln.get("ends_px")
+                    or ((bx0, (by0 + by1) / 2), (bx1, (by0 + by1) / 2)))
             if beside is None:      # the ink beside the stroke is judged without the rules
                 beside = _glyph_ink(ink, dpi) if getattr(config, "glyph_ink", False) else ink
             run, excess = _own_stroke(ink, ends, ln.get("run_px", 3.0), x0 * W, x1 * W,
@@ -828,16 +834,16 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         ocr: an OCR backend ``(image_ndarray) -> list[Word]`` (see ``pdf_strikethrough.ocr``).
             Required only if the document has scanned pages and `di_result` is not given.
         scan_config: ``ScanConfig`` for the scanned classifier. Default: Azure-DI calibration
-            with `di_result`, else ``ScanConfig.confidence_free()`` — the confidences an `ocr`
-            backend or `words_by_page` carries are not calibrated to the classifier (as in
-            ``detect_image_file`` and the CLI).
+            on the pages `di_result` covers, else ``ScanConfig.confidence_free()``: the
+            confidences an `ocr` backend or `words_by_page` carries are not calibrated to the
+            classifier (as in ``detect_image_file`` and the CLI).
         dpi: raster resolution for scanned pages (detector tunables rescale automatically;
             calibrated/validated at 200). Must be positive.
         di_result: a pre-fetched Azure Document Intelligence analyze result as a DICT — the REST
             JSON, an {'analyzeResult': ...} envelope, or ``sdk_result.as_dict()``. When given,
             its per-page words are used instead of running `ocr` (and `scan_config` defaults to
-            Azure-DI calibration). Pages are matched by their ``pageNumber``, so a result for a
-            page range lines up with the PDF.
+            Azure-DI calibration on those pages). Pages are matched by their ``pageNumber``, so a
+            result for a page range lines up with the PDF.
         words_by_page: pre-fetched OCR words as ``{0-based page: list[Word]}`` (or a sequence
             indexed by page) — the provider-neutral counterpart to `di_result` for any cloud/OCR
             engine, e.g. ``words_from_textract(resp)`` / ``words_from_docai(doc)``. Used for the
@@ -907,9 +913,10 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         sources = {p: classify_page_source(doc[p]) for p in page_indices}
         log.debug("detect_pdf: %d-page doc, processing %d page(s); native method=%r",
                   doc.page_count, len(page_indices), method)
-        if scan_config is None:
-            scan_config = (ScanConfig.azure_di() if di_pages is not None
-                           else ScanConfig.confidence_free())
+        # by default each scanned page takes the calibration of its words' source: Azure DI's
+        # on the pages di_result covers, none on pages an ocr backend reads beside a partial one
+        page_config = (None if scan_config is not None
+                       else (ScanConfig.azure_di(), ScanConfig.confidence_free()))
         meta = None
         words, warns = [], []
         if getattr(doc, "is_repaired", False):
@@ -949,6 +956,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 if note:
                     _warnings.warn(note, stacklevel=2)
                     warns.append(note)
+                if page_config is not None:
+                    scan_config = page_config[0 if di_pages is not None and pno in di_pages else 1]
                 if di_pages is not None and pno in di_pages:
                     page_words = words_from_azure_di(di_pages[pno])
                 elif wbp is not None and pno in wbp:

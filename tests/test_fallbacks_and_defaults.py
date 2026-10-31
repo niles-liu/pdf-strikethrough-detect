@@ -151,6 +151,24 @@ def test_page_missing_from_words_by_page_names_words_by_page():
     assert res["warnings"] and "words_by_page" in res["warnings"][0]
 
 
+def test_pages_an_ocr_backend_reads_beside_a_partial_di_result_run_confidence_free(monkeypatch):
+    """The partial di_result error says to pass an ocr backend for the pages it misses; those
+    pages' words carry confidences the DI calibration would misread."""
+    seen = []
+    monkeypatch.setattr(detect, "detect_scanned_image",
+                        lambda gray, words, config=None, **kw: seen.append(config) or [])
+    di = {"pages": [{"pageNumber": 1, "width": 1, "height": 1, "unit": "inch",
+                     "words": [{"content": "x", "confidence": 0.99,
+                                "polygon": [0.1, 0.1, 0.2, 0.1, 0.2, 0.2, 0.1, 0.2]}]}]}
+    ocr = lambda rgb: [Word("rapid", (0.1, 0.1, 0.3, 0.2), 0.99)]    # noqa: E731
+    detect.detect_pdf(_scanned_pdf(), di_result=di, ocr=ocr, include_markdown=False)
+    assert [c.confidence_gating for c in seen] == [True, False]
+    seen.clear()
+    detect.detect_pdf(_scanned_pdf(), di_result=di, ocr=ocr, include_markdown=False,
+                      scan_config=ScanConfig.azure_di())                # given: every page
+    assert [c.confidence_gating for c in seen] == [True, True]
+
+
 def test_page_with_no_word_source_at_all_keeps_its_message():
     with pytest.raises(detect.OcrRequiredError, match="no OCR backend was provided"):
         detect.detect_pdf(_scanned_pdf())

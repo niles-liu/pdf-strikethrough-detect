@@ -163,8 +163,8 @@ class ScanConfig:
     underlines). Without it, an underlined word sitting on a table rule reads as struck, because
     the rule is ink below the underline. Ruled text is then judged like unruled text. A long solid
     line through a word's middle band with no glyph ink on either side is judged on all ink, so
-    one of a double rule stays a rule. ``ScanConfig(glyph_ink=False)``, or
-    ``dataclasses.replace(preset, glyph_ink=False)``, measures on all ink.
+    one of a double rule stays a rule. ``dataclasses.replace(preset, glyph_ink=False)`` measures
+    on all ink, with no thick-bar retry and no double-strike pair test, which read glyph ink.
 
     ``line_support`` (on by default; off in ``precision_first()``) keeps a word of three characters
     or fewer, not counting surrounding punctuation, that StrikeNet leaves unconfirmed when the line
@@ -651,8 +651,11 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
     PAIR_MAX_RUN_PX thick whose wobble is measured and under PAIR_MAX_WOBBLE: in handwriting the
     ruling of lined paper or a pen stroke would make a pair with another stroke beside it.
 
-    A word the OCR-confidence rescue passes goes through the same retries (RESCUE_RETRIES), and
-    one is taken only when it gives strike geometry; otherwise the rescue stands at the line."""
+    A word the OCR-confidence rescue passes goes through the same retries (RESCUE_RETRIES),
+    whether the rescue first passes it at the line or at the stroke's row, and one is taken only
+    when it gives strike geometry; otherwise the rescue stands where it first passed the word. A
+    partial word that a retry moves off the middle, past PARTIAL_ISO_MAX_OFF, keeps the retry
+    beside a strong hit on its line and its rescued pass on a line with none."""
     pix_h, pix_w = gray.shape
     if ink is None:
         ink = ink_mask(gray)
@@ -721,7 +724,9 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                     "bbox_frac": wbox, "off": round(off, 2), "wcov": round(wcov, 2),
                     "cover_frac": (round(f0, 2), round(f1, 2)), "line_idx": li, "ink_ok": ink_ok,
                     "conf": conf, "strike_geom": strike_geom, "glyph_span": glyphs is not None,
-                    "box_chars": box_chars}
+                    "box_chars": box_chars,
+                    # the stroke's row, where a retry moved off the line (line support reads it)
+                    **({"stroke_ends": wends} if wends != ends else {})}
 
         run_px = ln.get("run_px", 3.0)
         wobble = ln.get("straightness")
@@ -782,10 +787,13 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
             # passes; a partial word's stroke-row retry is not taken when it would move the
             # word past PARTIAL_ISO_MAX_OFF, where an isolated partial strike is dropped.
             # Otherwise the rescue stands as it was, at the line (a retry can move the word out of
-            # the band where the rescue applies).
-            rescued = RESCUE_RETRIES and passes and not both_ink and short_line
-            if rescued:
-                saved, passes = (in_band, both_ink, off, wends), False
+            # the band where the rescue applies). A rescue that first passes the word at the
+            # stroke's row is held the same way, so the retries after it still run.
+            held = None                      # the rescue's pass, while the retries run
+            alt = None                       # a held partial word's pass, for a line with no
+                                             # strong hit
+            if RESCUE_RETRIES and passes and not both_ink and short_line:
+                held, passes = (in_band, both_ink, off, wends), False
             if not passes and snap_px:
                 # The line may run a few px off the stroke (a thin or light one, stitched to glyph
                 # pieces), so the ink "below" it is under the glyphs. Try again at the stroke's row.
@@ -794,13 +802,17 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                     wends = ((sx, sy + dy), (ex, ey + dy))
                     off += dy / max(wpx[3] - wpx[1], 1e-9)
                     passes, in_band, both_ink = ink_gate(off, wends, wpx, conf)
-                    # a partial word is kept off the middle only beside a strong hit on its line
-                    # (`off` compared rounded, as a hit stores it and that filter reads it)
-                    passes = passes and not (rescued and not (
-                        in_band and both_ink
-                        and (wcov >= MIN_WORD_XOVER
-                             or abs(round(off, 2)) <= PARTIAL_ISO_MAX_OFF
-                             or abs(round(saved[2], 2)) > PARTIAL_ISO_MAX_OFF)))
+                    if RESCUE_RETRIES and passes and not both_ink and short_line:
+                        held, passes = held or (in_band, both_ink, off, wends), False
+                    elif held:
+                        passes = passes and in_band and both_ink
+                        # a partial word is kept off the middle only beside a strong hit on its
+                        # line, so where none is found the rescue's pass stands instead (`off`
+                        # compared rounded, as a hit stores it and that filter reads it)
+                        if (passes and wcov < MIN_WORD_XOVER
+                                and abs(round(off, 2)) > PARTIAL_ISO_MAX_OFF
+                                >= abs(round(held[2], 2))):
+                            alt = held
             if (not passes and in_band and wcov >= MIN_WORD_XOVER and config.glyph_ink
                     and INK_GAP_THICK_PX < INK_GAP_PX
                     and ln.get("len_in", 0.0) <= INK_GAP_THICK_MAX_LEN_IN
@@ -823,7 +835,10 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 # read as glyph ink on both sides.
                 passes, in_band, both_ink = ink_gate(off, wends, wpx, conf, INK_GAP_THICK_PX,
                                                      skip_full=True)
-                passes = passes and not (rescued and not (in_band and both_ink))
+                if RESCUE_RETRIES and passes and not both_ink and short_line:
+                    held, passes = held or (in_band, both_ink, off, wends), False
+                elif held:
+                    passes = passes and in_band and both_ink
             if (not passes and PAIR_REACH > 0 and wcov >= MIN_WORD_XOVER and config.glyph_ink
                     and (PAIR_MAX_LEN_IN <= 0 or ln.get("len_in", 0.0) <= PAIR_MAX_LEN_IN)
                     and (PAIR_MAX_RUN_PX <= 0
@@ -854,8 +869,8 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 if pair:
                     off += pair / (2 * box_h)
                     passes = in_band = both_ink = True
-            if rescued and not passes:
-                (in_band, both_ink, off, wends), passes = saved, True
+            if held and not passes:
+                (in_band, both_ink, off, wends), passes = held, True
             if not passes:
                 continue
             ink_ok = not in_band
@@ -872,16 +887,24 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf,
                              strike_geom=strike_geom, wends=wends)
                 if h["box_chars"] >= PARTIAL_MIN_CHARS:
+                    if alt:
+                        a_in, a_both, a_off, a_wends = alt
+                        h["_alt"] = make_hit(wbox, txt, a_off, wcov, strong=False, ink_ok=not a_in,
+                                             conf=conf, strike_geom=a_in and a_both,
+                                             wends=a_wends)
                     hits.append(h)
             else:
                 weak_band.append((wbox, txt, off, wcov, ink_ok, conf, strike_geom, wends))
         if any(h["strong"] for h in hits):
+            for h in hits:
+                h.pop("_alt", None)
             for wbox, txt, off, wcov, ink_ok, conf, strike_geom, wends in weak_band:
                 h = make_hit(wbox, txt, off, wcov, strong=False, ink_ok=ink_ok, conf=conf,
                              strike_geom=strike_geom, wends=wends)
                 if h["box_chars"] >= PARTIAL_MIN_CHARS:
                     hits.append(h)
         else:
+            hits = [h.pop("_alt", None) or h for h in hits]
             hits = [h for h in hits if abs(h["off"]) <= PARTIAL_ISO_MAX_OFF or h["ink_ok"]]
         chain = False
         if hits and line_fill is not None and line_fill < FILL_STRONG and gating:

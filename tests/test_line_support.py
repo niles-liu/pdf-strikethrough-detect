@@ -174,6 +174,36 @@ def test_clean_ocr_on_the_calibrated_path_is_never_supported(cnn_says):
         assert bool(by["of"]["final"]) is kept and bool(by["of"].get("line_support")) is kept
 
 
+@pytest.mark.parametrize("line_y", [141.0, 145.5])
+def test_the_own_stroke_is_read_at_the_row_its_geometry_came_from(monkeypatch, line_y):
+    """A finder line 4 px above the stroke (141.0), or on it (145.5): the stroke-row retry gives
+    "of" its geometry at the stroke's row, so its own stroke is read there too."""
+    from pdf_strikethrough.lines import ink_mask
+    from pdf_strikethrough.scanned import classify_lines
+    gray, words, x = np.full((300, 900), 255, np.uint8), [], 200
+    for txt in ("aaaa", "of", "bbbb"):
+        for i in range(len(txt)):
+            for s in (0, 5, 11):
+                gray[140:158, x + i * 18 + s:x + i * 18 + s + 3] = 20
+        words.append(Word(txt, (x / 900, 119 / 300, (x + (len(txt) - 1) * 18 + 14) / 900,
+                                179 / 300), None))
+        x += len(txt) * 18 + 18
+    xb = int(words[-1].bbox[2] * 900) + 2
+    gray[145:147, 198:xb] = 20
+    ink = ink_mask(gray)
+    line = {"bbox_px": (198, int(line_y) - 1, xb, int(line_y) + 1),
+            "ends_px": ((198.0, line_y), (float(xb), line_y)), "len_in": (xb - 198) / 200,
+            "angle_deg": 0.0, "fill": 0.95, "run_px": 2.0, "straightness": 1.0}
+    tagged, struck = classify_lines([line], words, gray, ink=ink, config=CF, dpi=DPI)
+    probs = iter({"aaaa": 0.99, "of": 0.5, "bbbb": 0.99}[h["text"]] for h in struck
+                 if h["tier"] != "weak")
+    monkeypatch.setattr(cnn, "score_crops", lambda crops: np.array([next(probs) for _ in crops]))
+    recs = detect.apply_cnn_verdict(struck, gray, config=CF)
+    detect._line_support(recs, tagged, ink, CF, DPI)
+    by = _by_text(recs)
+    assert by["of"]["geom_corroborated"] and by["of"]["final"] and by["of"]["line_support"]
+
+
 def test_line_support_reaches_cli_json(tmp_path, monkeypatch):
     gray, words = _helvetica_row(["deleted", "of", "words", "here"], [True, True, True, False])
     from PIL import Image

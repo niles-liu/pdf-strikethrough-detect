@@ -308,3 +308,51 @@ def test_a_stroke_row_retry_out_of_the_band_is_not_taken(monkeypatch, conf):
     old = _records(page, conf, retries=False, monkeypatch=monkeypatch)
     new = _records(page, conf, monkeypatch=monkeypatch)
     assert len(new) == 1 and new == old and not new[0]["geom_corroborated"]
+
+
+def test_a_rescue_first_passing_at_the_stroke_row_still_gets_the_retries(monkeypatch):
+    """The line just above the band: the ink tests drop the word there, the stroke-row retry moves
+    it onto the upper stroke, in the band, where the rescue alone passes it. The pair test after
+    that gives it geometry, as it does at 0.975, where the rescue does not apply."""
+    gray, line, box, txt = _double_strike()
+    line = {**line, "bbox_px": (line["bbox_px"][0], 137, line["bbox_px"][2], 139),
+            "ends_px": ((line["ends_px"][0][0], 138.5), (line["ends_px"][1][0], 138.5))}
+    page = (gray, line, box, txt)
+    above, = _records(page, 0.975, monkeypatch=monkeypatch)
+    assert above["geom_corroborated"] and above["final"]
+    for conf in (0.96, 0.974):
+        rec, = _records(page, conf, monkeypatch=monkeypatch)
+        for key in ("off", "char_span", "geom_corroborated", "tier", "final"):
+            assert rec[key] == above[key], (conf, key)
+
+
+def _partial_beside_strong():
+    """Word A ("ab") wholly under a 0.35-inch line, word B the first three of its twelve letters; the
+    stroke 5 px under the finder line."""
+    g = np.full((300, 900), 255, np.uint8)
+    for x0, n in ((200, 2), (232, 12)):
+        for i in range(n):
+            for s in (0, 4, 8):
+                g[99:120, x0 + i * 12 + s:x0 + i * 12 + s + 2] = 20
+    g[105:107, 198:268] = 20
+    line = {"bbox_px": (198, 99, 268, 101), "ends_px": ((198.0, 100.0), (268.0, 100.0)),
+            "len_in": 0.35, "angle_deg": 0.0, "fill": 0.9, "run_px": 2.0, "straightness": 1.0}
+    a = (200 / 900, 65.05 / 300, 222 / 900, 125.05 / 300)
+    b = (232 / 900, 65.05 / 300, 374 / 900, 125.05 / 300)
+    return g, line, a, b
+
+
+@pytest.mark.parametrize("conf", [0.96, 0.974])
+def test_a_rescued_partial_word_beside_a_strong_hit_takes_the_stroke_row(monkeypatch, conf):
+    """Beside a strong hit an isolated partial strike is never dropped, so B's stroke-row retry is
+    taken (it gives geometry), as for B read at 0.975."""
+    gray, line, a, b = _partial_beside_strong()
+
+    def recs(c):
+        _, out = classify_lines([line], [Word("ab", a, 0.5), Word("abcdefghijkl", b, c)], gray,
+                                config=DI, dpi=200)
+        return {r["text"]: r for r in detect.apply_cnn_verdict(out, gray, config=DI)}
+    above, rescued = recs(0.975)["abcdefghijkl"], recs(conf)["abcdefghijkl"]
+    assert above["geom_corroborated"] and above["final"]
+    for key in ("off", "char_span", "geom_corroborated", "final"):
+        assert rescued[key] == above[key], key
