@@ -80,6 +80,21 @@ All notable changes to this project are documented here. The format follows
   changes.
 
 ### Changed
+- **The Azure DI calibration finds more struck words on printed scans.** DI reads a word under a
+  crisp printed strike as clean text. So the DI-confidence veto dropped such a word whenever its
+  own ink showed no strike geometry, though its line struck the words beside it, and line support
+  never kept a short word read above `max_clean_conf`. The veto now spares a word whose line
+  strikes another confirmed word with strike geometry, and line support no longer reads
+  confidences. On 472 printed pages with DI words (newly generated synthetic pages, Senate bills
+  published before the frontier benchmark's cutoff and the dev pages of its public redline
+  corpus), struck sub-tokens found rose from 17,663 to 19,116 of 21,492, with 203 live sub-tokens
+  marked where 199 were. On the private ruled-forms corpus false strikes rose from 123 to 133
+  under the default calibration and from 25 to 26 with `ruled_forms(rescue_clean_chains=False)`,
+  recall unchanged; on BRESSAY's handwritten pages with DI words, 205 live words of 29,820 are
+  marked where 202 were.
+- **`ScanConfig.azure_di()` and `ScanConfig.confidence_free()` accept any other `ScanConfig`
+  field as a keyword,** as in `confidence_free(line_support=False)`. Start from them rather than
+  `ScanConfig(...)`, which always has the DI calibration's confidence gating on.
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
   word struck with overlay characters, `text` is `of`, not `o̶f̶`; `char_span` and `chars` index
   that text, and `markdown`, `clean_text` and `passages` follow it. A word struck by overlays

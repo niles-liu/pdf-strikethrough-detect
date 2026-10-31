@@ -7,9 +7,10 @@ struck-aware markdown, the surviving clean text, and grouped deletion passages.
 In the CNN verdict layer, 'auto' words are kept only when the CNN confirms at p_hi (crops too
 small to score are kept: no counter-evidence), and on 'review' words (the geometry can't decide)
 the CNN is the decider. With confidence gating (the Azure-DI path), a struck word OCR'd above
-max_clean_conf without corroborating strike geometry is vetoed. With ScanConfig.line_support, a
-short word the CNN leaves unconfirmed is kept when it has a stroke of its own and the line
-through it strikes confirmed words on both sides of it.
+max_clean_conf without corroborating strike geometry is vetoed, unless its line strikes another
+word that has it. With ScanConfig.line_support, a short word the CNN leaves unconfirmed is kept
+when it has a stroke of its own and the line through it strikes confirmed words on both sides of
+it.
 """
 from __future__ import annotations
 
@@ -227,7 +228,8 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     Gate semantics: auto words need CNN confirmation at p_hi (a scored non-confirmation drops
     them; an unscoreable crop offers no counter-evidence and is kept), and review words are
     decided by the CNN. With ``config.confidence_gating``, the DI-confidence veto then drops a
-    struck word OCR'd above ``max_clean_conf`` that has no strike geometry (``conf_veto: True``).
+    struck word OCR'd above ``max_clean_conf`` that has no strike geometry, unless its line strikes
+    another word that has it (``conf_veto: True``).
 
     It does not apply ``ScanConfig.line_support``, which needs the page's lines and ink:
     :func:`detect_scanned_image` runs it after this pass.
@@ -280,14 +282,19 @@ def apply_cnn_verdict(struck, gray, meta=None, config=None, crop_sink=None):
     # ink on both sides, nor a double strike's pair: it rode the CNN alone, or a one-sided rule or
     # underline), the struck verdict is StrikeNet over-firing on a faint scan, so it is
     # downgraded. Never on confidence alone, and never on the confidence-free path, so recall
-    # there cannot regress.
+    # there cannot regress. Nor on a line that strikes another confirmed word with strike
+    # geometry: DI reads a word under a crisp printed strike as clean, and there the line is
+    # a strike, not a faint scan.
     if getattr(config, "confidence_gating", False):
         max_clean = getattr(config, "max_clean_conf", 1.0)
+        struck_lines = {li for h in kept if h.get("final") and h.get("geom_corroborated")
+                        and h.get("tier") not in NATIVE_TIERS for li in h.get("line_idx") or ()}
         for h in kept:
             if h.get("tier") in NATIVE_TIERS or not h.get("final"):
                 continue
             conf = h.get("conf")
-            if conf is not None and conf > max_clean and not h.get("geom_corroborated"):
+            if (conf is not None and conf > max_clean and not h.get("geom_corroborated")
+                    and not struck_lines.intersection(h.get("line_idx") or ())):
                 h["final"], h["verdict"], h["conf_veto"] = False, "unsure", True
     return kept
 
@@ -304,21 +311,16 @@ def _line_support(recs, tagged, ink, config, dpi=RENDER_DPI):
     (:func:`pdf_strikethrough.scanned._own_stroke`): the line's band holds one unbroken stretch of
     ink across LINE_SUPPORT_MIN_RUN of its columns, and more ink than the same band just above and
     below it. Word spaces are no evidence either way, since many documents strike each word on its
-    own. On the calibrated-confidence path a word OCR'd above ``max_clean_conf`` is clean text and
-    is never kept. Only words confirmed before this pass count as support, so it never chains. A
+    own. Only words confirmed before this pass count as support, so it never chains. A
     word kept is struck whole: its line strikes confirmed words on both sides, so it crosses all of
     it. `tagged` are the lines the records' ``line_idx`` index, `ink` the page's ink mask at
     `dpi`; with ``ScanConfig.glyph_ink`` the ink beside the stroke is read on glyph ink."""
     confirmed = [h for h in recs if h.get("final")]
-    gating = getattr(config, "confidence_gating", False)
-    max_clean = getattr(config, "max_clean_conf", 1.0)
     W = ink.shape[1]
     beside = None
     for h in recs:
         if (h.get("final") or not h.get("geom_corroborated")
                 or len(h["text"].strip(".,;:()")) > LINE_SUPPORT_MAX_CHARS):
-            continue
-        if gating and h.get("conf") is not None and h["conf"] > max_clean:
             continue
         x0, x1 = h["bbox_frac"][0], h["bbox_frac"][2]
         for li in h.get("line_idx") or ():
