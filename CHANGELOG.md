@@ -523,8 +523,8 @@ All notable changes to this project are documented here. The format follows
 - **Scanned pages: three fixes where this release's changes interacted.** A double strike whose
   detected line ran just outside a word's middle band, read by Azure DI at 0.96 to 0.974, was
   dropped by the DI-confidence veto, though the same word read at 0.975 was kept; it is now kept.
-  A partly struck word beside a fully struck word on the same line could lose its strike
-  geometry; it now keeps it. Line support could miss a short word's own stroke when the detected
+  A partly struck word the OCR-confidence rescue passed could lose its strike geometry beside a
+  word its line crosses; it now keeps it. Line support could miss a short word's own stroke when the detected
   line ran a few px off it; it now reads the stroke where the word's geometry was found.
 - **Pages an `ocr` backend read beside a partial `di_result` ran under the Azure DI calibration,**
   which misreads that backend's confidences. `detect_pdf` now picks the default calibration per
