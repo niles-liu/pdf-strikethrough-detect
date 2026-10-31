@@ -141,8 +141,8 @@ def strip_struck(md):
 
     Caveat: text that itself contains a literal '~~' is ambiguous in markdown form; prefer
     :func:`page_clean_text`, which works from the word records and has no such ambiguity."""
-    from .native import strip_struck_markdown
-    return strip_struck_markdown(md).strip()
+    from .native import _strip_struck
+    return _strip_struck(md, emphasis=False).strip()     # this module writes no emphasis markup
 
 
 def mark_provenance(md, template="[deleted: {}]"):

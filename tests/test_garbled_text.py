@@ -56,6 +56,16 @@ def test_real_text_is_not_flagged(script):
         assert not _garbled_text(word, ["SomeFont"] * len(word)), word
 
 
+@pytest.mark.parametrize("script", sorted(REAL))
+def test_real_text_struck_with_overlays_is_not_flagged(script):
+    # a strikethrough generator writes U+0336 after every character, so one lands between a
+    # consonant and its vowel sign; the word is struck, not garbled
+    for word in REAL[script].split():
+        struck = "".join(c + "̶" for c in word)
+        assert not _garbled_text(struck), word
+        assert not _garbled_text(word[:2] + "".join(c + "̶" for c in word[2:])), word
+
+
 def test_visual_order_vowel_sign_and_lone_symbols_are_not_flagged():
     # extraction in visual order puts a vowel sign before its consonant, also right after a digit
     # or a Latin letter ('2015ലെ' reads '2015െല'); a lone vowel sign is what a split cluster leaves
@@ -262,6 +272,24 @@ def test_cli_on_garbled_drop_is_ignored_in_batch_mode(tmp_path, capsys):
     assert cli.main(["detect", str(src), "--jsonl", str(out), "--on-garbled", "drop"]) == 0
     assert "warning: --on-garbled is ignored in batch mode" in capsys.readouterr().err
     assert cli.main(["detect", str(src), "--jsonl", str(out)]) == 0
+    assert "--on-garbled" not in capsys.readouterr().err   # not for the default
+
+
+def test_cli_on_garbled_warns_where_there_is_no_text_layer(tmp_path, capsys):
+    import io
+    import zipfile
+    ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml",
+                   f'<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="{ns}"><w:body>'
+                   f'<w:p><w:r><w:rPr><w:strike/></w:rPr><w:t>gone</w:t></w:r></w:p>'
+                   f'</w:body></w:document>')
+    src = tmp_path / "a.docx"
+    src.write_bytes(buf.getvalue())
+    assert cli.main(["detect", str(src), "--on-garbled", "drop"]) == 0
+    assert "warning: --on-garbled does not apply to a .docx; ignored" in capsys.readouterr().err
+    assert cli.main(["detect", str(src)]) == 0
     assert "--on-garbled" not in capsys.readouterr().err   # not for the default
 
 

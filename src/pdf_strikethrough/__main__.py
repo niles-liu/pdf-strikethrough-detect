@@ -292,9 +292,11 @@ def _cmd_detect_single(args, path):
 
     if args.dump_crops:
         from . import active
-        if args.telemetry:
-            print("warning: --telemetry does not apply with --dump-crops; ignored",
-                  file=sys.stderr)
+        for val, flag in ((args.telemetry, "--telemetry"),
+                          (args.on_garbled != "keep", "--on-garbled")):
+            if val:
+                print(f"warning: {flag} does not apply with --dump-crops; ignored",
+                      file=sys.stderr)
         dc_source = sys.stdin.buffer.read() if path == "-" else path
         try:
             summary = active.dump_crops(
@@ -313,8 +315,11 @@ def _cmd_detect_single(args, path):
 
     if is_image:
         from PIL import Image
-        if page_subset is not None:
-            print("warning: --pages does not apply to an image file; ignored", file=sys.stderr)
+        for val, flag in ((page_subset is not None, "--pages"),
+                          (args.on_garbled != "keep", "--on-garbled")):
+            if val:
+                print(f"warning: {flag} does not apply to an image file; ignored",
+                      file=sys.stderr)
         try:
             res = st.detect_image_file(path, ocr=ocr, words_by_page=words_by_page,
                                        scan_config=scan_config, dpi=args.dpi,
@@ -462,7 +467,8 @@ def _cmd_detect_docx(args, path):
                       (args.markdown, "--markdown"), (args.clean_text, "--clean-text"),
                       (args.provenance, "--provenance"), (args.pages, "--pages"),
                       (args.di_result, "--di-result"), (args.textract_result, "--textract-result"),
-                      (args.docai_result, "--docai-result"), (args.dump_crops, "--dump-crops")):
+                      (args.docai_result, "--docai-result"), (args.dump_crops, "--dump-crops"),
+                      (args.on_garbled != "keep", "--on-garbled")):
         if val:
             print(f"warning: {flag} does not apply to a .docx; ignored", file=sys.stderr)
     t0 = time.perf_counter()
@@ -589,6 +595,8 @@ def _cmd_detect_batch(args, inputs):
             except OSError as e:             # results go on; telemetry stops for this run
                 print(f"warning: --telemetry: cannot write {args.telemetry} after {tel_n} "
                       f"line(s): {e}; no more telemetry this run", file=sys.stderr)
+                with contextlib.suppress(OSError):
+                    tf.close()               # its unwritten bytes would fail again on the close
                 tf = None
         if "error" in pl:
             errors += 1

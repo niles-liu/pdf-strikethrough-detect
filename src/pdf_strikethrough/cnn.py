@@ -436,7 +436,8 @@ def _load_model():
 
 
 def get_model_meta():
-    """Model metadata: {version, p_hi, p_lo, runtime, sha256}. Loads the model on first call.
+    """Model metadata: {version, p_hi, p_lo, runtime, sha256}, plus any other keys the model's meta
+    file holds (an ONNX model's crop geometry). Loads the model on first call.
     ``sha256`` is the hex digest of the model file loaded (``strike_verdict_cnn.onnx``, or the
     ``.pt``), the digest :func:`ensure_model` verifies. An ONNX model that keeps weights in
     external data files also gets ``external_data``: one ``{location, sha256}`` per file, sorted by
