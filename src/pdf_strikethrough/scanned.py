@@ -15,8 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .lines import (RENDER_DPI, STEM_MIN_RUNS, THIN_STROKE_RUN_PX, ink_mask, rule_mask,
-                    strike_lines, to_gray_u8)
+from .lines import (MAX_ANGLE_DEG, MAX_DIAG_ANGLE_DEG, RENDER_DPI, STEM_MIN_RUNS,
+                    THIN_STROKE_RUN_PX, ink_mask, rule_mask, strike_lines, to_gray_u8)
 
 # --- per-word classification tunables (geometry; engine-independent) ---
 STRIKE_TOL          = 0.16   # half-width of the strike band (fraction of word-box height)
@@ -81,6 +81,9 @@ PAIR_LEN_RATIO      = 0.5    # ...and only when the two strokes run about as lon
 PAIR_MAX_WOBBLE     = 1.3    # ...and under a line straighter than this (wobble, px at RENDER_DPI;
                              # unmeasured counts as not straight): a printed line runs straight, a
                              # pen stroke wobbles. 0 turns it off
+DIAG_MIN_WCOV       = 0.90   # with ScanConfig.max_angle_deg above lines.MAX_ANGLE_DEG, a line
+                             # leaning more than that must run across this share of the word's
+                             # box: a glyph's own diagonal ends inside its letter
 FILL_STRONG         = 0.87   # fill >= this: line accepted on geometry alone
 FILL_UNMEASURED     = 0.80   # score_struck's fill for a caller-built line without one
 TABLE_RULE_MIN_LEN_IN = 0.75 # in-band solid line >= this + fill>=FILL_STRONG: a table rule, not a
@@ -168,7 +171,19 @@ class ScanConfig:
     Such a crop is mostly padding at the CNN's input width, so a struck "of" or "a" scores low
     inside a confirmed struck run. With ``confidence_gating``, a word read above ``max_clean_conf``
     is never kept. Kept records carry ``line_support: True``. See
-    :func:`pdf_strikethrough.detect._line_support`."""
+    :func:`pdf_strikethrough.detect._line_support`.
+
+    ``max_angle_deg`` (**experimental**; 25 by default, from 25 to 60) is the steepest stroke the
+    line finder returns (``strike_lines(max_angle_deg=...)``). Above 25 a diagonal strike can be
+    found, and the near-horizontal lines stay those found at 25. Since a glyph's own diagonal (A,
+    V, W, X, K, N, Z, v, w, x, y, z, 4, 7, /) leans the same way, a word under a line leaning
+    more than 25 degrees then needs glyph ink on both sides of the line itself, read column by
+    column with the line's own pixels left out, and gets no OCR-confidence rescue; the line must
+    run across at least DIAG_MIN_WCOV of the word's box; none of the retries for a horizontal
+    line is tried; and a record found only on such lines is at most ``review``: StrikeNet must
+    confirm it, as it must an ``auto`` one, and one whose crop it cannot score is dropped. At 25 a
+    caller-built line leaning more is read as before. It costs time: the line finder sweeps 9
+    kernel angles at 60 against 3 at 25."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # a struck word OCRs at or below this: the chain gate
                                       # (fill<FILL_STRONG), the DI-confidence veto, line support
@@ -181,8 +196,15 @@ class ScanConfig:
     glyph_ink: bool = True            # ink tests ignore long horizontal runs (rules, underlines)
     line_support: bool = True         # keep a short unconfirmed word inside a confirmed struck run
                                       # (detect._line_support)
+    max_angle_deg: float = MAX_ANGLE_DEG   # the steepest line found; above 25, diagonal strikes
 
     def __post_init__(self):
+        v = self.max_angle_deg
+        if (isinstance(v, bool) or not isinstance(v, numbers.Real)
+                or not MAX_ANGLE_DEG <= v <= MAX_DIAG_ANGLE_DEG):
+            raise ValueError("ScanConfig.max_angle_deg must be a number in "
+                             f"[{MAX_ANGLE_DEG}, {MAX_DIAG_ANGLE_DEG}], got {v!r}")
+        object.__setattr__(self, "max_angle_deg", float(v))
         # every number here is a confidence, a page fraction or a probability: a float in [0, 1]
         for name in ("max_clean_conf", "inkfail_max_conf", "page_edited_min", "cnn_p_hi",
                      "cnn_p_lo"):
@@ -286,6 +308,28 @@ def _ink_above_below(ink, line_ends_px, line_run_px, word_bbox_px, gap=None, ski
     above = ink[top0:top1, cols].any(axis=0).mean() if top1 > top0 else 0.0
     below = ink[bot0:bot1, cols].any(axis=0).mean() if bot1 > bot0 else 0.0
     return float(above), float(below)
+
+
+def _ink_beside_steep(ink, line_ends_px, line_run_px, word_bbox_px):
+    """:func:`_ink_above_below` for a line leaning more than lines.MAX_ANGLE_DEG: per column
+    of the word's overlap with the line, glyph ink on each side of the line itself, the band within
+    run/2 + INK_GAP_PX across the line (its own pixels) left out."""
+    (sx, sy), (ex, ey) = line_ends_px
+    if ex < sx:
+        (sx, sy), (ex, ey) = (ex, ey), (sx, sy)
+    wx0, wy0, wx1, wy1 = word_bbox_px
+    H, W = ink.shape
+    c0, c1 = max(0, int(max(sx, wx0))), min(W, int(min(ex, wx1)) + 1)
+    r0, r1 = max(0, int(wy0)), min(H, int(wy1) + 1)
+    if c1 <= c0 or r1 <= r0 or min(ex, wx1) <= max(sx, wx0):
+        return 0.0, 0.0
+    rr, cc = np.mgrid[r0:r1, c0:c1]
+    dx, dy = ex - sx, ey - sy
+    d = ((rr - sy) * dx - (cc - sx) * dy) / max(float(np.hypot(dx, dy)), 1e-9)   # + below
+    half = line_run_px / 2.0 + INK_GAP_PX
+    sub = np.asarray(ink[r0:r1, c0:c1], dtype=bool)
+    return (float((sub & (d < -half)).any(axis=0).mean()),
+            float((sub & (d > half)).any(axis=0).mean()))
 
 
 def _edge_runs(ink, line_ends_px, line_run_px, word_bbox_px, near, far):
@@ -677,6 +721,8 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
         ends = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
         (sx, sy), (ex, ey) = ends
         short_line = ln.get("len_in", 0.0) < INK_SHORT_LEN_IN
+        steep = (config.max_angle_deg > MAX_ANGLE_DEG                 # only when asked for
+                 and ln.get("angle_deg", 0.0) > MAX_ANGLE_DEG)
         # both fill tests can drop words, so an unmeasured fill triggers neither
         # (see _is_printed_rule)
         line_fill = ln.get("fill")
@@ -728,7 +774,10 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
             # `both_ink` requires substantial ink on both sides; `one_sided` is the underline/rule
             # signature (well on one side, ~none on the other) and is kept distinct so a real
             # strike over SPARSE text still reads as two-sided, not one.
-            above, below = _ink_above_below(side_ink, wends, run_px, wpx, gap, skip_full)
+            if steep:                       # its own pixels lie on both sides of one row
+                above, below = _ink_beside_steep(side_ink, wends, run_px, wpx)
+            else:
+                above, below = _ink_above_below(side_ink, wends, run_px, wpx, gap, skip_full)
             both_ink = above >= INK_MIN_FRAC and below >= INK_MIN_FRAC
             one_sided = _one_sided(above, below)
             if long_solid and config.glyph_ink and max(above, below) < INK_ONESIDE_MAX:
@@ -737,6 +786,10 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 # too this reads from INK_GAP_PX: from the bar's edges, a rule just past it would
                 # read as ink beside it.
                 one_sided = _one_sided(*_ink_above_below(ink, wends, run_px, wpx))
+            if steep:
+                # A diagonal needs glyph ink on both sides, with no OCR-confidence rescue: a
+                # glyph's own diagonal (the 7 in "74") has ink on one side only.
+                return in_band and both_ink, in_band, both_ink
             if (not in_band) or short_line:
                 # OCR damage is the tiebreaker — only meaningful when confidences are calibrated,
                 # so the rescue is off under confidence_free()
@@ -765,10 +818,12 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 best = (abs(off), off, txt, round(rel, 2), wcov)
             if abs(off) > INK_MAX_OFF or wcov < PARTIAL_MIN_WCOV:
                 continue
+            if steep and wcov < DIAG_MIN_WCOV:
+                continue
             wpx = (wx0 * pix_w, wy0 * pix_h, wx1 * pix_w, wy1 * pix_h)
             wends = ends
             passes, in_band, both_ink = ink_gate(off, ends, wpx, conf)
-            if not passes and snap_px:
+            if not passes and snap_px and not steep:
                 # The line may run a few px off the stroke (a thin or light one, stitched to glyph
                 # pieces), so the ink "below" it is under the glyphs. Try again at the stroke's row.
                 dy = _stroke_row_dy(ink, ends, run_px, max(x0, wpx[0]), min(x1, wpx[2]), snap_px)
@@ -776,8 +831,8 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                     wends = ((sx, sy + dy), (ex, ey + dy))
                     off += dy / max(wpx[3] - wpx[1], 1e-9)
                     passes, in_band, both_ink = ink_gate(off, wends, wpx, conf)
-            if (not passes and in_band and wcov >= MIN_WORD_XOVER and config.glyph_ink
-                    and INK_GAP_THICK_PX < INK_GAP_PX
+            if (not passes and not steep and in_band and wcov >= MIN_WORD_XOVER
+                    and config.glyph_ink and INK_GAP_THICK_PX < INK_GAP_PX
                     and ln.get("len_in", 0.0) <= INK_GAP_THICK_MAX_LEN_IN
                     and run_px > max(2.0, THIN_STROKE_RUN_PX * dpi / RENDER_DPI)
                     and (INK_GAP_THICK_STEM_RATIO <= 0
@@ -798,7 +853,8 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 # read as glyph ink on both sides.
                 passes, in_band, both_ink = ink_gate(off, wends, wpx, conf, INK_GAP_THICK_PX,
                                                      skip_full=True)
-            if (not passes and PAIR_REACH > 0 and wcov >= MIN_WORD_XOVER and config.glyph_ink
+            if (not passes and not steep and PAIR_REACH > 0 and wcov >= MIN_WORD_XOVER
+                    and config.glyph_ink
                     and (PAIR_MAX_LEN_IN <= 0 or ln.get("len_in", 0.0) <= PAIR_MAX_LEN_IN)
                     and (PAIR_MAX_RUN_PX <= 0
                          or run_px <= max(2.0, PAIR_MAX_RUN_PX * dpi / RENDER_DPI))
@@ -889,15 +945,17 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
         struck_words.extend(hits)
     # scored with the confidence term only when the chain gate could use confidences: with none on
     # the page, the term would cap every score at 0.60
-    return tagged, consolidate_struck(struck_words, tagged, use_conf=gating)
+    return tagged, consolidate_struck(struck_words, tagged, use_conf=gating,
+                                      diag=config.max_angle_deg > MAX_ANGLE_DEG)
 
 
-def consolidate_struck(hits, tagged, use_conf=True):
+def consolidate_struck(hits, tagged, use_conf=True, diag=False):
     """One record per WORD: union the char spans of all hits for that word (the detector often
     returns several overlapping fragments of one physical strike). Full vs partial is decided
     from the UNIONED char coverage: FULL_CHAR_COVER of the characters, and, when a hit's span was
     measured against glyph ink, the first and last character too. `use_conf=False` scores
-    without the OCR-confidence term."""
+    without the OCR-confidence term. With `diag` (ScanConfig.max_angle_deg above 25), a record
+    found only on lines leaning more than MAX_ANGLE_DEG is at most 'review'."""
     by_word = {}
     for h in hits:
         by_word.setdefault((h["bbox_frac"], h["text"]), []).append(h)
@@ -933,6 +991,9 @@ def consolidate_struck(hits, tagged, use_conf=True):
                        else ("review" if rec["score"] >= REVIEW_SCORE else "weak"))
         if rec["twin"] and rec["tier"] == "auto":
             rec["tier"] = "review"
+        if diag and rec["tier"] == "auto" and all(tagged[li].get("angle_deg", 0.0) > MAX_ANGLE_DEG
+                                         for li in rec["line_idx"]):
+            rec["tier"] = "review"             # found only on diagonals: StrikeNet decides
         out.append(rec)
     out.sort(key=lambda h: (round(h["bbox_frac"][1], 3), h["bbox_frac"][0]))
     return out
@@ -1029,7 +1090,10 @@ def analyze_scanned_page(gray, words, ink=None, config=ScanConfig.confidence_fre
     gray = to_gray_u8(gray)
     if ink is None:
         ink = ink_mask(gray)
-    lines = strike_lines(gray, dpi=dpi, ink=ink)
+    if config.max_angle_deg == MAX_ANGLE_DEG:
+        lines = strike_lines(gray, dpi=dpi, ink=ink)
+    else:
+        lines = strike_lines(gray, dpi=dpi, ink=ink, max_angle_deg=config.max_angle_deg)
     tagged, struck = classify_lines(lines, words, gray, ink=ink, config=config, dpi=dpi)
     struck = promote_context_orphans(struck, words)
     return tagged, struck

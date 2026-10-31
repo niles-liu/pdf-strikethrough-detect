@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`ScanConfig(max_angle_deg=...)`, experimental, lets the scanned path find diagonal
+  strikes.** The line finder keeps strokes leaning up to 25 degrees, which leaves out a slash
+  through a short token, such as a struck number. Set from 25 up to 60, with
+  `strike_lines(max_angle_deg=...)` underneath, steeper strokes are found too, kept apart from the
+  near-horizontal ones, which stay those found at 25: stitched by their distance from each other's
+  axis and their gap along it, only when they lean the same way, with `run_px` measured across
+  the stroke. With the limit above 25, a word under a line leaning more than 25 degrees needs
+  glyph ink on both sides of the line itself, read column by column without the line's own
+  pixels, with no OCR-confidence rescue; the line must run across at least 90% of its box
+  (`scanned.DIAG_MIN_WCOV`); the retries for a level line are not tried; and a record found only
+  on such lines is at most `review`. The default, 25, gives the previous output, a caller's steep
+  line included. The shipped StrikeNet confirms few diagonal strikes: on generated pages of short
+  tokens, strikes found rise from 4 and 8 to 20 and 18 of about 4,200 at 60, while the line
+  finder and its guards put about 63% of them to StrikeNet, against about 25% at 25. It costs time:
+  on print pages a scanned page's detection takes about twice as long at 45 and 2.6 times at 60,
+  OCR aside; the default costs nothing.
 - **`benchmarks/frontier/` holds a pre-registered benchmark against frontier models.** Can they do
   this package's job, finding struck text and keeping it out of the live text? `PLAN.md` gives the
   reasons and `PREREG.md` the binding protocol, tagged `prereg-1` (2026-10-16) and `prereg-2`

@@ -21,6 +21,8 @@ SOLID_GLYPHS glyph heights: a bold glyph's bar ends with its glyph.
 Attributing lines to words (which word was struck, char spans, partial strikes) needs word
 boxes from an OCR engine and lives in a separate layer.
 """
+import numbers
+
 import numpy as np
 from scipy import ndimage
 
@@ -31,6 +33,7 @@ SEG_LEN_IN        = 0.05          # straight-segment length for the orientation 
 GAP_BRIDGE_PX     = 8             # closing along the angle (bridges pen gaps within a fragment)
 ANGLE_STEP_DEG    = 15            # sweep 0..180 in these steps
 MAX_ANGLE_DEG     = 25            # near-horizontal only; drops vertical letter-stems (l, I, f, 1)
+MAX_DIAG_ANGLE_DEG = 60           # strike_lines(max_angle_deg=) at most this
 MAX_LINE_THICK_PX = 10            # pre-stitch PCA thickness cap
 PEEL_COVER        = 0.9           # second pass: a thicker fragment gives its fullest band this
                                   # wide when the band is inked over this share of it (0 = off)
@@ -393,17 +396,18 @@ def _along(line, others, tol):
     return total
 
 
-def _collect_fragments(ink, dpi, scale=1.0, peeled=None):
+def _collect_fragments(ink, dpi, scale=1.0, peeled=None, max_angle=MAX_ANGLE_DEG):
     """Per-angle opening + gap-bridging with PERMISSIVE per-fragment filters.
     Returns fragments as (start_xy, end_xy) endpoint pairs along the major axis.
     `scale` = dpi / RENDER_DPI rescales the pixel-space tunables (calibrated at 200 dpi).
     With a list as `peeled`, a fragment too thick to keep that fills a band end to end
-    (:func:`_peel`) has that band appended to it, not to the fragments returned."""
+    (:func:`_peel`) has that band appended to it, not to the fragments returned. Fragments
+    steeper than `max_angle` degrees are dropped."""
     seg = max(3, int(SEG_LEN_IN * dpi))
     gap_bridge = int(round(GAP_BRIDGE_PX * scale))
     frags = []
     for ang in range(0, 180, ANGLE_STEP_DEG):
-        if min(ang, 180 - ang) > MAX_ANGLE_DEG:
+        if min(ang, 180 - ang) > max_angle:
             continue
         mask = ndimage.binary_opening(ink, structure=line_kernel(seg, ang))
         if gap_bridge:
@@ -436,15 +440,28 @@ def _collect_fragments(ink, dpi, scale=1.0, peeled=None):
                     or length / max(thick, 0.5) < PRE_ASPECT):
                 continue
             angle = abs(np.degrees(np.arctan2(major[1], major[0])))
-            if min(angle, 180 - angle) > MAX_ANGLE_DEG:
+            if min(angle, 180 - angle) > max_angle:
                 continue
+            if min(ang, 180 - ang) > MAX_ANGLE_DEG and min(angle, 180 - angle) <= MAX_ANGLE_DEG:
+                continue            # a kernel past MAX_ANGLE_DEG adds steep fragments only
             out.append((c - major * length / 2, c + major * length / 2))
     return frags
 
 
-def _stitch_fragments(frags, dy=None, scale=1.0):
+def _is_steep(frag):
+    """Whether a fragment (start_xy, end_xy) leans more than MAX_ANGLE_DEG: found only when
+    strike_lines is given a larger `max_angle_deg`."""
+    (sx, sy), (ex, ey) = frag
+    a = abs(np.degrees(np.arctan2(ey - sy, ex - sx)))
+    return min(a, 180 - a) > MAX_ANGLE_DEG
+
+
+def _stitch_fragments(frags, dy=None, scale=1.0, steep=False):
     """Union-find merge of collinear fragments. Returns [(seg, member_fragments), ...] so failed
-    groups can be re-stitched tighter. `scale` rescales the pixel-space stitch tolerances."""
+    groups can be re-stitched tighter. `scale` rescales the pixel-space stitch tolerances. With
+    `steep` (fragments leaning more than MAX_ANGLE_DEG), a junction is judged by the next
+    fragment's distance from the line through this one, not by its rise: along a diagonal a gap
+    is a rise too, and two strokes crossing (an X) lean opposite ways and never join."""
     # floor the pixel-space stitch tolerances so they don't collapse below a couple of pixels at
     # low dpi (unfloored, dy falls under 2 px below about 67 dpi, the gap under 6 px below 46)
     dy = max(2.0, STITCH_DY_PX * scale) if dy is None else dy
@@ -476,7 +493,16 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
             if hi <= lo:
                 continue
             ok = (sx[lo:hi] - ex[oi]) <= max_gap
-            ok &= np.abs(ey[oi] - sy[lo:hi]) <= dy
+            if steep:
+                dx, dyy = ex[oi] - sx[oi], ey[oi] - sy[oi]
+                norm = max(float(np.hypot(dx, dyy)), 1e-9)
+                # the gap along this fragment's axis, not in x
+                ok = ((sx[lo:hi] - ex[oi]) * dx + (sy[lo:hi] - ey[oi]) * dyy) / norm <= max_gap
+                # the next start's distance from this fragment's line, and the same lean
+                ok &= np.abs((sx[lo:hi] - ex[oi]) * dyy - (sy[lo:hi] - ey[oi]) * dx) / norm <= dy
+                ok &= np.sign(ey[lo:hi] - sy[lo:hi]) == np.sign(dyy)
+            else:
+                ok &= np.abs(ey[oi] - sy[lo:hi]) <= dy
             # j inside i: dedup handles that overlap
             ok &= ~((sx[lo:hi] > sx[oi]) & (ex[lo:hi] < ex[oi]))
             for j in np.flatnonzero(ok):
@@ -495,7 +521,7 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
     return merged
 
 
-def strike_lines(gray, dpi=RENDER_DPI, ink=None):
+def strike_lines(gray, dpi=RENDER_DPI, ink=None, max_angle_deg=None):
     """Detect near-horizontal straight-ish lines (strikes / underlines / rules) on a grayscale
     page raster (uint8 HxW ndarray). Returns dicts:
         {bbox_px, ends_px, len_in, angle_deg, fill, run_px, straightness}
@@ -505,9 +531,24 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     tunables and the pixel-space tunables (calibrated at 200 dpi) rescale from it. Pass `ink`
     (a bool mask) to reuse a precomputed binarization.
 
+    `max_angle_deg` (**experimental**; None is MAX_ANGLE_DEG, 25; from 25 to MAX_DIAG_ANGLE_DEG,
+    60, else ``ValueError``) is the steepest line returned. Above 25, lines leaning more are found
+    too (the kernels sweep in ANGLE_STEP_DEG steps up to it), stitched and kept apart from the
+    near-horizontal ones, which stay those found at 25: joined by their distance from each
+    other's axis and their gap along it, with `run_px` the stroke's thickness across it (its
+    vertical runs times the cosine).
+
     This finds strokes, not struck words: labelling a line as strike-vs-underline-vs-rule and
     attaching it to words requires OCR word boxes (a separate layer).
     """
+    if max_angle_deg is None:
+        max_angle = float(MAX_ANGLE_DEG)
+    elif (isinstance(max_angle_deg, bool) or not isinstance(max_angle_deg, numbers.Real)
+          or not MAX_ANGLE_DEG <= max_angle_deg <= MAX_DIAG_ANGLE_DEG):     # NaN fails too
+        raise ValueError(f"max_angle_deg must be None or a number in [{MAX_ANGLE_DEG}, "
+                         f"{MAX_DIAG_ANGLE_DEG}], got {max_angle_deg!r}")
+    else:
+        max_angle = float(max_angle_deg)
     gray = to_gray_u8(gray)
     if ink is None:
         ink = ink_mask(gray)
@@ -524,11 +565,19 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     solid_k = max(1, int(round(20 * scale)))  # how far the glyph stems are followed, scaled
     second = SOLID_GLYPHS > 0
     peeled = [] if second and PEEL_COVER > 0 else None
-    frags = _collect_fragments(ink, dpi, scale, peeled=peeled)
-    groups = _stitch_fragments(frags, scale=scale)
+    frags = _collect_fragments(ink, dpi, scale, peeled=peeled, max_angle=max_angle)
+    if max_angle > MAX_ANGLE_DEG:
+        level_frags = [f for f in frags if not _is_steep(f)]
+        groups = _stitch_fragments(level_frags, scale=scale)
+        steep_groups = _stitch_fragments([f for f in frags if _is_steep(f)], scale=scale,
+                                         steep=True)
+    else:
+        level_frags = frags                     # no _is_steep call at the default
+        groups = _stitch_fragments(frags, scale=scale)
+        steep_groups = []
     verdicts = {}                             # line ends -> measure(), shared by both passes
 
-    def measure(start, end):
+    def measure(start, end, steep=False):
         """(verdict, m): "kept", "stem" (rejected by the stem test alone) or, for a line rejected
         otherwise, whether a tighter re-stitch may salvage its group; and the measurements a kept
         line is built from."""
@@ -538,7 +587,10 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
             return False, None
         u = vec / max(length, 1e-9)
         angle = float(min(a := abs(np.degrees(np.arctan2(u[1], u[0]))), 180 - a))
-        if angle > MAX_ANGLE_DEG:
+        lo, hi = (MAX_ANGLE_DEG, max_angle) if steep else (-1.0, min(max_angle, MAX_ANGLE_DEG))
+        # each kind its own angles, a level line's as the release's; a steep line is one
+        # reported (rounded) over MAX_ANGLE_DEG
+        if not (lo < round(angle, 1) if steep else lo < angle) or angle > hi:
             return True, None
         center = (start + end) / 2
         fill = _spine_fill(ink, center, u, length, fill_halfwidth)
@@ -546,6 +598,8 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
             return True, None
         prof = _spine_profile(ink, center, u, length)
         run_px = _spine_run_thickness(ink, center, u, length, prof=prof)
+        if angle > MAX_ANGLE_DEG:          # a vertical run across a leaning stroke is longer
+            run_px *= float(np.cos(np.radians(angle)))
         if run_px > max_run:
             return True, None
         m = (vec, length, u, angle, center, fill, run_px, prof)
@@ -559,16 +613,16 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
                 return "stem", m
         return "kept", m
 
-    def evaluate(start, end, solid=False):
+    def evaluate(start, end, solid=False, steep=False):
         """(line, salvage): the line dict or None, and whether a tighter re-stitch may salvage the
         group it spans ("stem" when the stem test alone rejected the line). With `solid` (the
         second pass), such a line is kept when it runs on unbroken across the glyphs, and a line
         the first pass kept is not returned again; with `solid="peel"`, every line must be thick
         and run so."""
-        key = (float(start[0]), float(start[1]), float(end[0]), float(end[1]))
+        key = (float(start[0]), float(start[1]), float(end[0]), float(end[1]), steep)
         seen = key in verdicts                 # measured before, in either pass
         if not seen:
-            verdicts[key] = measure(start, end)
+            verdicts[key] = measure(start, end, steep)
         verdict, m = verdicts[key]
         if solid and seen and verdict == "kept":
             return None, False
@@ -608,7 +662,7 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
             "_len": length,
         }, False
 
-    def candidates(groups, solid=False, wanted=None, held=None):
+    def candidates(groups, solid=False, wanted=None, held=None, steep=False):
         """Lines from stitched groups, a group rejected whole re-stitched tighter. With `wanted`,
         only from groups holding one of those fragments; with a list as `held`, each group where
         the stem test alone rejected a line is appended to it."""
@@ -617,7 +671,7 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
             (start, end), members = group
             if wanted is not None and not any(id(m) in wanted for m in members):
                 continue
-            cand, salvage = evaluate(start, end, solid)
+            cand, salvage = evaluate(start, end, solid, steep)
             stem = salvage == "stem"
             if cand is not None:
                 cands.append(cand)
@@ -626,10 +680,11 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
                 # that one to split anything, and floored at 2 px it rejoins a stroke to a rule
                 # just below it at 100 dpi
                 for (s2, e2), sub_members in _stitch_fragments(members, dy=STITCH_DY_TIGHT * scale,
-                                                               scale=scale):
+                                                               scale=scale,
+                                                               steep=steep):
                     if wanted is not None and not any(id(m) in wanted for m in sub_members):
                         continue
-                    sub, why = evaluate(s2, e2, solid)
+                    sub, why = evaluate(s2, e2, solid, steep)
                     if sub is not None:
                         cands.append(sub)
                     stem = stem or why == "stem"
@@ -675,14 +730,24 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     # fragments on their rows; a line through such a band must be thick and pass that test too.
     # A thin line there is mostly a rule laid along the tops of the letters, merged with them.
     extra = candidates(held, solid=True) if held else []
+    if peeled and max_angle > MAX_ANGLE_DEG:
+        peeled = [p for p in peeled if not _is_steep(p)]     # level bands only
     if peeled:
         reach = 2 * max(2.0, STITCH_DY_PX * scale)
         ys = np.array([(a[1] + b[1]) / 2 for a, b in peeled])
-        near = [f for f in frags if np.abs(ys - (f[0][1] + f[1][1]) / 2).min() <= reach]
+        near = [f for f in level_frags if np.abs(ys - (f[0][1] + f[1][1]) / 2).min() <= reach]
         extra += candidates(_stitch_fragments(near + peeled, scale=scale), solid="peel",
                             wanted={id(f) for f in peeled})
     if extra:
         kept = keep(extra, kept, along=(max(2.0, STITCH_DY_PX * scale), EXTRA_ALONG_MAX))
+    # steep lines kept apart from the level ones, found after them, so the level lines are
+    # those the default finds
+    steep_held = [] if second else None
+    steep_kept = keep(candidates(steep_groups, held=steep_held, steep=True), [])
+    if steep_held:
+        steep_kept = keep(candidates(steep_held, solid=True, steep=True), steep_kept,
+                          along=(max(2.0, STITCH_DY_PX * scale), EXTRA_ALONG_MAX))
+    kept = kept + steep_kept
     for c in kept:
         del c["_len"]
     return kept
