@@ -87,7 +87,7 @@ All notable changes to this project are documented here. The format follows
   strikes another confirmed word with strike geometry, and line support no longer reads
   confidences. On 472 printed pages with DI words (newly generated synthetic pages, Senate bills
   published before the frontier benchmark's cutoff and the dev pages of its public redline
-  corpus), struck sub-tokens found rose from 17,663 to 19,113 of 21,492, with 203 live sub-tokens
+  corpus), struck sub-tokens found rose from 17,663 to 19,116 of 21,492, with 203 live sub-tokens
   marked where 199 were. On the private ruled-forms corpus false strikes rose from 123 to 133
   under the default calibration and from 25 to 26 with `ruled_forms(rescue_clean_chains=False)`,
   recall unchanged; on BRESSAY's handwritten pages with DI words, 205 live words of 29,820 are
