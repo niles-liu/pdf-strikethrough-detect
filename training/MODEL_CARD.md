@@ -49,13 +49,13 @@ Full architecture: the project [README](https://github.com/niles-liu/pdf-striket
 ## Evaluation
 
 Measured on the project's reproducible **10-document public regulatory-redline corpus** (US
-Copyright Office, FDIC, CEQ ×2, EPA ×3, California CCPA/CPPA, Gretna LA development code; 55.2k
+Copyright Office, FDIC, CEQ ×2, EPA ×3, California CCPA/CPPA, Gretna LA development code; 55.7k
 struck words, each `sha256`-pinned). Reproduce with `benchmarks/scanned_recovery.py`.
 
 | Metric | Value | Source |
 |---|---|---|
-| Scanned-path strike recovery (RapidOCR) | **96%** | `scanned_recovery.py`, 3 docs / 24 pages / 2,170 known strikes |
-| Scanned-path strike recovery (Azure DI) | **96%** with `confidence_free()`; 91% with the default DI calibration | same harness, Azure Document Intelligence words |
+| Scanned-path strike recovery (RapidOCR) | **97.3%** | `scanned_recovery.py`, 3 docs / 24 pages / 2,170 known strikes |
+| Scanned-path strike recovery (Azure DI) | **97.9%** with `confidence_free()`; 95.2% with the default DI calibration | same harness, Azure Document Intelligence words |
 | Native vector detections independently confirmed by the flag signal | 99.8% | `confirmation_rate.py` (context; native path, not this model) |
 
 The two scanned-path figures measure the whole pipeline (stroke geometry, OCR words and this model
@@ -108,8 +108,9 @@ Full loop and label format: [`training/README.md`](https://github.com/niles-liu/
 
 ## Limitations
 
-- **Handwritten / freehand strikes** are the main known gap: untested, and nothing records that the
-  model saw any in training, so a wavy pen scribble or heavy cross-out may be missed.
+- **Handwritten / freehand strikes** are the main known gap: the whole pipeline finds under 5% of
+  the struck words on BRESSAY's handwritten pages, and nothing records that the model saw any in
+  training, so a wavy pen scribble or heavy cross-out is usually missed.
 - **Horizontal, left-to-right text only.** Vertical writing modes (CJK/Mongolian) and RTL strike
   axes are out of scope.
 - The model only sees word crops the geometry stage flags as candidates; it does not itself find

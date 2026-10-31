@@ -719,8 +719,8 @@ def main(argv=None):
                         "backend")
     d.add_argument("--scan-config", dest="scan_config", default="auto",
                    choices=["auto", "azure-di", "confidence-free"],
-                   help="scanned-page calibration ('auto' picks azure-di with --di-result, "
-                        "confidence-free with --ocr, else the default)")
+                   help="scanned-page calibration ('auto' picks azure-di on the pages --di-result "
+                        "covers, confidence-free with --ocr, else the default)")
     d.add_argument("--dpi", type=_positive_int, default=None,
                    help="raster DPI for scanned pages (default: 200 for PDFs; read from the image "
                         "metadata for image files, else 200)")
