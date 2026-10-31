@@ -121,3 +121,23 @@ def test_fix_a_corroborated_high_conf_word_survives_veto(monkeypatch):
     by = {r["text"]: r for r in recs}
     assert by.get("struck", {}).get("final"), (
         f"corroborated high-conf strike was wrongly vetoed: {recs}")
+
+
+def test_fix_a_veto_spares_a_word_on_a_line_that_strikes_another_with_geometry(monkeypatch):
+    """A crisp printed strike through two words DI reads at 0.99: one has ink on both sides of the
+    bar, the other too little ink at it to show strike geometry. The line is a strike, so the veto
+    spares the second word too; alone on its own bar it is still dropped (the test above)."""
+    _saturated_cnn(monkeypatch)
+    gray = _blank()
+    _glyphs(gray, 100, 380, 150, 250)           # ink on both sides of the bar
+    _glyphs(gray, 420, 700, 150, 250, step=60)  # sparse: no strike geometry of its own
+    gray[198:201, 100:700] = 0
+    H, W = gray.shape
+    words = [Word("struck", (100 / W, 150 / H, 380 / W, 250 / H), confidence=0.99),
+             Word("words", (420 / W, 150 / H, 700 / W, 250 / H), confidence=0.99)]
+    _tagged, struck = analyze_scanned_page(gray, words, config=ScanConfig.azure_di(), dpi=DPI)
+    geom = {s["text"]: s.get("geom_corroborated") for s in struck}
+    assert geom == {"struck": True, "words": False}, struck
+    by = {r["text"]: r for r in detect.detect_scanned_image(gray, words,
+                                                            config=ScanConfig.azure_di(), dpi=DPI)}
+    assert by["struck"]["final"] and by["words"]["final"] and not by["words"].get("conf_veto")

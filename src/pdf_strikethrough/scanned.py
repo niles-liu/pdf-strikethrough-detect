@@ -131,12 +131,16 @@ REVIEW_SCORE = 0.20
 
 @dataclass(frozen=True)
 class ScanConfig:
-    """Confidence calibration for the scanned classifier. Defaults match Azure Document
-    Intelligence (struck words OCR at 0.43-0.94, clean text at 0.976-1.0). The functions that take
-    one default to ``confidence_free()`` instead, except ``detect_pdf`` with a ``di_result``.
+    """Confidence calibration for the scanned classifier. The defaults are the Azure Document
+    Intelligence calibration, built on degraded ruled forms, where DI reads struck words at
+    0.43-0.94 and clean text at 0.976-1.0; on a crisp printed scan it reads struck words as clean.
+    So ``ScanConfig(...)`` keeps confidence gating on whatever else it sets: for another engine
+    start from ``confidence_free(...)``, which takes the same fields. The functions that take a
+    config default to ``confidence_free()``, except ``detect_pdf`` on the pages a ``di_result``
+    covers.
 
     ``confidence_free()`` disables EVERY confidence-dependent decision: the chain-rejection
-    gate, the ink-fail rescue, the DI-confidence veto, line support's clean-text check, and the
+    gate, the ink-fail rescue, the DI-confidence veto, and the
     confidence term in the evidence score (the remaining geometry terms are renormalized so the
     auto/review/weak thresholds keep their meaning).
     Use it for engines whose confidence doesn't separate struck from clean text (e.g. RapidOCR);
@@ -163,19 +167,18 @@ class ScanConfig:
     underlines). Without it, an underlined word sitting on a table rule reads as struck, because
     the rule is ink below the underline. Ruled text is then judged like unruled text. A long solid
     line through a word's middle band with no glyph ink on either side is judged on all ink, so
-    one of a double rule stays a rule. ``dataclasses.replace(preset, glyph_ink=False)`` measures
-    on all ink, with no thick-bar retry and no double-strike pair test, which read glyph ink.
+    one of a double rule stays a rule. ``ScanConfig.confidence_free(glyph_ink=False)`` (or
+    ``dataclasses.replace(preset, glyph_ink=False)``) measures on all ink, with no thick-bar retry and no double-strike pair test, which read glyph ink.
 
     ``line_support`` (on by default; off in ``precision_first()``) keeps a word of three characters
     or fewer, not counting surrounding punctuation, that StrikeNet leaves unconfirmed when the line
     through it strikes confirmed words on both sides of it and the word has a stroke of its own.
     Such a crop is mostly padding at the CNN's input width, so a struck "of" or "a" scores low
-    inside a confirmed struck run. With ``confidence_gating``, a word read above ``max_clean_conf``
-    is never kept. Kept records carry ``line_support: True``. See
+    inside a confirmed struck run. Kept records carry ``line_support: True``. See
     :func:`pdf_strikethrough.detect._line_support`."""
     confidence_gating: bool = True
     max_clean_conf: float = 0.955     # a struck word OCRs at or below this: the chain gate
-                                      # (fill<FILL_STRONG), the DI-confidence veto, line support
+                                      # (fill<FILL_STRONG) and the DI-confidence veto
     inkfail_max_conf: float = 0.974   # a pixel-failing in-band hit is rescued at OCR conf <= this
     page_edited_min: float = 0.03     # frac words conf<=0.90 >= this -> page has pen edits
     cnn_p_hi: float | None = None     # override the CNN struck threshold; None = the model's
@@ -201,9 +204,10 @@ class ScanConfig:
             raise ValueError(f"ScanConfig.cnn_p_lo ({p_lo}) is above cnn_p_hi ({p_hi})")
 
     @classmethod
-    def azure_di(cls):
-        """Azure Document Intelligence calibration: the defaults, with confidence gating on."""
-        return cls()
+    def azure_di(cls, **kw):
+        """Azure Document Intelligence calibration: the defaults, with confidence gating on. `kw`
+        sets other fields."""
+        return cls(**{"confidence_gating": True, **kw})
 
     @classmethod
     def ruled_forms(cls, veto_printed_rules=True, **kw):
@@ -230,9 +234,10 @@ class ScanConfig:
         return cls(veto_printed_rules=veto_printed_rules, **kw)
 
     @classmethod
-    def confidence_free(cls):
-        """For engines whose confidence doesn't separate struck from clean (e.g. RapidOCR)."""
-        return cls(confidence_gating=False)
+    def confidence_free(cls, **kw):
+        """For engines whose confidence doesn't separate struck from clean (e.g. RapidOCR). `kw`
+        sets other fields: ``confidence_free(line_support=False)``."""
+        return cls(**{**kw, "confidence_gating": False})
 
     @classmethod
     def recall_first(cls, cnn_p_hi=0.50, **kw):

@@ -162,16 +162,18 @@ def test_live_short_word_between_words_struck_on_their_own_stays_live(short, mon
     assert by[short]["final"] and by[short]["line_support"]
 
 
-def test_clean_ocr_on_the_calibrated_path_is_never_supported(cnn_says):
-    """On the Azure DI calibration, clean text reads above max_clean_conf: a short word read at
-    0.99 is live whatever the line says; the same word read as damaged is kept."""
-    for conf, kept in ((0.99, False), (0.80, True)):
+def test_the_calibrated_path_supports_a_short_word_whatever_its_confidence(cnn_says):
+    """On the Azure DI calibration a short word under a crisp printed strike reads at 0.99, as
+    clean text does, so its confidence is no evidence: it is kept at 0.99 as at 0.80. Until 0.13.0
+    a word read above max_clean_conf was never kept; on printed scans that left 587 struck
+    sub-tokens of 21,492 live for 2 live ones it kept out."""
+    for conf in (0.99, 0.80):
         gray, words = _struck_run(confs=[0.70, conf, 0.72])
         cnn_says(words, [0.99, 0.30, 0.99])
         by = _by_text(detect.detect_scanned_image(gray, words, config=ScanConfig.azure_di(),
                                                   dpi=DPI))
         assert by["deleted"]["final"] and by["words"]["final"]
-        assert bool(by["of"]["final"]) is kept and bool(by["of"].get("line_support")) is kept
+        assert by["of"]["final"] and by["of"]["line_support"]
 
 
 @pytest.mark.parametrize("line_y", [141.0, 145.5])
@@ -223,3 +225,15 @@ def test_presets():
     assert ScanConfig.ruled_forms().line_support
     assert not ScanConfig.precision_first().line_support   # reports CNN-confirmed strikes only
     assert ScanConfig.precision_first(line_support=True).line_support
+
+
+def test_the_calibration_presets_take_the_other_fields():
+    # ScanConfig(line_support=False) is the Azure DI calibration; another engine's caller starts
+    # from confidence_free(...) to turn one switch off without turning confidence gating on
+    off = ScanConfig.confidence_free(line_support=False)
+    assert not off.confidence_gating and not off.line_support
+    assert not ScanConfig.confidence_free(confidence_gating=True).confidence_gating
+    di = ScanConfig.azure_di(glyph_ink=False)
+    assert di.confidence_gating and not di.glyph_ink
+    assert ScanConfig.azure_di() == ScanConfig() and ScanConfig.confidence_free() == off.__class__(
+        confidence_gating=False)
