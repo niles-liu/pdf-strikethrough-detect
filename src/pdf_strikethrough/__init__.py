@@ -1,8 +1,8 @@
-"""pdf_strikethrough — detect struck-through (deleted) text in PDFs and scanned document images.
+"""pdf_strikethrough: detect struck-through (deleted) text in PDFs and scanned document images.
 
 Quick start
 -----------
-Native / born-digital PDF (strikethroughs are vector drawings — detection is EXACT, no OCR):
+Native / born-digital PDF (strikethroughs are vector drawings, so detection is EXACT, no OCR):
 
     import pdf_strikethrough as st
     for w in st.strikethroughs_in_pdf("contract.pdf"):
@@ -11,15 +11,12 @@ Native / born-digital PDF (strikethroughs are vector drawings — detection is E
 
 Any PDF (routes native/scanned per page; scanned needs an OCR backend):
 
-    from pdf_strikethrough.ocr import rapidocr_backend
-    from pdf_strikethrough.scanned import ScanConfig
-    res = st.detect_pdf("scan.pdf", ocr=rapidocr_backend(),
-                        scan_config=ScanConfig.confidence_free())
+    res = st.detect_pdf("scan.pdf", ocr=st.rapidocr_backend())
     struck = [w for w in res["words"] if w["final"]]
 
-Beyond PDFs — an image file, a Word document, or a pre-fetched cloud-OCR result:
+Beyond PDFs: an image file, a Word document, or a pre-fetched cloud-OCR result:
 
-    st.detect_image_file("scan.tiff", ocr=rapidocr_backend())   # .png/.jpg/.tiff (multi-page)
+    st.detect_image_file("scan.tiff", ocr=st.rapidocr_backend())   # .png/.jpg/.tiff (multi-page)
     st.strikethroughs_in_docx("contract.docx")                  # w:strike + tracked w:del
     st.detect_pdf("doc.pdf", words_by_page=st.words_from_textract(resp))   # Textract / DocAI
 
@@ -36,7 +33,7 @@ from . import (active, calibration, cnn, detect, docx, lines, markdown, native, 
 from .active import dump_crops
 from .cnn import (ensure_model, get_model_meta, score_crops, score_word, std_crop, verdict_of,
                   word_crop_px)
-from .detect import (EncryptedPdfError, OcrRequiredError, apply_cnn_verdict,
+from .detect import (EncryptedPdfError, GarbledTextWarning, OcrRequiredError, apply_cnn_verdict,
                      classify_page_source, detect_image_file, detect_pdf, detect_scanned_image)
 from .docx import strikethroughs_in_docx
 from .lines import ink_mask, strike_lines, to_gray_u8
@@ -46,7 +43,7 @@ from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di
                   words_from_docai, words_from_textract)
 from .overlay import render_overlay, save_overlays
 from .scanned import ScanConfig, analyze_scanned_page
-from .types import DetectResult, Passage, StruckWord
+from .types import DetectResult, GarbledWord, Passage, StruckWord, Telemetry
 
 # Library logging etiquette: attach a NullHandler so importing the package never emits records on
 # its own. Diagnostics (page routing, per-page record counts, OCR/CNN timing) are logged at DEBUG
@@ -55,7 +52,7 @@ from .types import DetectResult, Passage, StruckWord
 # ``warnings`` stays reserved for caller-facing hazards (silent-[] on scans, scanned-fallback, ...).
 _logging.getLogger("pdf_strikethrough").addHandler(_logging.NullHandler())
 
-__version__ = "0.12.1"
+__version__ = "0.13.0"
 
 __all__ = [
     # high-level
@@ -68,18 +65,18 @@ __all__ = [
     # scanned geometry + classifier
     "strike_lines", "ink_mask", "to_gray_u8", "analyze_scanned_page", "ScanConfig",
     "classify_page_source", "apply_cnn_verdict",
-    # errors
-    "OcrRequiredError", "EncryptedPdfError",
+    # errors and warnings
+    "OcrRequiredError", "EncryptedPdfError", "GarbledTextWarning",
     # OCR (backends + pre-fetched cloud-result adapters)
     "Word", "rapidocr_backend", "tesseract_backend", "words_from_azure_di",
     "words_from_textract", "words_from_docai",
     # CNN
     "score_word", "score_crops", "std_crop", "word_crop_px", "verdict_of", "get_model_meta",
     "ensure_model",
-    # active learning + calibration
+    # active learning
     "dump_crops",
     # typing
-    "StruckWord", "DetectResult", "Passage",
+    "StruckWord", "DetectResult", "Passage", "GarbledWord", "Telemetry",
     # submodules
     "active", "calibration", "cnn", "docx", "lines", "native", "ocr", "overlay", "scanned",
     "detect", "markdown", "types",
@@ -96,10 +93,7 @@ def open_pdf(source):
 
 def render_page_gray(page, dpi=lines.RENDER_DPI):
     """Render a fitz page to a grayscale uint8 (H, W) numpy array."""
-    import numpy as np
-    import pymupdf
-    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
-    return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+    return detect._render_gray(page, dpi)
 
 
 def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
@@ -132,9 +126,23 @@ def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
 
 
 def clean_markdown(source) -> str:
-    """Markdown for a born-digital PDF with struck (deleted) spans removed — the surviving text.
+    """Markdown for a born-digital PDF with struck (deleted) spans removed: the surviving text.
     Requires the ``[markdown]`` extra (pymupdf4llm); raises ImportError with the pip command
-    otherwise. For an extra-free equivalent use ``detect_pdf(source)["clean_text"]``."""
+    otherwise. For an extra-free equivalent use ``detect_pdf(source)["clean_text"]``.
+
+    The spans removed are the ones pymupdf4llm marks ``~~``: the characters MuPDF flags as struck
+    out, the signal ``method="flag"`` reads, not this package's vector detector. MuPDF can also
+    flag the character a strike ends against when no space separates them, so the ``M`` of a
+    ``May`` printed straight after a struck ``December`` goes too; the next letter of a partly
+    struck word and the punctuation after a struck word can go the same way. PyMuPDF 2.0 (MuPDF
+    1.28.5) does this more often than versions below it, also when the line ends within half its
+    stroke width of the next character. ``detect_pdf``'s ``clean_text``, with ``method="vector"``
+    (the default) or ``"both"``, stops at the struck characters.
+
+    Characters struck with U+0336 overlays have no drawn line for MuPDF to flag, so pymupdf4llm
+    leaves them unmarked; this function drops them itself, with their overlays, code blocks
+    included. Text the strikeout flag marks is kept where pymupdf4llm sets it as a code block,
+    such as a paragraph set entirely in a monospaced font, since it writes no ``~~`` there."""
     doc = open_pdf(source)
     try:
         if doc.page_count == 0:

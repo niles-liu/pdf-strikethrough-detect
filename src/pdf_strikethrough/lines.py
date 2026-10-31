@@ -8,8 +8,15 @@ Strikes over typed text SHATTER: hyphen-overtype strikes break at every char gap
 sloped pen strokes straddle two angle bins. So the pipeline extracts fragments PERMISSIVELY,
 stitches collinear ones, and only then applies the strict filters to the stitched line:
   spine fill >= MIN_FILL              kills chains stitched from sparse glyph bits
-  run-thickness p25 <= MAX_STROKE_RUN_PX kills bold display-font crossbars
+  run-thickness p25 <= MAX_STROKE_RUN_PX kills solid fills and heavy bars
+  a line thicker than THIN_STROKE_RUN_PX must be >= STEM_RATIO x the stems
+  of the glyph ink beside it          kills bold display-font crossbars
   MIN_LINE_LEN_IN / angle             geometric sanity on the stitched line
+A second pass adds thick lines only where the first found none. A thick strike through bold or
+large text is as thick as the stems it crosses, and it can open into one piece with the glyph bars
+it touches, too thick to stitch. So the second pass retries the lines the stem test rejected, and
+the band such a piece fills end to end (PEEL_COVER), and keeps a line that runs on unbroken for
+SOLID_GLYPHS glyph heights: a bold glyph's bar ends with its glyph.
 
 Attributing lines to words (which word was struck, char spans, partial strikes) needs word
 boxes from an OCR engine and lives in a separate layer.
@@ -25,10 +32,24 @@ GAP_BRIDGE_PX     = 8             # closing along the angle (bridges pen gaps wi
 ANGLE_STEP_DEG    = 15            # sweep 0..180 in these steps
 MAX_ANGLE_DEG     = 25            # near-horizontal only; drops vertical letter-stems (l, I, f, 1)
 MAX_LINE_THICK_PX = 10            # pre-stitch PCA thickness cap
+PEEL_COVER        = 0.9           # second pass: a thicker fragment gives its fullest band this
+                                  # wide when the band is inked over this share of it (0 = off)
 DEDUP_IOU         = 0.30          # merge near-duplicates from adjacent angles, keep the longest
 OTSU_OFFSET       = 15            # recall knob: ink if gray < otsu()+this (recovers faint strokes)
 MIN_FILL          = 0.65          # fraction of the stitched spine that must be RAW ink
-MAX_STROKE_RUN_PX = 4             # stroke thickness: p25 of vertical ink runs along the spine
+MAX_STROKE_RUN_PX = 9             # stroke thickness: p25 of vertical ink runs along the spine
+RUN_SLACK_PX      = 1             # whole-pixel slack on the scaled cap (a run counts whole px)
+THIN_STROKE_RUN_PX = 4            # at or below this a line passes on thickness alone
+STEM_RATIO        = 1.4           # a thicker line must be >= this x the stems beside it (0 = off)
+STEM_GAP_PX       = 1             # stems are measured from this far past the line's edges...
+STEM_BAND_PX      = 8             # ...over this many rows on each side
+STEM_MIN_RUNS     = 3             # fewer stem runs than this: no glyph ink beside the line
+SOLID_GLYPHS      = 2.5           # second pass: a thick line is added when inked unbroken for this
+                                  # many glyph heights (0 = no second pass)
+SOLID_SHARE       = 0.6           # ...and, when it rises or falls more than half its thickness,
+                                  # for this share of its length
+EXTRA_ALONG_MAX   = 0.5           # a second-pass line is dropped when lines already kept run
+                                  # along this share of it
 STITCH_GAP_PX     = 26            # max x-gap between fragments to stitch (~a word space + slack)
 STITCH_DY_PX      = 6.0           # max |y| between endpoints at the junction
 STITCH_DY_TIGHT   = 2.5           # fallback tolerance for re-stitching poisoned groups
@@ -143,6 +164,33 @@ def line_kernel(length, angle_deg):
     return k
 
 
+def rule_mask(ink, min_len_px, tolerance_px=0):
+    """The pixels of the bool mask `ink` lying on a horizontal run at least `min_len_px` long:
+    table rules, underlines, form lines. A morphological opening with a 1 x `min_len_px` line, the
+    same as ``ndimage.binary_opening(ink, structure=line_kernel(min_len_px, 0))`` but done with 1-D
+    min/max filters, which is much faster on a full page. A run touching the image edge counts in
+    full. A non-integer `min_len_px` is truncated (``int``); <= 0 returns no pixels.
+
+    `tolerance_px` lets a run drift that many rows up or down (a skewed scan breaks a thin rule
+    into steps): the opening runs on `ink` thickened vertically by that much, and only `ink` under
+    it is kept. Any ink within `tolerance_px` rows of a long run goes with it, so a stem crossing
+    the rule loses those rows too. Thickening also merges neighboring glyphs of plain text into
+    long runs (bold 8 pt Courier loses about 3% of its glyph ink at 1 and 5% at 2), so keep the
+    default 0, a plain opening, unless the rules are soft-edged or skewed."""
+    ink = np.asarray(ink, dtype=bool)
+    n = int(min_len_px)
+    if n <= 0 or ink.size == 0:
+        return np.zeros_like(ink)
+    src = ink.view(np.uint8)
+    if tolerance_px > 0:
+        src = ndimage.maximum_filter1d(src, 2 * int(tolerance_px) + 1, axis=0, mode="constant")
+    eroded = ndimage.minimum_filter1d(src, n, axis=1, mode="constant")
+    # the dilation's origin mirrors the erosion's, which an even window places off center
+    opened = ndimage.maximum_filter1d(eroded, n, axis=1, mode="constant",
+                                      origin=-1 if n % 2 == 0 else 0)
+    return opened.astype(bool) & ink
+
+
 def _spine_fill(ink, center, u, length, halfwidth=2):
     """Fraction of steps along the major axis with raw ink within +/-halfwidth px perpendicular."""
     n = max(int(length), 2)
@@ -155,10 +203,8 @@ def _spine_fill(ink, center, u, length, halfwidth=2):
     return float(ink[ys, xs].any(axis=0).mean())
 
 
-def _spine_run_thickness(ink, center, u, length, max_k=20):
-    """p25 of vertical ink-run lengths sampled along the major axis, in the RAW ink mask.
-    Real strikes give short runs (2-3px) in inter-glyph gaps; bold-title crossbars are >=5px
-    thick everywhere, so their p25 is high."""
+def _spine_samples(ink, center, u, length):
+    """Pixel samples along the major axis, each snapped up to 1 px onto ink: (xs, ys, on_ink)."""
     n = max(int(length), 2)
     ts = np.linspace(-length / 2.0, length / 2.0, n)
     H, W = ink.shape
@@ -171,18 +217,92 @@ def _spine_run_thickness(ink, center, u, length, max_k=20):
         snap = miss & ink[yy, xs]
         ys = np.where(snap, yy, ys)
         base |= snap
-    if not base.any():
-        return np.inf
-    runs = np.ones(n)
+    return xs, ys, base
+
+
+def _side_runs(ink, xs, ys, base, max_k=20):
+    """(up, down): per sample, how many ink pixels continue straight up resp. down from it."""
+    H = ink.shape[0]
+    sides = []
     for sign in (-1, 1):
         alive = base.copy()
+        ext = np.zeros(len(xs))
         for k in range(1, max_k + 1):
-            yy = np.clip(ys + sign * k, 0, H - 1)
+            # the samples lie on the image, so only one edge can be passed (np.clip is slow here)
+            yy = np.maximum(ys - k, 0) if sign < 0 else np.minimum(ys + k, H - 1)
             alive = alive & ink[yy, xs]
             if not alive.any():
                 break
-            runs += alive
-    return float(np.percentile(runs[base], 25))
+            ext += alive
+        sides.append(ext)
+    return sides
+
+
+def _spine_profile(ink, center, u, length, max_k=20):
+    """(xs, ys, base, up, down): the spine samples (:func:`_spine_samples`) and how far ink runs
+    straight up and down from each (:func:`_side_runs`), or None for the runs when no sample is on
+    ink. The thickness, stem and solid-run tests below all read it; pass it as `prof` to share,
+    and their own `max_k` is then not used."""
+    xs, ys, base = _spine_samples(ink, center, u, length)
+    if not base.any():
+        return xs, ys, base, None, None
+    return (xs, ys, base, *_side_runs(ink, xs, ys, base, max_k))
+
+
+def _spine_run_thickness(ink, center, u, length, max_k=20, prof=None):
+    """p25 of vertical ink-run lengths sampled along the major axis, in the RAW ink mask.
+    A strike reads its own thickness in the gaps between glyphs, where nothing else is attached
+    (2-3 px for a pen line, 5-9 px for a 2-3 pt marker); a bold-title crossbar is thick
+    everywhere, so its p25 is high."""
+    _, _, base, up, down = prof or _spine_profile(ink, center, u, length, max_k)
+    if up is None:
+        return np.inf
+    return float(np.percentile((1 + up + down)[base], 25))
+
+
+def _stem_width(ink, center, u, length, gap_px, band_px, max_k=20, prof=None):
+    """Median width of the glyph strokes beside a line, or None when there are fewer than
+    STEM_MIN_RUNS of them (no glyph ink beside it). Read in the `band_px` rows above and below
+    the line, starting `gap_px` past its edges (the p25 of how far ink runs up, resp. down, from
+    the spine), as the lengths of the ink runs along the line: a stem crossing those rows is a run
+    as wide as the stem. A bold glyph's bar is about as thick as its stems; a strike through text
+    is clearly thicker than the stems of the text it crosses."""
+    xs, ys, base, up, down = prof or _spine_profile(ink, center, u, length, max_k)
+    if up is None:
+        return None
+    H = ink.shape[0]
+    runs = []
+    for sign, ext in zip((-1, 1), (up, down)):
+        k0 = int(np.percentile(ext[base], 25)) + gap_px + 1
+        yy = ys[None, :] + sign * np.arange(k0, k0 + band_px)[:, None]
+        ok = (yy >= 0) & (yy < H)
+        rows = np.zeros(yy.shape, dtype=bool)
+        rows[ok] = ink[yy[ok], np.broadcast_to(xs, yy.shape)[ok]]
+        d = np.diff(np.pad(rows, ((0, 0), (1, 1))).astype(np.int8), axis=1).ravel()
+        runs.append(np.flatnonzero(d == -1) - np.flatnonzero(d == 1))   # row by row, in order
+    runs = np.concatenate(runs)
+    return float(np.median(runs)) if runs.size >= STEM_MIN_RUNS else None
+
+
+def _solid_run(ink, center, u, length, run_px, max_k=20, prof=None):
+    """(solid_px, glyph_px): the longest stretch of the spine inked at least as thick as the line
+    itself (`run_px` less 1 px), and the height of the glyph stems crossing it (the upper quartile
+    of the vertical ink runs at least twice the line's thickness, up to `max_k` px either side), or
+    None when fewer than STEM_MIN_RUNS samples cross one. A strike runs on unbroken through the
+    glyphs it crosses and the gaps between them; a bold glyph's bar ends with its glyph. The upper
+    quartile, not the median: where a line crosses the curved side of an e, a or s, the ink it
+    crosses is much shorter than the glyph, and a chain of such bars in bold Courier would pass."""
+    xs, _, base, up, down = prof or _spine_profile(ink, center, u, length, max_k)
+    if up is None:
+        return 0.0, None
+    tall = 1 + up + down
+    solid = base & (tall >= max(1.0, run_px - 1))
+    edges = np.diff(np.concatenate(([0], solid.astype(np.int8), [0])))
+    starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+    step = length / max(len(xs) - 1, 1)
+    longest = float((ends - starts).max() * step) if starts.size else 0.0
+    stems = tall[base & (tall >= 2 * run_px)]
+    return longest, (float(np.percentile(stems, 75)) if stems.size >= STEM_MIN_RUNS else None)
 
 
 STRAIGHTNESS_MIN_SAMPLES = 3     # fewer ink-bearing samples than this: wobble is not measurable
@@ -199,12 +319,11 @@ def _spine_straightness(ink, center, u, length, run_px):
     scanned printed-rule veto reads a LOW value as "drawn rule, drop the detection", so an
     unmeasurable line must never come back low or a real strike is silently lost.
 
-    TRIED AND REJECTED (2026-07-29): **detrending** the deviations — residual RMS about a fitted
-    line instead of scatter about their mean — to stop a spine/ink angular mismatch (a linear ramp)
-    from inflating the wobble of dotted pre-printed rules. Measured, it missed them anyway (their
-    wobble is jitter across sparse dots, not a ramp) and halved the real strikes' margin above the
-    veto bar.
-    Dotted fill-in rules are underlines below the baseline; they need a positional discriminator.
+    Wobble is the deviations' scatter about their mean, not the residual about a fitted line.
+    Detrending, meant to stop a spine/ink angle mismatch inflating dotted pre-printed rules' wobble,
+    missed those rules anyway (their wobble is jitter across sparse dots) and halved the real
+    strikes' margin above the veto bar. Dotted fill-in rules are underlines below the baseline;
+    they need a positional discriminator.
     """
     if not np.isfinite(run_px):
         return float("inf")
@@ -229,10 +348,57 @@ def _spine_straightness(ink, center, u, length, run_px):
     return float(np.std(devs))
 
 
-def _collect_fragments(ink, dpi, scale=1.0):
+def _peel(along, across, width):
+    """A thick fragment's stroke band: ``(a0, a1, mid)``, the extent along the fragment and the
+    center across it of the `width`-px band across it holding the most pixels, when that band holds
+    pixels over at least PEEL_COVER of its own extent and that extent is most of the fragment's
+    length; else None. A thick strike through bold or large text opens into one fragment with the
+    glyph bars beside it, too thick as a whole; the strike is the band it fills end to end."""
+    lo = float(across.min())
+    bins = np.floor(across - lo).astype(int)
+    hist = np.bincount(bins)
+    w = max(1, int(width))
+    if hist.size <= w:
+        return None
+    sums = np.convolve(hist, np.ones(w, int), mode="valid")
+    k = int(np.argmax(sums))
+    inside = (bins >= k) & (bins < k + w)
+    a = along[inside]
+    a0, a1 = float(a.min()), float(a.max())
+    cols = np.unique(np.floor(a - a0).astype(int))
+    if a1 - a0 < PEEL_COVER * float(np.ptp(along)) or cols.size < PEEL_COVER * (a1 - a0 + 1):
+        return None
+    return a0, a1, lo + k + w / 2.0
+
+
+def _along(line, others, tol):
+    """How many px of `line`'s x-range the `others` cover where they run along it: each other
+    line whose height, at the middle of their common x-range, is within `tol` px of `line`'s."""
+    (sx, sy), (ex, ey) = line["ends_px"]
+    covered = []
+    for o in others:
+        (ox0, oy0), (ox1, oy1) = o["ends_px"]
+        a, b = max(min(sx, ex), min(ox0, ox1)), min(max(sx, ex), max(ox0, ox1))
+        if b <= a:
+            continue
+        xm = (a + b) / 2
+        y = sy if ex == sx else sy + (xm - sx) * (ey - sy) / (ex - sx)
+        oy = oy0 if ox1 == ox0 else oy0 + (xm - ox0) * (oy1 - oy0) / (ox1 - ox0)
+        if abs(y - oy) <= tol:
+            covered.append((a, b))
+    total, end = 0.0, -np.inf
+    for a, b in sorted(covered):
+        total += max(0.0, b - max(a, end))
+        end = max(end, b)
+    return total
+
+
+def _collect_fragments(ink, dpi, scale=1.0, peeled=None):
     """Per-angle opening + gap-bridging with PERMISSIVE per-fragment filters.
     Returns fragments as (start_xy, end_xy) endpoint pairs along the major axis.
-    `scale` = dpi / RENDER_DPI rescales the pixel-space tunables (calibrated at 200 dpi)."""
+    `scale` = dpi / RENDER_DPI rescales the pixel-space tunables (calibrated at 200 dpi).
+    With a list as `peeled`, a fragment too thick to keep that fills a band end to end
+    (:func:`_peel`) has that band appended to it, not to the fragments returned."""
     seg = max(3, int(SEG_LEN_IN * dpi))
     gap_bridge = int(round(GAP_BRIDGE_PX * scale))
     frags = []
@@ -255,15 +421,24 @@ def _collect_fragments(ink, dpi, scale=1.0):
             major, minor = evecs[:, 1], evecs[:, 0]
             if major[0] < 0:                                   # orient +x so endpoints sort by x
                 major = -major
-            length = float(np.ptp(d @ major))
-            thick = float(np.ptp(d @ minor))
+            along, across = d @ major, d @ minor
+            length = float(np.ptp(along))
+            thick = float(np.ptp(across))
+            out = frags
+            if (thick > MAX_LINE_THICK_PX * scale and peeled is not None
+                    and length >= PRE_LEN_PX * scale):
+                band = _peel(along, across, MAX_LINE_THICK_PX * scale)
+                if band is not None:
+                    a0, a1, mid = band
+                    c = c + major * (a0 + a1) / 2 + minor * mid
+                    length, thick, out = a1 - a0, MAX_LINE_THICK_PX * scale, peeled
             if (length < PRE_LEN_PX * scale or thick > MAX_LINE_THICK_PX * scale
                     or length / max(thick, 0.5) < PRE_ASPECT):
                 continue
             angle = abs(np.degrees(np.arctan2(major[1], major[0])))
             if min(angle, 180 - angle) > MAX_ANGLE_DEG:
                 continue
-            frags.append((c - major * length / 2, c + major * length / 2))
+            out.append((c - major * length / 2, c + major * length / 2))
     return frags
 
 
@@ -271,7 +446,7 @@ def _stitch_fragments(frags, dy=None, scale=1.0):
     """Union-find merge of collinear fragments. Returns [(seg, member_fragments), ...] so failed
     groups can be re-stitched tighter. `scale` rescales the pixel-space stitch tolerances."""
     # floor the pixel-space stitch tolerances so they don't collapse below a couple of pixels at
-    # low dpi (at 72 dpi a raw *scale would leave sub-pixel gaps/dy that never stitch)
+    # low dpi (unfloored, dy falls under 2 px below about 67 dpi, the gap under 6 px below 46)
     dy = max(2.0, STITCH_DY_PX * scale) if dy is None else dy
     max_gap = max(6.0, STITCH_GAP_PX * scale)
     n = len(frags)
@@ -339,26 +514,81 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     scale = dpi / float(RENDER_DPI)
     min_len = int(MIN_LINE_LEN_IN * dpi)
     fill_halfwidth = max(2, int(round(2 * scale)))
+    # floored at 2 px, so a 2-px pen stroke passes both thresholds at low dpi (unfloored, the
+    # thin bar is 1.44 px at 72 dpi, and the thickness cap, before its 1 px slack, falls under 2 px
+    # below ~44 dpi)
+    max_run = max(2.0, MAX_STROKE_RUN_PX * scale) + RUN_SLACK_PX
+    thin_run = max(2.0, THIN_STROKE_RUN_PX * scale)
+    stem_gap, stem_band = int(round(STEM_GAP_PX * scale)), max(2, int(round(STEM_BAND_PX * scale)))
 
-    groups = _stitch_fragments(_collect_fragments(ink, dpi, scale), scale=scale)
+    solid_k = max(1, int(round(20 * scale)))  # how far the glyph stems are followed, scaled
+    second = SOLID_GLYPHS > 0
+    peeled = [] if second and PEEL_COVER > 0 else None
+    frags = _collect_fragments(ink, dpi, scale, peeled=peeled)
+    groups = _stitch_fragments(frags, scale=scale)
+    verdicts = {}                             # line ends -> measure(), shared by both passes
 
-    def evaluate(start, end):
+    def measure(start, end):
+        """(verdict, m): "kept", "stem" (rejected by the stem test alone) or, for a line rejected
+        otherwise, whether a tighter re-stitch may salvage its group; and the measurements a kept
+        line is built from."""
         vec = end - start
         length = float(np.hypot(*vec))
         if length < min_len:
-            return None, False
+            return False, None
         u = vec / max(length, 1e-9)
         angle = float(min(a := abs(np.degrees(np.arctan2(u[1], u[0]))), 180 - a))
         if angle > MAX_ANGLE_DEG:
-            return None, True
+            return True, None
         center = (start + end) / 2
         fill = _spine_fill(ink, center, u, length, fill_halfwidth)
         if fill < MIN_FILL:
-            return None, True
-        run_px = _spine_run_thickness(ink, center, u, length)
-        # floored: unfloored, a 2-px strike at 72 dpi faces a "> 1.44 px" gate and is rejected
-        if run_px > max(2.0, MAX_STROKE_RUN_PX * scale):
-            return None, True
+            return True, None
+        prof = _spine_profile(ink, center, u, length)
+        run_px = _spine_run_thickness(ink, center, u, length, prof=prof)
+        if run_px > max_run:
+            return True, None
+        m = (vec, length, u, angle, center, fill, run_px, prof)
+        # A thick line (a 2-3 pt pen or marker strike) is kept only when it is clearly thicker than
+        # the stems of the glyph ink beside it. A bold glyph's bars, and a chain of them stitched
+        # along a bold heading, are about as thick as its stems, so they stay out. A line with no
+        # glyph ink beside it crosses no text and is kept.
+        if run_px > thin_run and STEM_RATIO > 0:
+            stem = _stem_width(ink, center, u, length, stem_gap, stem_band, prof=prof)
+            if stem is not None and run_px < STEM_RATIO * stem:
+                return "stem", m
+        return "kept", m
+
+    def evaluate(start, end, solid=False):
+        """(line, salvage): the line dict or None, and whether a tighter re-stitch may salvage the
+        group it spans ("stem" when the stem test alone rejected the line). With `solid` (the
+        second pass), such a line is kept when it runs on unbroken across the glyphs, and a line
+        the first pass kept is not returned again; with `solid="peel"`, every line must be thick
+        and run so."""
+        key = (float(start[0]), float(start[1]), float(end[0]), float(end[1]))
+        seen = key in verdicts                 # measured before, in either pass
+        if not seen:
+            verdicts[key] = measure(start, end)
+        verdict, m = verdicts[key]
+        if solid and seen and verdict == "kept":
+            return None, False
+        if (verdict == "stem" and solid) or (verdict == "kept" and solid == "peel"):
+            # A strike through bold or large text can be as thick as its stems, but it doesn't
+            # stop between glyphs, and a bold glyph's bar ends with its glyph. A line that rises or
+            # falls across rows must run so across most of its length too: stitched on from the
+            # stroke to glyph pieces on other rows (serifs at the baseline), it leaves the stroke.
+            vec, length, u, _, center, _, run_px, prof = m
+            if run_px <= thin_run:
+                return None, True
+            run, glyph = _solid_run(ink, center, u, length, run_px, max_k=solid_k,
+                                    prof=prof if solid_k == 20 else None)
+            level = abs(float(vec[1])) <= max(2.0, run_px / 2.0)
+            if (glyph is None or run < SOLID_GLYPHS * glyph
+                    or (not level and run < SOLID_SHARE * length)):
+                return None, True
+        elif verdict != "kept":
+            return None, verdict
+        vec, length, u, angle, center, fill, run_px, _ = m
         # perpendicular wobble, normalized to RENDER_DPI so the scanned-path printed-rule veto's
         # threshold is dpi-independent (issue #7). Reported as None, never a number, when it is not
         # measurable: the veto reads LOW as "drawn rule", and None keeps the field JSON-safe.
@@ -378,35 +608,81 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
             "_len": length,
         }, False
 
-    cands = []
-    for (start, end), members in groups:
-        cand, salvage = evaluate(start, end)
-        if cand is not None:
-            cands.append(cand)
-        elif salvage and len(members) > 2:
-            for (s2, e2), _ in _stitch_fragments(members, dy=STITCH_DY_TIGHT * scale, scale=scale):
-                sub, _ = evaluate(s2, e2)
-                if sub is not None:
-                    cands.append(sub)
-
-    cands.sort(key=lambda c: -c["_len"])                       # longest first, then drop overlaps
-    # Keep c unless it overlaps anything already kept: one IoU pass per candidate against every
-    # kept box at once.
-    kept = []
-    boxes = np.empty((len(cands), 4), dtype=np.float64)
-    for c in cands:
-        x0, y0, x1, y1 = c["bbox_px"]
-        if kept:
-            k = boxes[:len(kept)]
-            ix = np.minimum(k[:, 2], x1) - np.maximum(k[:, 0], x0)
-            iy = np.minimum(k[:, 3], y1) - np.maximum(k[:, 1], y0)
-            inter = np.maximum(ix, 0) * np.maximum(iy, 0)
-            union = (k[:, 2] - k[:, 0]) * (k[:, 3] - k[:, 1]) + (x1 - x0) * (y1 - y0) - inter
-            iou = np.where(inter > 0, inter / np.maximum(union, 1), 0.0)
-            if (iou >= DEDUP_IOU).any():
+    def candidates(groups, solid=False, wanted=None, held=None):
+        """Lines from stitched groups, a group rejected whole re-stitched tighter. With `wanted`,
+        only from groups holding one of those fragments; with a list as `held`, each group where
+        the stem test alone rejected a line is appended to it."""
+        cands = []
+        for group in groups:
+            (start, end), members = group
+            if wanted is not None and not any(id(m) in wanted for m in members):
                 continue
-        boxes[len(kept)] = (x0, y0, x1, y1)
-        kept.append(c)
+            cand, salvage = evaluate(start, end, solid)
+            stem = salvage == "stem"
+            if cand is not None:
+                cands.append(cand)
+            elif salvage and len(members) > 2:
+                # Not floored like the first stitch's dy: the re-stitch must stay tighter than
+                # that one to split anything, and floored at 2 px it rejoins a stroke to a rule
+                # just below it at 100 dpi
+                for (s2, e2), sub_members in _stitch_fragments(members, dy=STITCH_DY_TIGHT * scale,
+                                                               scale=scale):
+                    if wanted is not None and not any(id(m) in wanted for m in sub_members):
+                        continue
+                    sub, why = evaluate(s2, e2, solid)
+                    if sub is not None:
+                        cands.append(sub)
+                    stem = stem or why == "stem"
+            if stem and held is not None:
+                held.append(group)
+        return cands
+
+    def keep(cands, kept, along=None):
+        """Add the candidates, longest first, that overlap nothing already kept (one IoU pass per
+        candidate against every kept box at once) and, with `along` as (tol, share), that the kept
+        lines within `tol` px run along less than `share` of."""
+        cands = sorted(cands, key=lambda c: -c["_len"])
+        boxes = np.empty((len(kept) + len(cands), 4), dtype=np.float64)
+        for i, c in enumerate(kept):
+            boxes[i] = c["bbox_px"]
+        for c in cands:
+            x0, y0, x1, y1 = c["bbox_px"]
+            if kept:
+                k = boxes[:len(kept)]
+                ix = np.minimum(k[:, 2], x1) - np.maximum(k[:, 0], x0)
+                iy = np.minimum(k[:, 3], y1) - np.maximum(k[:, 1], y0)
+                inter = np.maximum(ix, 0) * np.maximum(iy, 0)
+                union = (k[:, 2] - k[:, 0]) * (k[:, 3] - k[:, 1]) + (x1 - x0) * (y1 - y0) - inter
+                iou = np.where(inter > 0, inter / np.maximum(union, 1), 0.0)
+                if (iou >= DEDUP_IOU).any():
+                    continue
+                if along is not None:
+                    # only kept lines whose rows come within `tol` of this one's can run along it
+                    near = np.flatnonzero((k[:, 1] <= y1 + 2 + along[0])
+                                          & (k[:, 3] + 2 + along[0] >= y0))
+                    if _along(c, [kept[i] for i in near], along[0]) >= along[1] * c["_len"]:
+                        continue
+            boxes[len(kept)] = (x0, y0, x1, y1)
+            kept.append(c)
+        return kept
+
+    held = [] if second else None
+    kept = keep(candidates(groups, held=held), [])
+    # A second pass adds lines only where the first found none, so every line the first finds
+    # comes out as before. It retries the groups where the stem test alone rejected a line, now
+    # with the solid-run test, and stitches the bands of fragments too thick to stitch (a thick
+    # strike through bold or large text, in one piece with the glyph bars it touches) with the
+    # fragments on their rows; a line through such a band must be thick and pass that test too.
+    # A thin line there is mostly a rule laid along the tops of the letters, merged with them.
+    extra = candidates(held, solid=True) if held else []
+    if peeled:
+        reach = 2 * max(2.0, STITCH_DY_PX * scale)
+        ys = np.array([(a[1] + b[1]) / 2 for a, b in peeled])
+        near = [f for f in frags if np.abs(ys - (f[0][1] + f[1][1]) / 2).min() <= reach]
+        extra += candidates(_stitch_fragments(near + peeled, scale=scale), solid="peel",
+                            wanted={id(f) for f in peeled})
+    if extra:
+        kept = keep(extra, kept, along=(max(2.0, STITCH_DY_PX * scale), EXTRA_ALONG_MAX))
     for c in kept:
         del c["_len"]
     return kept

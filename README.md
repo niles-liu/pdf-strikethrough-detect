@@ -7,146 +7,252 @@
 
 Detect **struck-through (deleted) text** in PDFs and scanned document images.
 
-Strikethrough detection is a surprisingly unserved niche: most "redline"/diff tools assume clean
-born-digital PDFs and fall apart on scans — which is the real-world case. `pdf-strikethrough-detect`
-handles both, does the hard part (scanned images) with a tiny CPU model, and makes no cloud calls.
+Born-digital PDFs are read exactly. Scans go through OCR word boxes, stroke geometry and a small
+CPU model. No cloud calls. Try it in the browser at
+[huggingface.co/spaces/niles-liu/strikethrough-demo](https://huggingface.co/spaces/niles-liu/strikethrough-demo).
 
 ```python
 import pdf_strikethrough as st
 
-# born-digital PDF — exact, no OCR
+# born-digital PDF: exact, no OCR
 for w in st.strikethroughs_in_pdf("contract.pdf"):
     print(w["page"], repr(w["chars"]), "partial" if w["partial"] else "full")
+
+# any PDF, scanned pages included
+res = st.detect_pdf("mixed.pdf", ocr=st.rapidocr_backend())
+res["clean_text"]     # the surviving text, deletions removed
+res["markdown"]       # deletions as ~~struck~~
 ```
 
 ## Install
 
 ```bash
 pip install pdf-strikethrough-detect
+pip install "pdf-strikethrough-detect[rapidocr]"    # free OCR for scans, no system binary
+pip install "pdf-strikethrough-detect[markdown]"    # clean_markdown() via pymupdf4llm
+pip install "pdf-strikethrough-detect[tesseract]"   # word-level OCR (needs the tesseract binary)
+pip install "pdf-strikethrough-detect[torch]"       # a .pt model fallback (training: + onnx)
 ```
 
-Pure pip, no system binaries required: the CNN runs on ONNX Runtime (CPU) and the ~318 KB model
-ships inside the wheel. Extras:
+The model (~318 KB) ships in the wheel and runs on ONNX Runtime on the CPU. On Python 3.11+
+`[markdown]` installs PyMuPDF 2.0; to stay below 2.0 there, install `pymupdf4llm<2` instead.
+
+## Born-digital PDFs
+
+A strikethrough in a born-digital PDF is a drawing over the text, so detection is exact: no OCR,
+no model. Pick the detector with `method=`:
+
+| `method=` | Reads | Gives |
+|---|---|---|
+| `"vector"` (default) | stroke geometry, and U+0336 overlay characters (`o̶f̶`) | exact partial spans, stroke color and width |
+| `"flag"` | MuPDF's strikeout flag | also font-attribute strikes |
+| `"annot"` | `/StrikeOut` annotations | the redline's author and dates |
+| `"both"` | all three | the most recall |
+
+A word counts as fully struck only when every character is, so in `~~December~~May` the `May`
+stays in `clean_text`; `chars` and `char_span` give the struck characters. `bbox_frac` is in
+fractions of the rendered page. Every record key is a `TypedDict` in `pdf_strikethrough.types`.
+
+**Accuracy.** On 10 public redline PDFs (federal and California regulatory redlines and a
+municipal code, 55.7k struck words), 99.8% of vector detections are confirmed by MuPDF's
+strikeout flag (99.6 to 100% per document), and the flag finds 1.3% more words. The flag can
+also include the letter right after a strike when no space follows (`DecemberM` of `DecemberMay`),
+more often under PyMuPDF 2.0; `vector` and `both` stop at `December`.
+
+**Garbled text layers.** Some PDFs map glyphs to the wrong characters: Word's Cambria Math
+equations read `·(0.955) −` as `⋅ሺ0.955ሻെ`. `detect_pdf` lists such words in
+`res["garbled_words"]`, marks a struck one `garbled: True`, notes each page in `res["warnings"]`
+and issues one `GarbledTextWarning`. `on_garbled="drop"` (CLI `--on-garbled drop`) leaves them out
+of the text. Not caught: a broken map that gives Latin, Greek or Cyrillic letters or U+FFFD, or
+one that gives only letters of a single script in a non-math font, since that reads like real
+text.
+
+`clean_markdown()` (needs `[markdown]`) keeps pymupdf4llm's layout, but it reads MuPDF's flag, not
+the vector strokes, and covers born-digital pages only: `help(st.clean_markdown)`.
+
+## Scanned pages and images
+
+```python
+res = st.detect_pdf("scan.pdf", ocr=st.rapidocr_backend())          # scanned pages use OCR
+res = st.detect_image_file("scan.tiff", ocr=st.rapidocr_backend())   # PNG, JPEG, TIFF (multi-page)
+res = st.detect_pdf("scan.pdf", di_result=di_json)                   # an Azure DI result you have
+struck = [w for w in res["words"] if w["final"]]
+```
+
+`detect_pdf` routes each page: native pages take the exact path, scanned pages go through stroke
+geometry, OCR word boxes and StrikeNet (the bundled model), and `markdown`, `clean_text` and
+`passages` cover both. A scanned page with no OCR raises `OcrRequiredError` (`on_missing_ocr="skip"`
+skips it); a password-protected PDF raises `EncryptedPdfError`. An image's dpi comes from its
+metadata (else 200), and a photo's EXIF rotation is applied.
+
+### OCR backends
+
+OCR supplies the word boxes; geometry and the model do the detecting. Measured by rasterizing
+born-digital redline pages and scoring against the native detector's strikes (3 documents, 24
+pages, 2,170 strikes;
+[`benchmarks/scanned_recovery.py`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/benchmarks/scanned_recovery.py)):
+
+| Backend | Setup | Strikes recovered | Word boxes |
+|---|---|---|---|
+| Azure Document Intelligence (`di_result=`) | cloud, paid | 95.2% with the default; 97.9% with `confidence_free()` | exact words |
+| RapidOCR (`[rapidocr]`) | pip only | 97.3% | phrases |
+| Tesseract (`[tesseract]`) | system binary | not benchmarked | words |
+
+**Confidence.** RapidOCR's confidences are near 1.0 whether a word is struck or not, so every entry
+point runs `ScanConfig.confidence_free()`, except `detect_pdf` on the pages a `di_result` covers,
+which uses the Azure DI calibration (`ScanConfig()`). That calibration was built on degraded ruled
+forms, where DI reads struck words lower than clean ones; on a crisp printed scan it reads them
+alike. On 472 printed pages with DI words (synthetic redlines, Senate bills and a public redline
+corpus, none from the frontier benchmark's test sets), the default finds 88.9% of struck words and
+marks 203 of 111,955 live ones; `confidence_free()` finds 92.6% and marks 719. Every `ScanConfig`
+constructor and preset except `confidence_free()` uses the DI calibration unless given
+`confidence_gating=False`: with another engine, start from `ScanConfig.confidence_free(...)`, which
+takes the same fields.
+
+**RapidOCR defaults.** `rapidocr_backend()` turns RapidOCR's orientation classifier off, since it
+turns struck and underlined lines upside down; turn upside-down pages upright first, or pass
+`params={"Global.use_cls": True}`. The default model can read a small mark as a CJK character (`(a)`
+as `(斗)`), so on a page with no run of CJK text it removes lone CJK characters, real ones included
+(`100 円` loses the unit); `drop_lone_cjk=False` keeps them, and the CLI always removes them. Word
+boxes past the page edge are clamped to it.
+
+**Operating points.** `ScanConfig.recall_first()` catches more deletions at the cost of more review;
+`ScanConfig.precision_first()` avoids dropping live text (RAG, indexing). Fit a threshold to your
+own labeled data with `pdf_strikethrough.calibration` and pass it as `recall_first(cnn_p_hi=...)`.
+
+**Degraded ruled forms (provisional).** On faint, heavily ruled scans, printed rules crossing text
+read as strikes. On a private labeled corpus, `ScanConfig.ruled_forms(rescue_clean_chains=False)`
+cuts false strikes from 133 to 26 (44 with `ruled_forms()` alone, 108 with
+`rescue_clean_chains=False` alone), with recall unchanged. `rescue_clean_chains=False` does nothing
+under `confidence_free()`. On a clean scan both cost recall, since a real strike there is also solid
+and straight and leaves OCR undamaged. Provisional: pin exactly if you rely on them.
+
+## Other inputs
+
+```python
+for w in st.strikethroughs_in_docx("contract.docx"):          # strike formatting and tracked
+    print(w["para"], repr(w["chars"]), w["docx_change"])      # deletions, with author and date
+
+res = st.detect_pdf("doc.pdf", words_by_page=st.words_from_textract(textract_response))
+res = st.detect_pdf("doc.pdf", words_by_page=st.words_from_docai(docai_document))
+
+st.provenance_text(res)   # 'The fee is [deleted: the old rate of 5%] billed monthly.'
+st.save_overlays("contract.pdf", "out/")                      # page images with strikes boxed
+```
+
+`provenance_text` keeps each deletion as a marker, for a RAG index that must not retrieve deleted
+text as live. Runnable scripts that build their own sample PDFs are in
+[`examples/`](https://github.com/niles-liu/pdf-strikethrough-detect/tree/main/examples).
+
+## CLI
 
 ```bash
-pip install "pdf-strikethrough-detect[markdown]"    # clean_markdown() via pymupdf4llm
-pip install "pdf-strikethrough-detect[rapidocr]"    # free scanned-word OCR backend (no binary)
-pip install "pdf-strikethrough-detect[tesseract]"   # word-level OCR (also needs the tesseract binary)
-pip install "pdf-strikethrough-detect[torch]"       # optional .pt CNN fallback (training: + onnx)
+pdf-strikethrough detect contract.pdf                       # native pages
+pdf-strikethrough detect scan.pdf --ocr rapidocr            # scanned pages too (PDF or image)
+pdf-strikethrough detect scan.pdf --di-result di.json       # or --textract-result, --docai-result
+pdf-strikethrough detect contract.docx
+pdf-strikethrough detect doc.pdf --json out.json            # records and evidence (- = stdout)
+pdf-strikethrough detect doc.pdf --clean-text clean.txt     # or --markdown, --provenance, --overlay
+pdf-strikethrough detect doc.pdf --method both --pages 1-5,12
+pdf-strikethrough detect ./contracts/ --jobs 4 --jsonl out.jsonl   # batch: folders, globs, files
+pdf-strikethrough detect 'docs/**/*.pdf' --fail-if-found    # CI gate: exit 3 if any strike
 ```
 
-The CNN ships as ONNX and needs nothing extra. `[torch]` is only for development — the loader
-prefers `strike_verdict_cnn.onnx`, falling back to a `strike_verdict_cnn.pt` checkpoint if you
-point `PDF_STRIKETHROUGH_MODEL_DIR` at one. Train a replacement with
-[`training/train_strikenet.py`](training/), or export an existing checkpoint to ONNX with
-[`tools/export_model.py`](tools/export_model.py); both also need `onnx` (`pip install onnx`).
+Batch mode writes one JSON line per file as each finishes and never stops on a bad file (its line
+carries `error`); per-file outputs such as `--markdown` are ignored there. Exit codes: 0 ok, 1
+usage or file error, 2 encrypted or OCR required, 3 `--fail-if-found` matched, 130 interrupted.
+Every flag: `pdf-strikethrough detect -h`.
 
-## Native / born-digital PDFs — exact
+## Monitoring and models
 
-In a born-digital PDF a strikethrough is a *vector drawing* (a line or thin rect over the text),
-so detection is exact ground truth — no OCR, no model, no guessing. Both vector-rule and
-filled-rect strikethrough styles are handled.
+**Telemetry.** `telemetry=True` on `detect_pdf` and `detect_image_file` (CLI `--telemetry FILE`)
+adds a JSON report: package and model version and sha256, time per page and stage, candidates per
+tier and a histogram of StrikeNet's scores. Compare runs to see when incoming scans change.
+Diagnostics go to the `pdf_strikethrough` logger at DEBUG, silent by default.
+
+**Your own model.** `--dump-crops DIR` (or `st.dump_crops`) exports every scored crop as a
+labeling set; retrain with
+[`training/train_strikenet.py`](https://github.com/niles-liu/pdf-strikethrough-detect/tree/main/training)
+and load the weights with `PDF_STRIKETHROUGH_MODEL_DIR` or `st.cnn.set_model_dir`.
+`st.get_model_meta()["sha256"]` identifies the weights loaded. The shipped weights cannot be
+reproduced: their training data is not recorded
+([model card](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/training/MODEL_CARD.md#provenance-and-training)).
+
+**A model from a URL.** `st.ensure_model` downloads a model and its meta, checks both sha256s
+before writing them, caches them and points the loader at them, so a new model needs no new
+release. Call it once at startup, then `st.get_model_meta()` to check it loads. The shipped
+StrikeNet is on the Hub:
 
 ```python
-import pdf_strikethrough as st
-
-for w in st.strikethroughs_in_pdf("contract.pdf"):
-    print(w["page"], repr(w["chars"]))          # 'chars' = the struck substring
-print(st.clean_markdown("contract.pdf"))        # surviving text, deletions removed (needs [markdown])
+st.ensure_model(
+    "https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.onnx",
+    "fac2c51baaa75ee782196bdfe7452638cb48c7deddb21163b1ac6a0a72ae4457",
+    meta_url="https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.meta.json",
+    meta_sha256="4388b14715bfb1f51b56bb6c463d8f5c0847533316297890e70ac0b2234405d4",
+)
 ```
 
-Each native record: `{page, text, chars, char_span, partial, bbox_frac, tier, coverage, verdict,
-final}` (`tier` is `"vector"`, `"flag"`, or `"annot"`). Vector records also carry
-`stroke_color`/`stroke_width` (the paint + thickness of the dominant stroke — red = opposing
-counsel is evidence); annotation records carry `annot_author`/`annot_created`/`annot_modified`/
-`annot_color`/`annot_id` (the redline's "who and when"). Scanned records replace `coverage` with
-the evidence that decided them — `score`, `cnn_prob`, `cnn_agrees`, `conf`, `geom_corroborated`
-(and `conf_veto: True` when the calibrated-confidence gate downgrades a high-confidence word) — and
-`tier` is `"auto"`/`"review"`. The keys are documented as `TypedDict`s in `pdf_strikethrough.types`
-(`StruckWord`, `DetectResult`, `Passage`); the package ships `py.typed`, so type checkers see them.
-Partial strikes (`semi-` of `semi-monthly`) are resolved to the characters the strike actually
-crosses, read from the PDF's own glyph boxes, and a word counts as fully struck only when every
-character is — so a replacement printed straight after a deletion (`~~December~~May`) survives in
-`clean_text`. `bbox_frac` is in fractions of the rendered page (rotation-aware), so it maps
-directly onto a rendered pixmap.
+- A cached file whose digest matches is used without a download, so a restart needs no network.
+- A digest that does not match raises `ValueError`, writes nothing and keeps the current model.
+- It does not load the model: one that downloads but cannot load has already replaced the old
+  one, and fails at the first score; `st.cnn.set_model_dir(None)` goes back to the packaged
+  weights. To fall back when the host is unreachable, catch the exception.
+- Called while another thread is reading a document, the rest of that document can be scored by
+  the new model against the old thresholds: call it before reading starts.
+- It does not fetch external data files: for such a model, copy its folder and point
+  `PDF_STRIKETHROUGH_MODEL_DIR` at it. The CLI takes that variable too, not a URL.
 
-Three native detectors, all **base-PyMuPDF only** (no pymupdf4llm), selected by `method`:
+More: `help(st.ensure_model)`.
+
+## Scope and known limits
+
+Detection assumes horizontal, left-to-right text and a near-straight stroke through a word's
+middle. Reading order is column-aware.
+
+| Case | Status |
+|---|---|
+| Latin text, born-digital | validated (the 10-PDF benchmark above) |
+| Printed scans | validated (the recovery table above) |
+| Two-column pages, struck table rows, strikes across hyphenated line breaks | handled |
+| CJK text-layer PDFs | handled: a strike is horizontal whatever the script |
+| CJK scans | many false strikes: 13 to 29% of unstruck Korean, Chinese and Japanese words on synthetic 200 dpi sans-serif scans (a serif Chinese font more than doubled it), from horizontal strokes inside characters; check `markdown` before trusting `clean_text` |
+| Handwritten strikes | mostly missed: under 5% of struck words found on BRESSAY's pages (a public dataset of handwriting) |
+| Dashed strikes | often found only in part |
+| Strikes steeper than 12° (PDF) or 25° (scan) | not found |
+| Thin or light-colored strokes on scans | may be missed |
+| Highlighted or shaded text | a colored background is whitened first (provisional); a uniformly dim scan is not handled: re-scan or normalize it |
+| Vertical writing, right-to-left strike axes | out of scope |
+
+RapidOCR's default model has no Hangul. For Korean, pass its Korean recognizer from Python (the
+CLI uses the default model); it needs rapidocr 3.3 or later, takes the values as RapidOCR's enums,
+not strings, and downloads 13 MB on first use:
 
 ```python
-st.strikethroughs_in_pdf("contract.pdf", method="vector")  # stroke geometry (default) —
-                                                           #   precise partial-char spans + color/width
-st.strikethroughs_in_pdf("contract.pdf", method="flag")    # MuPDF's FZ_STEXT_STRIKEOUT signal —
-                                                           #   also catches font-attribute strikes
-st.strikethroughs_in_pdf("contract.pdf", method="annot")   # explicit /StrikeOut annotations —
-                                                           #   Acrobat/Preview redlines + forensics
-st.strikethroughs_in_pdf("contract.pdf", method="both")    # union of all three — maximum recall
+from rapidocr import LangRec, ModelType, OCRVersion
+ocr = st.rapidocr_backend(params={"Rec.lang_type": LangRec.KOREAN,
+                                  "Rec.ocr_version": OCRVersion.PPOCRV5,
+                                  "Rec.model_type": ModelType.MOBILE})
 ```
 
-**Validated across domains.** On 10 public redline PDFs (federal regulatory redlines from the
-Copyright Office, FDIC, CEQ and EPA; California privacy-regulation redlines; a municipal
-development code — 55.2k struck words), **99.8% of vector detections are independently confirmed
-by MuPDF's strikeout signal** (99.6–100% per document; 9 of 10 ≥99.9%), and the flag method adds
-~2.1% more words (font-attribute strikes and edge cases) — use `method="both"` to capture them.
-`pymupdf4llm` is not used for detection at all; it is only an optional `[markdown]` extra for
-richer layout in `clean_markdown()`. On Python 3.11+ the extra installs PyMuPDF 2.0, which ships
-pymupdf4llm itself; to stay on PyMuPDF below 2.0 there, install `pymupdf4llm<2` instead of the
-extra.
+A [failing-page report](https://github.com/niles-liu/pdf-strikethrough-detect/issues/new?template=failing-page.md)
+with `--dump-crops` output is the fastest way to get a case fixed.
 
-## Any PDF — routed per page, scanned pages use OCR + CNN
+## How it works
 
-```python
-import pdf_strikethrough as st
-from pdf_strikethrough.ocr import rapidocr_backend
-from pdf_strikethrough.scanned import ScanConfig
+- **Native:** vector strokes through each character's strike band, measured in ems above the
+  baseline, so underlines, overlines, fraction bars and gridlines behind a filled box are not
+  strikes. A bar just above x-height letters (`√x`) and a gridline through text with no box behind
+  it still are.
+- **Scanned geometry** (`lines.py`): morphological opening at each angle finds stroke fragments,
+  which are stitched and filtered on fill, thickness against the text's stems, angle and length;
+  a second pass adds thick strikes through bold text.
+- **Attribution** (`scanned.py`): strokes are assigned to OCR words and measured against each
+  word's glyph ink, so a word is fully struck only when the stroke reaches both ends.
+- **StrikeNet** (`cnn.py`, 79k parameters, ONNX): decides what geometry cannot, such as a thin
+  strike over a word with no ascenders, which looks like a chain of serifs.
 
-res = st.detect_pdf("mixed.pdf",
-                    ocr=rapidocr_backend(),                 # for scanned pages
-                    scan_config=ScanConfig.confidence_free())
-
-struck   = [w for w in res["words"] if w["final"]]          # struck words (boxes, char spans)
-markdown = res["markdown"]                                  # deletions as ~~struck~~
-clean    = res["clean_text"]                                # surviving text, deletions removed
-passages = res["passages"]                                  # grouped deletion sections
-```
-
-`detect_pdf` classifies each page native-vs-scanned, runs the exact path on native pages
-(`method="vector"|"flag"|"annot"|"both"`) and the geometry→OCR→CNN pipeline on scanned ones, and
-assembles `markdown` / `clean_text` / `passages` for **both** page kinds from its own strike
-decisions (so the text and the word records always agree — no dependence on an external markdown
-engine). Already have an Azure Document Intelligence result? Pass `di_result=...` (the REST JSON
-dict, an `{'analyzeResult': ...}` envelope, or `sdk_result.as_dict()`) to skip re-OCR and use
-DI's word boxes.
-
-Scanned pages with no OCR backend raise `OcrRequiredError` by default; pass
-`on_missing_ocr="skip"` to skip them (with a warning in `res["warnings"]`) and still get
-everything from the native pages. Password-protected PDFs raise `EncryptedPdfError`.
-
-> `clean_markdown()` remains a separate, higher-fidelity **native-only** path that borrows
-> pymupdf4llm's layout (headings, paragraphs). `detect_pdf`'s `markdown` is layout-plain but works
-> uniformly on scanned pages too.
-
-### Choosing an OCR backend
-
-The geometry + CNN carry the detection and are **OCR-independent**; OCR only supplies word boxes
-to attribute strikes to, plus a confidence prior. Benchmarked by rasterizing born-digital redline
-pages into image-only "scans" and taking the native detector's strikes on the born-digital
-originals as ground truth (3 documents, 24 pages, 2,170 known strikes; reproduce with
-[`benchmarks/scanned_recovery.py`](benchmarks/scanned_recovery.py)):
-
-| Backend | Setup | Strike recovery | Word granularity |
-|---|---|---|---|
-| Azure Document Intelligence | cloud, paid | **96%** of known strikes with `confidence_free()`; 91% with the default DI calibration (see below) | exact word boxes |
-| **RapidOCR** | `pip`, no binary | **96%** of known strikes | ~4× coarser (phrase-level) |
-| Tesseract | needs system binary | not benchmarked here | genuine word-level |
-
-`detect_pdf` runs confidence-free (`ScanConfig.confidence_free()`) whenever the words come from an
-`ocr` backend or `words_by_page` — RapidOCR's confidences cluster near 1.0 and don't separate struck
-from clean text — and uses the Azure DI calibration (`ScanConfig()`), whose struck words drop to
-0.43–0.94, with `di_result`. Across backends the scanned path recovers **96% of the exact native
-strike set** — the geometry + CNN, not the OCR engine, carry the detection. The DI calibration
-keeps 91%: its confidence gates, built for degraded ruled forms, drop some crisply struck words that
-DI still reads with high confidence. On a clean scan of a printed redline, pass
-`scan_config=ScanConfig.confidence_free()` with `di_result`.
+Scans above 300 dpi are worked at 200, the resolution the geometry and model are calibrated at;
+a page over 128 Mpix is also scaled down, with a warning ([`SECURITY.md`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/SECURITY.md)).
 
 ## Against frontier models
 
@@ -162,228 +268,9 @@ GPT-6 Astra were no worse on all 6, Gemini 4 Argon on 2 and Grok 4.7 on none. Th
 pre-registration and the data:
 [`benchmarks/frontier/RESULTS.md`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/benchmarks/frontier/RESULTS.md).
 
-## Beyond PDFs — images, Word docs, cloud OCR
-
-The same detection reaches inputs that never were a born-digital PDF:
-
-```python
-# Raster image files (.png/.jpg/.tiff, incl. multi-page TIFF) — photos, faxes, scans.
-# Every frame is a scanned page, so it needs OCR; DPI comes from image metadata (else 200 — a
-# placeholder 72/96 counts as none), and a phone photo's EXIF rotation is applied before OCR.
-res = st.detect_image_file("scan.tiff", ocr=rapidocr_backend())
-
-# Word .docx — strike formatting (w:strike/w:dstrike, set directly or by a style; text boxes too)
-# + tracked deletions (w:del, with author/date).
-# No OCR, no geometry: records use tier="docx" and a `para` index. Stdlib-only, no extra needed.
-for w in st.strikethroughs_in_docx("contract.docx"):
-    print(w["para"], repr(w["chars"]), w["docx_change"], w.get("docx_author"))
-
-# AWS Textract / Google Document AI — neither flags strikethrough; add the layer on top.
-# Convert a pre-fetched result to {page: [Word]} and feed it as words_by_page (works on images too).
-res = st.detect_pdf("doc.pdf", words_by_page=st.words_from_textract(textract_response))
-res = st.detect_pdf("doc.pdf", words_by_page=st.words_from_docai(docai_document))
-```
-
-**Provenance mode for RAG.** Struck text entering a vector index is a real failure mode — the
-retriever surfaces a sentence the document *deleted*. `clean_text` removes it; `provenance_text`
-instead keeps each deletion as a marker so it's recorded-as-deleted, not silently dropped:
-
-```python
-res = st.detect_pdf("contract.pdf")
-res["clean_text"]           # 'The fee is billed monthly.'
-st.provenance_text(res)     # 'The fee is [deleted: the old rate of 5%] billed monthly.'
-```
-
-## Low-level building blocks
-
-```python
-gray = st.render_page_gray(doc[0], dpi=200)     # always returns a HxW uint8 grayscale array
-
-lines = st.strike_lines(gray, dpi=200)          # OCR-free stroke geometry (strike/underline/rule)
-                                                # pass the dpi the image was rendered/scanned at
-
-# word boxes are PAGE FRACTIONS in [0,1], origin top-left — not pixels
-p = st.score_word(gray, (0.12, 0.34, 0.38, 0.36))   # CNN strike probability (0..1)
-
-from pdf_strikethrough.ocr import Word
-# detect_scanned_image accepts your own image; RGB / float arrays are coerced to grayscale uint8
-recs = st.detect_scanned_image(gray, [Word("foo", (0.12, 0.34, 0.38, 0.36), 0.6)])
-
-# visual overlay — render each struck page with the strikes boxed (red=full, orange=partial)
-for pg in st.render_overlay("contract.pdf", dpi=150):
-    pg["image"].save(f"overlay-p{pg['page']}.png")     # or st.save_overlays(src, "out/")
-```
-
-**Logging.** Diagnostics (page routing, native method + record counts, OCR/CNN timings) are
-emitted at `DEBUG` under the `pdf_strikethrough` logger — silent by default (a `NullHandler` is
-attached). Opt in with `logging.getLogger("pdf_strikethrough").setLevel(logging.DEBUG)` and a
-handler; `warnings` stay reserved for caller-facing hazards.
-
-## CLI
-
-```bash
-pdf-strikethrough detect contract.pdf                       # native pages (scanned pages are
-                                                            #   skipped with a warning)
-pdf-strikethrough detect scan.pdf --ocr rapidocr            # include scanned pages
-pdf-strikethrough detect scan.tiff --ocr rapidocr           # a raster image file (or multi-page TIFF)
-pdf-strikethrough detect contract.docx                      # a Word doc (strike + tracked deletions)
-pdf-strikethrough detect scan.pdf --di-result di.json       # use a pre-fetched Azure DI result
-pdf-strikethrough detect scan.pdf --textract-result t.json  # ...or AWS Textract / Google DocAI
-pdf-strikethrough detect doc.pdf --provenance prov.txt      # deletions kept as [deleted: ...] markers
-pdf-strikethrough detect doc.pdf --method both              # max-recall native detection
-pdf-strikethrough detect doc.pdf --method annot             # explicit /StrikeOut annotations only
-pdf-strikethrough detect doc.pdf --pages 1-5,12             # only these pages (1-based)
-pdf-strikethrough detect doc.pdf --json out.json            # full struck words + passages + evidence
-pdf-strikethrough detect doc.pdf --json -                   # ...or stream JSON to stdout
-pdf-strikethrough detect doc.pdf --clean-text clean.txt     # surviving text, deletions removed
-pdf-strikethrough detect doc.pdf --markdown marked.md       # deletions as ~~struck~~
-pdf-strikethrough detect doc.pdf --overlay out/             # page images with strikes boxed
-pdf-strikethrough detect scan.pdf --ocr rapidocr --dump-crops crops/  # export scored crops to label
-pdf-strikethrough detect doc.pdf --fail-if-found            # exit 3 if any strike found (CI gate)
-cat doc.pdf | pdf-strikethrough detect -                    # read the PDF from stdin
-pdf-strikethrough --version
-```
-
-**Batch mode.** Pass several files, a directory, or a glob (or ask for `--jsonl`) and each is
-processed independently — JSONL output (one result object per line, written as each file
-finishes), `--jobs N` to spread files across processes, and one bad file never aborts the run (its
-line carries an `error` key). The mode follows the arguments, not how many files they match, so a
-folder holding one file is still a batch. A directory means its top-level documents; a glob with
-`**` recurses:
-
-```bash
-pdf-strikethrough detect ./contracts/ --jsonl out.jsonl        # every document in a directory
-pdf-strikethrough detect *.pdf --jobs 4 --jsonl -              # glob, 4 workers, stream to stdout
-pdf-strikethrough detect 'contracts/**/*.pdf' --fail-if-found  # CI gate over a whole tree (exit 3)
-```
-
-Per-file output flags (`--markdown`/`--overlay`/`--clean-text`/`--provenance`/cloud results/
-`--pages`) are single-file only; in batch mode use `--jsonl`.
-
-Other flags: `--dpi` (raster DPI for scanned pages, default 200; read from image metadata for image
-files — very-high-dpi input is normalized to 200 internally, see below), `--overlay-dpi` (overlay
-render DPI, default 150), `--limit` (max words in plain output), `--jobs` / `--jsonl` (batch),
-`--scan-config auto|azure-di|confidence-free`, `--markdown`, `--docai-result`. Exit codes: `0` ok,
-`1` usage/file error (batch: ≥1 file errored), `2` encrypted / OCR required, `3` `--fail-if-found`
-matched, `130` interrupted (a batch keeps the lines already written). Results go to stdout (UTF-8
-when written to `-`) and status lines to stderr, so `--json -` and `--markdown -` pipe cleanly.
-Full help: `pdf-strikethrough detect -h`.
-
-## Examples
-
-Runnable, dependency-light scripts are in [`examples/`](examples/) — they generate their own
-sample PDFs (no assets to download) so every snippet is copy-paste runnable:
-
-```bash
-python examples/native_quickstart.py     # build a redline PDF, detect strikes, print clean text
-python examples/scanned_quickstart.py    # rasterize it to a "scan", run OCR + CNN  ([rapidocr])
-python examples/overlay_quickstart.py     # print strike evidence + write a before/after overlay
-python examples/rag_provenance.py         # clean_text vs provenance_text ([deleted: ...] markers)
-```
-
-## How it works
-
-- **Native**: merged horizontal vector strokes through a word's middle band (excludes under/over-
-  lines); a character is struck when a stroke crosses ≥ 50% of its glyph box, and a word is fully
-  struck only when every character is.
-- **Scanned geometry** (`lines.py`): per-angle morphological opening extracts stroke *fragments*,
-  collinear fragments are stitched, then strict filters (spine fill, stroke run-thickness,
-  angle/length) separate real strikes from bold crossbars and serif-glyph chains.
-- **CNN** (`cnn.py`, StrikeNet, 79k params): resolves pixel-ambiguous cases — a thin strike over
-  an ascender-less word is pixel-identical to a glyph chain, and only a learned model tells them
-  apart. Ships as ONNX; set `PDF_STRIKETHROUGH_MODEL_DIR` to use your own weights.
-- **Attribution** (`scanned.py`): assigns strokes to OCR words with char spans and full/partial
-  resolution, plus a visual-row "orphan" pass for words the detector's stroke evidence missed.
-
-**Resolution & resource limits.** The geometry tunables and the CNN's crop are calibrated at
-200 dpi; scanned rasters above ~300 dpi are downsampled to 200 internally (accuracy-neutral — extra
-resolution buys nothing but cost). Output boxes are page fractions, so this is invisible to results.
-A hard raster budget caps a single page at 128 Mpix, so a hostile huge-mediabox page is
-auto-downsampled with a warning instead of OOMing the process (see [`SECURITY.md`](SECURITY.md)).
-
-**Operating points.** The CNN's struck/clean decision threshold is an explicit choice, not a
-buried constant. `ScanConfig.recall_first()` biases toward catching every deletion (legal / audit
-review — never miss a struck word); `ScanConfig.precision_first()` biases toward never dropping
-live text as if deleted (RAG / indexing). Calibrate the threshold from your own labeled data with
-`pdf_strikethrough.calibration` (`threshold_for_recall`, `threshold_for_precision`,
-`conformal_threshold` for a distribution-free recall floor) and pass it as
-`recall_first(cnn_p_hi=…)`.
-
-**Degraded ruled forms (provisional).** On faint, heavily-ruled scans — printed forms, dense
-tables — a printed rule crossing text is hard to tell from a pen strike, and the classifier
-over-fires on it. Two switches address it, both **off by default** and opted into separately:
-
-- `ScanConfig.ruled_forms()` — a geometry-only veto discarding solid or dead-straight lines as
-  printed furniture. Works with any OCR engine.
-- `rescue_clean_chains=False` — stops the chain gate handing a clean-OCR glyph chain to the CNN
-  because the page *looks* pen-edited; on degraded scans that signal reads scan quality, not edits.
-  Needs calibrated confidences, so it does nothing under `confidence_free()`.
-
-False positives on the private ruled-forms corpus, **recall unchanged in every configuration**:
-**113** default → **38** veto only → **96** chain switch only → **25** with both, i.e.
-`ScanConfig.ruled_forms(rescue_clean_chains=False)`. Not bundled, because each trades away recall on
-its own terms — on a clean scan a real strike is also solid and straight, and a real strike can leave
-OCR undamaged. Treat both as **provisional and outside the v1.0 stability contract**, expected to be
-removed once the model handles ruled forms natively. Pin exactly if you depend on them.
-
-**Shaded and highlighted blocks.** A grey or coloured ground behind text — a highlight block, a
-shaded table row, a call-out frame — is flattened back to white before the page is binarized and
-again inside each CNN crop, so a highlighted word is judged on its ink and not on its background
-(issue #15). Ordinary paper is untouched, and pages with no shaded region produce byte-identical
-results. Two caveats: the constants that decide *when* a ground counts as shaded rest on a single
-measured document and are marked provisional in the source; and a uniformly **dim** scan (no
-colour, paper around 110) is a different failure that this does not address — re-scan or
-pre-normalize such a page before running it.
-
-**Improving the model.** `--dump-crops DIR` (or `st.dump_crops`) exports every crop the pipeline
-scored plus its verdict as a labeling set; label it, retrain with
-[`training/train_strikenet.py`](training/), and load your weights via
-`PDF_STRIKETHROUGH_MODEL_DIR`, `cnn.set_model_dir`, or `cnn.ensure_model(url, sha256, …)`
-(digest-verified download). The shipped weights cannot be reproduced: their training data is not
-recorded ([model card](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/training/MODEL_CARD.md#provenance-and-training)).
-A model the script trains records a digest of its labeled set and its settings in its meta. A
-["contribute a failing page"](.github/ISSUE_TEMPLATE/failing-page.md)
-report feeds the same loop, and [`demo/`](demo/) is a drag-and-drop Gradio app for trying it — live
-at [**huggingface.co/spaces/niles-liu/strikethrough-demo**](https://huggingface.co/spaces/niles-liu/strikethrough-demo).
-
-**Hosted weights.** The shipped StrikeNet is also published on the Hugging Face Hub
-([`niles-liu/strikenet`](https://huggingface.co/niles-liu/strikenet)); the digests are verified
-before the graph is ever loaded, so a tampered host can't swap the model or its thresholds:
-
-```python
-import pdf_strikethrough as st
-st.ensure_model(
-    "https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.onnx",
-    "fac2c51baaa75ee782196bdfe7452638cb48c7deddb21163b1ac6a0a72ae4457",
-    meta_url="https://huggingface.co/niles-liu/strikenet/resolve/main/strike_verdict_cnn.meta.json",
-    meta_sha256="4388b14715bfb1f51b56bb6c463d8f5c0847533316297890e70ac0b2234405d4",
-)
-```
-
-**Scope — validated scripts & layouts.** Detection assumes **horizontal, left-to-right** text; a
-strike is a near-horizontal stroke through a word's middle band. Reading-order assembly is
-column-aware (two-column pages read down each column; tables read across rows).
-
-| Case | Status |
-|---|---|
-| Latin / Western, horizontal | validated (10-PDF redline benchmark, 55.2k struck words) |
-| CJK, **horizontal** set (native + scanned) | detected — strikes are horizontal regardless of script (regression-tested) |
-| Two-column / newspaper layout, struck table rows, hyphenated-line-break strikes | handled |
-| **Vertical** writing modes (CJK/Mongolian), RTL strike axes | out of scope (roadmap) |
-| Handwritten / freehand strikes | untested (geometry assumes near-straight strokes) |
-
-RapidOCR (the recommended scanned backend) is strongest on Chinese, so horizontal-CJK scans work
-end to end today; full vertical-text support is future work.
-
-**Handwritten strikes** are the main known gap: the geometry gate looks for a near-straight,
-near-horizontal stroke, and nothing records that the CNN saw handwritten strikes in training, so a
-wavy pen scribble or a heavy cross-out may be missed. If you hit one, a
-[failing-page report](.github/ISSUE_TEMPLATE/failing-page.md) with `--dump-crops` output is the
-fastest way to turn it into a fix — it becomes both a regression test and training data.
-
 ## API surface
 
-The top-level package (`import pdf_strikethrough as st`) exports ~37 names; the most-used:
+The top-level package (`import pdf_strikethrough as st`) exports these names, plus its submodules:
 
 | Group | Names |
 |---|---|
@@ -393,21 +280,22 @@ The top-level package (`import pdf_strikethrough as st`) exports ~37 names; the 
 | CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta`, `ensure_model` |
 | Active learning + calibration | `dump_crops`, `pdf_strikethrough.calibration` (`threshold_for_recall`, `threshold_for_precision`, `conformal_threshold`, `pr_curve`) |
 | OCR (backends + cloud-result adapters) | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di`, `words_from_textract`, `words_from_docai` |
-| Errors | `OcrRequiredError`, `EncryptedPdfError` |
-| Types | `StruckWord`, `DetectResult`, `Passage` (in `pdf_strikethrough.types`) |
+| Errors and warnings | `OcrRequiredError`, `EncryptedPdfError`, `GarbledTextWarning` |
+| Types | `StruckWord`, `DetectResult`, `Passage`, `GarbledWord`, `Telemetry` (in `pdf_strikethrough.types`) |
 
-Every `detect_pdf` / `detect_image_file` result and every CLI `--json` / `--jsonl` payload carries
-`schema_version` (`pdf_strikethrough.types.SCHEMA_VERSION`, currently `1`). It is bumped when a
-documented key is removed or renamed or changes meaning, never for an added key, so ignore keys you
-don't recognize.
-
-Everything is docstringed; `help(st.detect_pdf)` is the reference.
+Every `detect_pdf` and `detect_image_file` result, and every CLI `--json` and `--jsonl` payload,
+carries `schema_version` (`pdf_strikethrough.types.SCHEMA_VERSION`, now `1`). It goes up when a
+documented key is removed, renamed or changes meaning, never for an added key, so ignore keys you
+don't recognize. The telemetry report has its own `telemetry_version` under the same rule.
+`help(st.detect_pdf)` is the reference.
 
 ## Contributing, security, citation
 
-- Development setup, running the tests, and training or exporting a model: [`CONTRIBUTING.md`](CONTRIBUTING.md).
-- This package parses untrusted PDFs — reporting policy in [`SECURITY.md`](SECURITY.md).
-- Citing it in research: [`CITATION.cff`](CITATION.cff).
+- Development setup, tests, and training or exporting a model:
+  [`CONTRIBUTING.md`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/CONTRIBUTING.md).
+- This package parses untrusted PDFs; how to report a problem:
+  [`SECURITY.md`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/SECURITY.md).
+- Citing it: [`CITATION.cff`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/CITATION.cff).
 
 ## License
 

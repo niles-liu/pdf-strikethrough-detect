@@ -13,9 +13,7 @@ indices) and, optionally, `scanned_di_result` (a cached Azure DI analyze-result 
 downloaded with the PDFs by `fetch_corpus.py` and checked against `scanned_di_sha256`). Azure DI is
 read from that cached JSON (no cloud call) and scored twice, with the default DI calibration and
 with `ScanConfig.confidence_free()`; RapidOCR runs live if installed. Entries without
-`scanned_pages` are skipped, and an entry without a DI result is n/a in the DI columns. This
-supersedes the DI-vs-original-pipeline `di_parity.py` with a self-contained reference (the exact
-native truth) that needs no vanished pipeline.
+`scanned_pages` are skipped, and an entry without a DI result is n/a in the DI columns.
 """
 from __future__ import annotations
 

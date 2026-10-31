@@ -103,10 +103,17 @@ def page_markdown(items):
     return "\n".join(" ".join(mark_word(t, r) for t, _b, r in row) for row in ordered_rows(items))
 
 
-def page_clean_text(items):
+def page_clean_text(items, drop_overlaid=False):
     """Surviving (non-deleted) text for one page from [(text, bbox_frac, rec), ...]: struck
     words are dropped (partial strikes keep only the un-struck chars), assembled row by row
-    from the word records directly — immune to literal '~~' in the document text."""
+    from the word records directly, so a literal '~~' in the document text cannot confuse it.
+
+    With `drop_overlaid` (``detect_pdf``'s 'vector' and 'both' native pages), what a partial
+    strike leaves of a word also loses the characters U+0336 overlays strike, as
+    ``clean_markdown()`` does: a record reports one span, and overlays outside it stay in its
+    ``text`` and in ``markdown``."""
+    if drop_overlaid:
+        from .native import _drop_overlaid
     rows_out = []
     for row in ordered_rows(items):
         toks = []
@@ -118,6 +125,8 @@ def page_clean_text(items):
             if not r.get("partial") or (c0 == 0 and c1 >= len(t)):
                 continue                       # fully struck: drop the word
             rem = t[:c0] + t[c1:]
+            if drop_overlaid:
+                rem = _drop_overlaid(t[:c0]) + _drop_overlaid(t[c1:])
             if rem:
                 toks.append(rem)
         if toks:
@@ -126,13 +135,14 @@ def page_clean_text(items):
 
 
 def strip_struck(md):
-    """Remove ~~struck~~ spans from markdown -> the surviving (non-deleted) text.
+    """Remove ~~struck~~ spans from markdown -> the surviving (non-deleted) text, trimmed:
+    :func:`pdf_strikethrough.native.strip_struck_markdown`, so characters struck with U+0336
+    overlays go too.
 
     Caveat: text that itself contains a literal '~~' is ambiguous in markdown form; prefer
     :func:`page_clean_text`, which works from the word records and has no such ambiguity."""
-    clean = _STRIKE_SPAN.sub("", md)
-    clean = re.sub(r"[ \t]{2,}", " ", clean)
-    return re.sub(r"\n{3,}", "\n\n", clean).strip()
+    from .native import _strip_struck
+    return _strip_struck(md, emphasis=False).strip()     # this module writes no emphasis markup
 
 
 def mark_provenance(md, template="[deleted: {}]"):

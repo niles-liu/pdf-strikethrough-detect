@@ -12,22 +12,12 @@ faint scans so it confirmed nearly everything. Two fixes, issue #4·B and #4·A:
 The originating corpus is private; these use synthetic rasters that reproduce the same geometry.
 See CHANGELOG 0.9.1.
 """
-import numpy as np
-from pdf_strikethrough import cnn, detect
+from pdf_strikethrough import detect
 from pdf_strikethrough.ocr import Word
 from pdf_strikethrough.scanned import ScanConfig, analyze_scanned_page
+from _synth import _blank, _glyphs, _saturated_cnn
 
 DPI = 200
-
-
-def _blank(h=500, w=900):
-    return np.full((h, w), 255, np.uint8)
-
-
-def _glyphs(gray, x0, x1, y0, y1, step=8, wide=3):
-    """Fill a band with dense vertical 'glyph' ticks (ink)."""
-    for x in range(x0, x1, step):
-        gray[y0:y1, x:x + wide] = 20
 
 
 def test_fix_b_rejects_in_band_one_sided_table_rule():
@@ -55,11 +45,6 @@ def test_fix_b_keeps_two_sided_through_strike():
     word = Word("deleted", (100 / W, 160 / H, 700 / W, 240 / H), confidence=0.6)
     _tagged, struck = analyze_scanned_page(gray, [word], config=ScanConfig.azure_di(), dpi=DPI)
     assert any(not s.get("partial") for s in struck), f"through-strike lost: {struck}"
-
-
-def _saturated_cnn(monkeypatch):
-    """Reproduce the observed StrikeNet saturation: it confirms every candidate at prob 1.0."""
-    monkeypatch.setattr(cnn, "score_crops", lambda crops, **kw: np.ones(len(crops)))
 
 
 def test_fix_a_confidence_veto_drops_high_conf_uncorroborated(monkeypatch):
@@ -136,3 +121,24 @@ def test_fix_a_corroborated_high_conf_word_survives_veto(monkeypatch):
     by = {r["text"]: r for r in recs}
     assert by.get("struck", {}).get("final"), (
         f"corroborated high-conf strike was wrongly vetoed: {recs}")
+
+
+def test_fix_a_veto_spares_a_word_on_a_line_that_strikes_another_with_geometry(monkeypatch):
+    """A crisp printed strike through two words DI reads at 0.99: one has ink on both sides of the
+    bar, the other too little ink at it to show strike geometry. The line is a strike, so the veto
+    spares the second word too; alone on its own bar it is still dropped
+    (test_fix_a_confidence_veto_drops_high_conf_uncorroborated)."""
+    _saturated_cnn(monkeypatch)
+    gray = _blank()
+    _glyphs(gray, 100, 380, 150, 250)           # ink on both sides of the bar
+    _glyphs(gray, 420, 700, 150, 250, step=60)  # sparse: no strike geometry of its own
+    gray[198:201, 100:700] = 0
+    H, W = gray.shape
+    words = [Word("struck", (100 / W, 150 / H, 380 / W, 250 / H), confidence=0.99),
+             Word("words", (420 / W, 150 / H, 700 / W, 250 / H), confidence=0.99)]
+    _tagged, struck = analyze_scanned_page(gray, words, config=ScanConfig.azure_di(), dpi=DPI)
+    geom = {s["text"]: s.get("geom_corroborated") for s in struck}
+    assert geom == {"struck": True, "words": False}, struck
+    by = {r["text"]: r for r in detect.detect_scanned_image(gray, words,
+                                                            config=ScanConfig.azure_di(), dpi=DPI)}
+    assert by["struck"]["final"] and by["words"]["final"] and not by["words"].get("conf_veto")

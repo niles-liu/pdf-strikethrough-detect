@@ -10,7 +10,7 @@ into a regression test and, once labeled, into training data. Thank you. -->
 
 ## The document
 
-- **Can you attach the PDF / image?**  (yes / no — if no, see "Can't share the file" below)
+- **Can you attach the PDF / image?**  (yes / no; if no, see "Can't share the file" below)
 - **Page(s):** <!-- 1-based, e.g. page 3 -->
 - **Kind:** <!-- born-digital PDF / scanned PDF / photo or image / .docx -->
 
@@ -37,13 +37,14 @@ pdf-strikethrough detect doc.pdf --ocr rapidocr --json out.json
 
 ## Can't share the file?
 
-Export just the affected crops — this leaks no surrounding text and gives us exactly what the
-model saw:
+Export the word crops the model scored instead (`--pages` limits it to the failing page). Only
+those candidate words leave the document: their crop images (with a few pixels around each
+word), and their OCR text and page position in `crops.jsonl`. They are exactly what the model saw:
 
 ```
-pdf-strikethrough detect doc.pdf --ocr rapidocr --dump-crops crops_out/
+pdf-strikethrough detect doc.pdf --ocr rapidocr --pages 3 --dump-crops crops_out/
 ```
 
 Then attach `crops_out/` (the `crops/*.png` + `crops.jsonl`). Even better, set each row's `label`
-to `struck` or `clean` first — that makes it labeled training data straight away
+to `struck` or `clean` first: that makes it labeled training data straight away
 (see `training/README.md`).

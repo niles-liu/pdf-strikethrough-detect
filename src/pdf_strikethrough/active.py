@@ -1,4 +1,4 @@
-"""Active-learning crop export (R-active): turn a detection run into a labeling set.
+"""Active-learning crop export: turn a detection run into a labeling set.
 
 The scanned pipeline scores each candidate word with StrikeNet; the borderline ones (tier
 'review') and the geometry-strong ones it double-checks (tier 'auto') are exactly the crops worth
@@ -22,7 +22,8 @@ from .detect import RENDER_DPI, detect_image_file, detect_pdf
 
 # Fields copied from each scored record into its manifest row (present-if-set).
 _CROP_EVIDENCE = ("page", "text", "chars", "tier", "verdict", "final", "partial",
-                  "score", "cnn_prob", "cnn_agrees", "conf", "off", "wcov", "bbox_frac")
+                  "score", "cnn_prob", "cnn_agrees", "conf", "off", "wcov", "bbox_frac",
+                  "line_support")
 
 
 def _save_crop_png(std, path):

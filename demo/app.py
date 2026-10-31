@@ -25,12 +25,14 @@ import pdf_strikethrough as st
 
 
 # Build the OCR engine at startup, where a failure can be reported on the page, not on the first
-# scanned upload (rapidocr_backend() imports lazily).
+# scanned upload (rapidocr_backend() imports lazily). A prebuilt engine is used as is, so this one
+# turns RapidOCR's orientation classifier off itself, as rapidocr_backend() does for the engine it
+# builds: the classifier turns struck and underlined lines upside down.
 try:
     from rapidocr import RapidOCR
 
     from pdf_strikethrough.ocr import rapidocr_backend
-    _OCR = rapidocr_backend(engine=RapidOCR())
+    _OCR = rapidocr_backend(engine=RapidOCR(params={"Global.use_cls": False}))
 except Exception as e:                               # OCR is optional in the demo
     print(f"OCR unavailable, scanned pages will be skipped: {type(e).__name__}: {e}",
           file=sys.stderr)

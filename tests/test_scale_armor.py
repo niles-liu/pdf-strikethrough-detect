@@ -13,8 +13,10 @@ import pytest
 
 import pdf_strikethrough as st
 from pdf_strikethrough import __main__ as cli
+from pdf_strikethrough import detect
 from pdf_strikethrough import markdown as md
 from pdf_strikethrough.detect import (MAX_RENDER_MPIX, RENDER_DPI, _downsample_gray, _working_dpi)
+from pdf_strikethrough.ocr import Word
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -72,6 +74,46 @@ def test_huge_mediabox_page_does_not_oom():
     assert res["n_struck_final"] == 0
 
 
+def _over_budget_scan(side=1440):
+    """A scanned page `side` pt square (an image over the whole page; 1440 pt is 20 in, 16 Mpix at
+    200 dpi) of 60 pt text with "struck" struck, and its words."""
+    src = fitz.open()
+    sp = src.new_page(width=side, height=side)
+    sp.insert_text((100, 700), "keep this struck word", fontsize=60)
+    _solid_strike(sp, "struck", width=2.0)
+    words = [Word(w[4], (w[0] / side, w[1] / side, w[2] / side, w[3] / side))
+             for w in sp.get_text("words")]
+    doc = fitz.open()
+    page = doc.new_page(width=side, height=side)
+    page.insert_image(page.rect, pixmap=sp.get_pixmap(dpi=100))
+    return doc, words
+
+
+@pytest.mark.parametrize("source", ["words_by_page", "ocr"])
+def test_page_over_the_pixel_budget_is_rendered_end_to_end_within_it(monkeypatch, source):
+    # The blank page above is never rendered. This one is: a scanned page four times the budget
+    # at 200 dpi is rendered at 100 dpi, inside the budget, for detection and for the OCR call, and
+    # its strike is still found. The budget is scaled down from MAX_RENDER_MPIX (128): a page at
+    # that budget takes minutes and over a GB of arrays to run.
+    budget = 4
+    monkeypatch.setattr(detect, "MAX_RENDER_MPIX", budget)
+    doc, words = _over_budget_scan()
+    rendered, ocr_shapes = [], []
+    real = detect._render_gray
+    monkeypatch.setattr(detect, "_render_gray",
+                        lambda pg, dpi=RENDER_DPI: rendered.append(real(pg, dpi)) or rendered[-1])
+    kw = ({"words_by_page": {0: words}} if source == "words_by_page"
+          else {"ocr": lambda rgb: ocr_shapes.append(rgb.shape) or words})
+    with pytest.warns(UserWarning, match=f"{budget} Mpix raster budget"):
+        res = st.detect_pdf(doc, **kw)
+    gray, = rendered
+    assert gray.shape == (2000, 2000) and gray.size <= budget * 1_000_000
+    assert ocr_shapes == ([(2000, 2000, 3)] if source == "ocr" else [])
+    assert res["page_sources"] == ["scanned"]
+    assert any("rendering at 100 dpi" in w for w in res["warnings"])
+    assert [w["chars"] for w in res["words"] if w["final"]] == ["struck"]
+
+
 # ===== R-dash (dashed / flat-bezier native strikes) ===========================================
 def test_dashed_strike_is_chained_and_detected():
     doc = _one_page(lambda p: p.insert_text((50, 100), "keep deleted text here", fontsize=12))
@@ -98,7 +140,8 @@ def test_flat_bezier_strike_detected():
 
 
 def test_isolated_short_tick_is_not_a_strike():
-    # a lone sub-MIN_STROKE_LEN tick must not chain into (or be promoted to) a strike
+    # a lone 3 pt tick at the start of a long word must not chain into (or be promoted to) a
+    # strike: it is long enough to be a stroke, but covers too little of the 'd' to strike it
     doc = _one_page(lambda p: p.insert_text((50, 100), "keep deleted text here", fontsize=12))
     page = doc[0]
     x0, y0, _, y1 = _word_box(page, "deleted")
@@ -108,12 +151,22 @@ def test_isolated_short_tick_is_not_a_strike():
 
 
 def test_chain_short_merges_within_gap_only():
-    # three 3-pt dashes 2 pt apart chain into one >=6-pt run; a far tick stays its own short piece
-    segs = [(0, 3, 50, (0, 0, 0), 1.0), (5, 8, 50, (0, 0, 0), 1.0), (10, 13, 50, (0, 0, 0), 1.0),
-            (200, 203, 50, (0, 0, 0), 1.0)]
+    # three 3-pt dashes 2 pt apart chain into one 13-pt run; a far dash, past DASH_MAX_GAP, stays
+    # a 3-pt run of its own; a run is as late in the paint order as its last-painted dash
+    segs = [(0, 3, 50, (0, 0, 0), 1.0, 4), (5, 8, 50, (0, 0, 0), 1.0, 9),
+            (10, 13, 50, (0, 0, 0), 1.0, 6), (200, 203, 50, (0, 0, 0), 1.0, 2)]
     chains = sorted(st.native._chain_short(segs))
     assert chains[0][0] == 0 and chains[0][1] == 13        # merged run 0..13
-    assert chains[1][0] == 200 and chains[1][1] == 203     # isolated, still short
+    assert chains[0][5] == 9
+    assert chains[1][0] == 200 and chains[1][1] == 203     # not merged across the 187-pt gap
+
+
+def test_cover_rows_file_a_tall_fill_only_where_strokes_run():
+    # strokes 2e7 pt apart under one fill spanning them: the fill is filed in the two bands that
+    # hold a stroke, not in the 2.5 million between them
+    strokes = [(0, 100, y, (0, 0, 0), 1.0, 100, False, 0) for y in (-1e7, 1e7)]
+    rows = st.native._cover_rows([(1, "f", fitz.Rect(0, -1e7, 100, 1e7), True)], strokes)
+    assert sorted(rows) == [round(-1e7 / st.native.COVER_ROW), round(1e7 / st.native.COVER_ROW)]
 
 
 # ===== batch mode =============================================================================

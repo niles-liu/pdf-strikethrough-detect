@@ -10,22 +10,13 @@ import pytest
 import pdf_strikethrough as st
 from pdf_strikethrough import detect as D
 from pdf_strikethrough.ocr import Word, words_from_azure_di, words_from_docai
+from _synth import _scanned_pdf
 
 
 def _native_pdf(n=2):
     doc = pymupdf.open()
     for i in range(n):
         doc.new_page(width=300, height=200).insert_text((40, 80), f"page {i} text", fontsize=12)
-    return doc.tobytes()
-
-
-def _scanned_pdf(n=2):
-    doc = pymupdf.open()
-    for _ in range(n):
-        page = doc.new_page(width=300, height=200)
-        pix = pymupdf.Pixmap(pymupdf.csGRAY, pymupdf.IRect(0, 0, 60, 40), False)
-        pix.set_rect(pix.irect, (250,))
-        page.insert_image(page.rect, pixmap=pix)
     return doc.tobytes()
 
 

@@ -128,6 +128,13 @@ def test_usage_errors_exit_1(tmp_path, argv):
     assert e.value.code == 1                       # 2 means "encrypted / OCR required" here
 
 
+def test_on_garbled_rejects_an_unknown_choice(tmp_path, capsys):
+    with pytest.raises(SystemExit) as e:
+        cli.main(["detect", str(_struck_pdf(tmp_path / "a.pdf")), "--on-garbled", "Drop"])
+    assert e.value.code == 1
+    assert "argument --on-garbled: invalid choice" in capsys.readouterr().err
+
+
 def test_pages_past_the_end_is_a_clean_error(tmp_path, capsys):
     assert cli.main(["detect", str(_struck_pdf(tmp_path / "a.pdf")), "--pages", "99"]) == 1
     assert capsys.readouterr().err.startswith("error: --pages: page 99 is past the end")

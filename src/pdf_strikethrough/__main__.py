@@ -9,14 +9,16 @@ native pages are still fully processed. A ``.docx`` reads strike formatting + tr
 straight from the markup (no OCR).
 
 Batch: pass several files, a directory, or a glob (`detect *.pdf --jobs 4 --jsonl out.jsonl`), or
-ask for ``--jsonl``, and each file is processed independently — JSONL output (one result object
+ask for ``--jsonl``, and each file is processed independently: JSONL output (one result object
 per line, written as each file finishes), optional multiprocessing across files (``--jobs N``),
 and one bad file never aborts the run (its line carries an ``error`` key). The mode follows the
 form of the arguments, not the number of files they match: a directory holding one file is still
-a batch. Per-file output flags (--markdown/--overlay/cloud results/--pages) are single-file only.
+a batch. Per-file flags (--markdown, --clean-text, --provenance, --overlay, --dump-crops,
+--on-garbled, the cloud results and --pages) are ignored in batch mode, with a warning.
 
 Results go to stdout (UTF-8 when written to '-') and status lines to stderr, so `--json -` and
-`--markdown -` pipe cleanly.
+`--markdown -` pipe cleanly. ``--telemetry FILE`` appends one JSON line per document to FILE: the
+run's timing, tier counts and cnn_prob histogram (``detect_pdf(telemetry=True)``).
 
 Exit codes:
   0  success
@@ -32,9 +34,11 @@ import contextlib
 import json
 import os
 import sys
+import time
+import warnings
 
 from ._batch import (SCHEMA_VERSION, _batch_worker, _build_ocr, _check_ocr_available,
-                     _detect_payload, _JSON_EVIDENCE)
+                     _detect_payload, _docx_telemetry, _JSON_EVIDENCE, _telemetry_line)
 
 
 def _parse_pages(spec):
@@ -87,6 +91,67 @@ def _open_out(path):
             pass                             # non-reconfigurable stream (e.g. captured in tests)
         return contextlib.nullcontext(sys.stdout)
     return open(path, "w", encoding="utf-8")
+
+
+def _open_telemetry(path):
+    """--telemetry FILE opened for appending. A last line left unfinished (a run cut off part way
+    through a write) is ended first, so the lines after it parse. A file name that is not valid
+    UTF-8 is written as a JSON escape."""
+    f = open(path, "a", encoding="utf-8", errors="backslashreplace")
+    try:
+        size = os.path.getsize(path)
+        if size:
+            with open(path, "rb") as r:
+                r.seek(size - 1)
+                if r.read(1) != b"\n":
+                    f.write("\n")
+    except OSError:                          # not a regular file: nothing to end
+        pass
+    return f
+
+
+def _telemetry_text(line):
+    """One --telemetry line, serialized whole before any of it is written."""
+    return json.dumps(line, default=list, ensure_ascii=False) + "\n"
+
+
+def _append_telemetry(path, line):
+    """Append one --telemetry line after a single file's outputs. A failure is a warning: the
+    results are already out."""
+    try:
+        with _open_telemetry(path) as f:
+            f.write(_telemetry_text(line))
+    except OSError as e:
+        print(f"warning: --telemetry: cannot write {path}: {e}", file=sys.stderr)
+        return
+    print(f"appended run telemetry to {path}", file=sys.stderr)
+
+
+def _same_file(a, b):
+    if os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b)):
+        return True
+    try:
+        return os.path.samefile(a, b)        # a hard link, a short name, a \\?\ path
+    except (OSError, ValueError):
+        return False                         # one of them does not exist (yet)
+
+
+def _check_telemetry_path(args, inputs):
+    """An error message when --telemetry names stdout, an input, or a file another flag reads or
+    writes, else None."""
+    if args.telemetry is None:
+        return None
+    if args.telemetry == "-":
+        return "--telemetry appends to a file; '-' (stdout) is not one"
+    for flag, val in (("--json", args.json), ("--jsonl", args.jsonl),
+                      ("--markdown", args.markdown), ("--clean-text", args.clean_text),
+                      ("--provenance", args.provenance), ("--overlay", args.overlay),
+                      ("--di-result", args.di_result), ("--textract-result", args.textract_result),
+                      ("--docai-result", args.docai_result),
+                      *(("an input", p) for p in inputs)):
+        if val and val != "-" and _same_file(args.telemetry, val):
+            return f"--telemetry and {flag} name the same file"
+    return None
 
 
 def _is_glob(arg):
@@ -147,6 +212,16 @@ def _cmd_detect(args):
     inputs = _expand_inputs(args.files)
     if inputs is None:
         return 1
+    problem = _check_telemetry_path(args, inputs)
+    if problem:
+        print(f"error: {problem}", file=sys.stderr)
+        return 1
+    if args.telemetry:
+        try:                                 # unwritable: say so before any work, as for --jsonl
+            _open_telemetry(args.telemetry).close()
+        except OSError as e:
+            print(f"error: cannot write {args.telemetry}: {e}", file=sys.stderr)
+            return 1
     batch = (args.jsonl is not None or len(args.files) > 1
              or any(os.path.isdir(f) or _is_glob(f) for f in args.files))
     if batch and inputs == ["-"]:
@@ -209,7 +284,7 @@ def _cmd_detect_single(args, path):
     elif args.scan_config == "confidence-free":
         scan_config = st.ScanConfig.confidence_free()
     elif di_result is not None:
-        scan_config = st.ScanConfig.azure_di()
+        scan_config = None                   # detect_pdf: the DI calibration where it covers
     elif words_by_page is not None or args.ocr != "none":
         scan_config = st.ScanConfig.confidence_free()
     else:
@@ -217,6 +292,11 @@ def _cmd_detect_single(args, path):
 
     if args.dump_crops:
         from . import active
+        for val, flag in ((args.telemetry, "--telemetry"),
+                          (args.on_garbled != "keep", "--on-garbled")):
+            if val:
+                print(f"warning: {flag} does not apply with --dump-crops; ignored",
+                      file=sys.stderr)
         dc_source = sys.stdin.buffer.read() if path == "-" else path
         try:
             summary = active.dump_crops(
@@ -235,11 +315,15 @@ def _cmd_detect_single(args, path):
 
     if is_image:
         from PIL import Image
-        if page_subset is not None:
-            print("warning: --pages does not apply to an image file; ignored", file=sys.stderr)
+        for val, flag in ((page_subset is not None, "--pages"),
+                          (args.on_garbled != "keep", "--on-garbled")):
+            if val:
+                print(f"warning: {flag} does not apply to an image file; ignored",
+                      file=sys.stderr)
         try:
             res = st.detect_image_file(path, ocr=ocr, words_by_page=words_by_page,
-                                       scan_config=scan_config, dpi=args.dpi)
+                                       scan_config=scan_config, dpi=args.dpi,
+                                       telemetry=bool(args.telemetry))
         except st.OcrRequiredError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
@@ -274,16 +358,19 @@ def _cmd_detect_single(args, path):
             print("", file=sys.stderr, flush=True)          # newline after the last page
     progress = _progress if sys.stderr.isatty() else None
 
-    # no-word-source on an uncovered scanned page raises with 'raise'; skip when the user opted out
-    # of OCR entirely (--ocr none and no cloud result), else let it raise so the gap is loud.
+    # skip an uncovered scanned page only when the user opted out of OCR (--ocr none and no cloud
+    # result); otherwise raise, so the gap is loud
     have_words = di_result is not None or words_by_page is not None
     on_missing_ocr = "skip" if (args.ocr == "none" and not have_words) else "raise"
     try:
-        res = st.detect_pdf(doc, ocr=ocr, scan_config=scan_config,
-                            dpi=args.dpi if args.dpi is not None else 200,
-                            method=args.method, di_result=di_result, words_by_page=words_by_page,
-                            pages=page_subset, progress=progress,
-                            on_missing_ocr=on_missing_ocr)
+        with warnings.catch_warnings():      # its pages are in res["warnings"], printed below
+            warnings.simplefilter("ignore", st.GarbledTextWarning)
+            res = st.detect_pdf(doc, ocr=ocr, scan_config=scan_config,
+                                dpi=args.dpi if args.dpi is not None else st.detect.RENDER_DPI,
+                                method=args.method, di_result=di_result,
+                                words_by_page=words_by_page, pages=page_subset,
+                                progress=progress, on_missing_ocr=on_missing_ocr,
+                                on_garbled=args.on_garbled, telemetry=bool(args.telemetry))
     except st.OcrRequiredError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -327,6 +414,7 @@ def _emit_result(args, res, overlay_source):
                        "page_count": res["page_count"], "page_sources": res["page_sources"],
                        "n_struck_final": len(final), "warnings": res.get("warnings", []),
                        "passages": res.get("passages", []),
+                       "garbled_words": res.get("garbled_words", []),
                        "words": [{k: w[k] for k in _JSON_EVIDENCE if k in w} for w in final]}
             if "pages" in res:
                 payload["pages"] = res["pages"]
@@ -364,6 +452,8 @@ def _emit_result(args, res, overlay_source):
         if len(final) > args.limit:
             print(f"  ... and {len(final) - args.limit} more (use --json to dump all)")
 
+    if args.telemetry:
+        _append_telemetry(args.telemetry, _telemetry_line(res["source"], res))
     if args.fail_if_found and final:
         return 3
     return 0
@@ -377,9 +467,11 @@ def _cmd_detect_docx(args, path):
                       (args.markdown, "--markdown"), (args.clean_text, "--clean-text"),
                       (args.provenance, "--provenance"), (args.pages, "--pages"),
                       (args.di_result, "--di-result"), (args.textract_result, "--textract-result"),
-                      (args.docai_result, "--docai-result"), (args.dump_crops, "--dump-crops")):
+                      (args.docai_result, "--docai-result"), (args.dump_crops, "--dump-crops"),
+                      (args.on_garbled != "keep", "--on-garbled")):
         if val:
             print(f"warning: {flag} does not apply to a .docx; ignored", file=sys.stderr)
+    t0 = time.perf_counter()
     try:
         with open(path, "rb") as f:
             recs = st.strikethroughs_in_docx(f.read())
@@ -387,6 +479,8 @@ def _cmd_detect_docx(args, path):
         print(f"error: {e}", file=sys.stderr)
         return 1
     final = [r for r in recs if r.get("final")]
+    tel_line = (_telemetry_line(path, {"telemetry": _docx_telemetry(recs, t0)})
+                if args.telemetry else None)
 
     if args.json:
         payload = {"schema_version": SCHEMA_VERSION, "source": path, "kind": "docx",
@@ -409,6 +503,8 @@ def _cmd_detect_docx(args, path):
         if len(final) > args.limit:
             print(f"  ... and {len(final) - args.limit} more (use --json to dump all)")
 
+    if args.telemetry:
+        _append_telemetry(args.telemetry, tel_line)
     if args.fail_if_found and final:
         return 3
     return 0
@@ -453,32 +549,55 @@ def _cmd_detect_batch(args, inputs):
                       (args.provenance, "--provenance"), (args.overlay, "--overlay"),
                       (args.di_result, "--di-result"), (args.textract_result, "--textract-result"),
                       (args.docai_result, "--docai-result"), (args.pages, "--pages"),
-                      (args.dump_crops, "--dump-crops")):
+                      (args.dump_crops, "--dump-crops"),
+                      # batch output has no markdown, clean text or passages
+                      (args.on_garbled != "keep", "--on-garbled")):
         if val:
             print(f"warning: {flag} is ignored in batch mode", file=sys.stderr)
 
     opts = {"ocr": args.ocr, "dpi": args.dpi, "method": args.method,
-            "scan_config": args.scan_config}
+            "scan_config": args.scan_config, "telemetry": bool(args.telemetry)}
     jobs = max(1, args.jobs)
     if sys.platform == "win32":
         jobs = min(jobs, 61)                 # the Windows ProcessPoolExecutor limit
     _check_ocr_available(args.ocr)          # a clean error before the output is truncated
     out_path = args.jsonl or args.json
+    try:                                     # appended to, so opened first: it truncates nothing
+        tel_out = (_open_telemetry(args.telemetry) if args.telemetry
+                   else contextlib.nullcontext(None))
+    except OSError as e:
+        print(f"error: cannot write {args.telemetry}: {e}", file=sys.stderr)
+        return 1
     try:
         out = _open_out(out_path) if out_path else contextlib.nullcontext(None)
     except OSError as e:
+        if args.telemetry:
+            tel_out.close()
         print(f"error: cannot write {out_path}: {e}", file=sys.stderr)
         return 1
 
-    n = errors = hits = 0
+    n = errors = hits = tel_n = 0
 
-    def emit(pl):                            # f is the open output, bound by the with below
-        nonlocal n, errors, hits
+    def emit(pl):                    # f and tf are the open outputs, bound by the with below
+        nonlocal n, errors, hits, tel_n, tf
         n += 1
+        tel_line = _telemetry_line(pl["source"], pl) if tf is not None else None
+        pl.pop("telemetry", None)
         if f is not None:
             json.dump(pl, f, default=list, ensure_ascii=False)
             f.write("\n")
             f.flush()
+        if tel_line is not None:
+            try:
+                tf.write(_telemetry_text(tel_line))
+                tf.flush()
+                tel_n += 1
+            except OSError as e:             # results go on; telemetry stops for this run
+                print(f"warning: --telemetry: cannot write {args.telemetry} after {tel_n} "
+                      f"line(s): {e}; no more telemetry this run", file=sys.stderr)
+                with contextlib.suppress(OSError):
+                    tf.close()               # its unwritten bytes would fail again on the close
+                tf = None
         if "error" in pl:
             errors += 1
             print(f"error: {pl['source']}: {pl['error']}", file=sys.stderr)
@@ -489,7 +608,7 @@ def _cmd_detect_batch(args, inputs):
                   f"  {pl['source']}: {pl.get('n_struck_final', 0)} struck "
                   f"({pl.get('page_count', '?')} pages)", flush=True)
 
-    with out as f:
+    with out as f, tel_out as tf:
         try:
             if jobs <= 1:
                 for path in inputs:
@@ -552,6 +671,8 @@ def _cmd_detect_batch(args, inputs):
 
     if out_path and out_path != "-":
         print(f"wrote {n} result line(s) to {out_path}", file=sys.stderr)
+    if args.telemetry:
+        print(f"appended {tel_n} telemetry line(s) to {args.telemetry}", file=sys.stderr)
     if out_path != "-":                     # human summary (skipped only when JSONL went to stdout)
         print(f"{n} file(s), {hits} with struck text, {errors} error(s)",
               file=sys.stderr if out_path else sys.stdout)
@@ -598,8 +719,8 @@ def main(argv=None):
                         "backend")
     d.add_argument("--scan-config", dest="scan_config", default="auto",
                    choices=["auto", "azure-di", "confidence-free"],
-                   help="scanned-page calibration ('auto' picks azure-di with --di-result, "
-                        "confidence-free with --ocr, else the default)")
+                   help="scanned-page calibration ('auto' picks azure-di on the pages --di-result "
+                        "covers, confidence-free with --ocr, else the default)")
     d.add_argument("--dpi", type=_positive_int, default=None,
                    help="raster DPI for scanned pages (default: 200 for PDFs; read from the image "
                         "metadata for image files, else 200)")
@@ -608,6 +729,11 @@ def main(argv=None):
     d.add_argument("--method", default="vector", choices=["vector", "flag", "annot", "both"],
                    help="native-page detector: vector geometry, MuPDF strikeout flag, explicit "
                         "/StrikeOut annotations, or the union of all three")
+    d.add_argument("--on-garbled", dest="on_garbled", default="keep", choices=["keep", "drop"],
+                   help="words whose text a broken character map garbled (listed in --json's "
+                        "garbled_words): keep them as extracted, or drop them from the markdown, "
+                        "clean text, provenance text and passages; struck-word lists keep them "
+                        "(single file)")
     d.add_argument("--limit", type=int, default=25, help="max words to print (plain output)")
     d.add_argument("--json", metavar="PATH", help="write full results as JSON ('-' = stdout); in "
                    "batch mode this is JSONL, one result object per file")
@@ -632,6 +758,10 @@ def main(argv=None):
     d.add_argument("--dump-crops", dest="dump_crops", metavar="DIR",
                    help="active-learning export: write each scored word crop (PNG) + a crops.jsonl "
                         "manifest under DIR for labeling (scanned PDF / image input; single file)")
+    d.add_argument("--telemetry", metavar="FILE",
+                   help="append one JSON line per document to FILE: per-page timing, candidates "
+                        "per tier and a cnn_prob histogram, for monitoring runs (in batch mode, "
+                        "a file that fails gets a line with its error)")
     d.add_argument("--fail-if-found", dest="fail_if_found", action="store_true",
                    help="exit 3 if any struck word is found (for CI gating)")
     d.set_defaults(func=_cmd_detect)

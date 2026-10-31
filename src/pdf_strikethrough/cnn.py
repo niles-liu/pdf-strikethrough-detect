@@ -26,16 +26,13 @@ from .lines import to_gray_u8
 CROP_H, CROP_W = 32, 160          # net input: ink-positive [0,1], height-normalized isotropically
 PAD_X, PAD_Y = 5, 7               # crop margin around the word box, in PIXELS
 
-# --- Calibration note (R-highdpi) -------------------------------------------------------------
+# --- Calibration note --------------------------------------------------------------------------
 # PAD_X/PAD_Y are FIXED PIXEL margins calibrated for RENDER_DPI = 200 (detect.py). Their share of a
-# word box shifts with resolution — large around a 72-dpi glyph, tiny at 600 dpi — which would push
-# the CNN input off its training distribution away from 200 dpi. As of 0.8.0 detect_pdf /
-# detect_image_file normalize any raster above HIGH_DPI_CAP back down to RENDER_DPI before cropping
-# (see detect._working_dpi), so crops the CNN scores are always ~200-dpi and the fixed pads stay
-# on-distribution by construction — this supersedes the previously-planned dpi-proportional pads +
-# ONNX re-export (resolution normalization is accuracy-neutral and costs no model churn). A crop
-# from a caller-supplied raster far below 200 dpi (e.g. score_word on a 72-dpi image) is still
-# off-distribution; there is no auto-upsampling and it isn't worth a re-export.
+# word box shifts with resolution (large around a 72-dpi glyph, tiny at 600 dpi), which would push
+# the CNN input off its training distribution, so detect_pdf / detect_image_file bring any raster
+# above HIGH_DPI_CAP down to RENDER_DPI before cropping (see detect._working_dpi). A crop from a
+# caller-supplied raster far below 200 dpi (score_word on a 72-dpi image, say) is still
+# off-distribution: nothing upsamples it.
 
 SHADE_WHITE_FRAC = 0.85           # shaded-crop white point, as a fraction of the paper ground.
                                   # PROVISIONAL: only issue #15's scan needs it below 1.0. On
@@ -44,15 +41,17 @@ SHADE_WHITE_FRAC = 0.85           # shaded-crop white point, as a fraction of th
                                   # the edge of the safe range, not a measured optimum.
 
 _MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env var
+_META_RECORD = "strike_verdict_cnn.meta.verified.json"  # ensure_model's record: the sha256 of
+                                  # each model in the folder -> the sha256 of the meta verified or
+                                  # written with it
 _lock = threading.Lock()
 _model = None                     # lazy singleton: (score_fn, meta dict)
 
 
 def _current_model_dir():
-    """Resolve the model directory at LOAD time (not import time), so setting
-    PDF_STRIKETHROUGH_MODEL_DIR — or calling set_model_dir() — before the first score actually
-    takes effect (the documented 'set it then import' override used to silently no-op because the
-    env var was read once at import)."""
+    """Resolve the model directory at LOAD time, not import time, so setting
+    PDF_STRIKETHROUGH_MODEL_DIR or calling set_model_dir() any time before the first score takes
+    effect, even after the package is imported."""
     return (_MODEL_DIR_OVERRIDE
             or os.environ.get("PDF_STRIKETHROUGH_MODEL_DIR")
             or os.path.dirname(os.path.abspath(__file__)))
@@ -79,6 +78,15 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
     required `meta_sha256` (the thresholds decide what counts as struck), or as a `meta` dict
     written verbatim. A digest that is not 64 hex characters raises ``ValueError``.
 
+    With neither, the meta already in the cache is reused only for the model it was verified with:
+    each call given `meta_url` or `meta` records the model's sha256 with the meta's in the cache
+    folder (when the record can be written), and a call with neither raises ``ValueError``,
+    writing no file, unless that record pairs this model with the meta as it is now. A folder with
+    no record (one written before there was a record) is trusted as before when it is this
+    model's default folder or already holds this model; pass `meta_url` or `meta` once to record
+    it. The model and its meta are both verified before either is written, so a rejected download
+    leaves the cache as it was.
+
     Downloads land in `cache_dir` (default:
     ``~/.cache/pdf_strikethrough/models/<sha256[:12]>``); an already-present, hash-matching file is
     reused. Accepts ``http(s)`` and ``file`` URLs. Returns the cache directory (already applied via
@@ -96,18 +104,19 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
         return d
 
     def _fetch_verify(u, digest, dest):
+        """The verified bytes at `u`, or None when `dest` already holds them. Writes nothing."""
         scheme = urllib.parse.urlparse(u).scheme
         if scheme not in ("http", "https", "file"):
             raise ValueError(f"unsupported URL scheme {scheme!r} (use http, https, or file)")
         if dest.exists() and hashlib.sha256(dest.read_bytes()).hexdigest() == digest:
-            return
+            return None
         with urllib.request.urlopen(u, timeout=timeout) as r:
             data = r.read()
         got = hashlib.sha256(data).hexdigest()
         if got != digest:
             raise ValueError(f"sha256 mismatch for {u}: expected {digest}, got {got} "
                              "(download rejected; nothing was written)")
-        dest.write_bytes(data)
+        return data
 
     sha256 = _digest(sha256, "sha256")
     if meta_url is not None:
@@ -115,20 +124,67 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
             raise ValueError("meta_url needs meta_sha256: the meta JSON holds the struck/clean "
                              "thresholds, so it is verified like the model (or pass meta={...})")
         meta_sha256 = _digest(meta_sha256, "meta_sha256")
+    default_dir = cache_dir is None
     if cache_dir is None:
         cache_dir = pathlib.Path.home() / ".cache" / "pdf_strikethrough" / "models" / sha256[:12]
     cache_dir = pathlib.Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    _fetch_verify(url, sha256, cache_dir / "strike_verdict_cnn.onnx")
+    model_path = cache_dir / "strike_verdict_cnn.onnx"
     meta_path = cache_dir / "strike_verdict_cnn.meta.json"
-    if meta_url is not None:
-        _fetch_verify(meta_url, meta_sha256, meta_path)
-    elif meta is not None:
-        meta_path.write_text(json.dumps(meta), encoding="utf-8")
-    elif not meta_path.exists():
-        raise ValueError(
-            "no model meta: pass meta_url=(+meta_sha256) or meta={...} (the ONNX loader needs "
-            "strike_verdict_cnn.meta.json — thresholds + crop geometry — alongside the model)")
+    record_path = cache_dir / _META_RECORD
+
+    def _read_record():
+        """(record, whether there is one); an unreadable record is one that vouches for nothing."""
+        try:
+            got, have = json.loads(record_path.read_text(encoding="utf-8")), True
+        except FileNotFoundError:
+            got, have = {}, False
+        except (OSError, ValueError, RecursionError):
+            got, have = {}, True
+        return (got if isinstance(got, dict) else {}), have
+
+    if meta_url is None and meta is None:
+        if not meta_path.exists():
+            raise ValueError(
+                "no model meta: pass meta_url=(+meta_sha256) or meta={...} (the ONNX loader needs "
+                "strike_verdict_cnn.meta.json, with the thresholds and crop geometry, alongside "
+                "the model)")
+        # A shared cache_dir can hold another model's thresholds. Without a record, the meta
+        # came with the model already there, or, in the default folder, with this model.
+        record, have_record = _read_record()
+        if have_record:
+            ok = record.get(sha256) == _file_sha256(meta_path)
+        else:
+            ok = default_dir or (model_path.exists() and _file_sha256(model_path) == sha256)
+        if not ok:
+            raise ValueError(
+                f"the meta cached in {cache_dir} was not verified for this model (sha256 "
+                f"{sha256}): pass meta_url=(+meta_sha256) or meta={{...}}")
+        model_data, meta_data = _fetch_verify(url, sha256, model_path), None
+    else:
+        model_data = _fetch_verify(url, sha256, model_path)
+        if meta_url is not None:
+            meta_data, meta_digest = _fetch_verify(meta_url, meta_sha256, meta_path), meta_sha256
+        else:
+            meta_data = json.dumps(meta).encode("utf-8")
+            meta_digest = hashlib.sha256(meta_data).hexdigest()
+            if meta_path.exists() and meta_path.read_bytes() == meta_data:
+                meta_data = None
+        # The record is written first: if writing the model or the meta then fails, it already
+        # names the meta this model needs. It is read just before it is written, so entries other
+        # calls wrote by then are kept. One that cannot be written is skipped; a later call with
+        # neither meta argument is then refused or falls back as above.
+        record, _ = _read_record()
+        if record.get(sha256) != meta_digest:
+            try:
+                record_path.write_text(json.dumps({**record, sha256: meta_digest}),
+                                       encoding="utf-8")
+            except OSError:
+                pass
+    if model_data is not None:
+        model_path.write_bytes(model_data)
+    if meta_data is not None:
+        meta_path.write_bytes(meta_data)
     set_model_dir(str(cache_dir))
     return str(cache_dir)
 
@@ -167,7 +223,7 @@ def std_crop(crop):
         if np.iinfo(crop.dtype).max > 255:
             crop = crop.astype(np.float64) * (255.0 / np.iinfo(crop.dtype).max)
         crop = np.clip(crop, 0.0, 255.0)
-    # Clamp background color to near white
+
     crop = np.asarray(crop, dtype=np.float32)
     light = crop[crop >= 128]
     if light.size:
@@ -228,6 +284,88 @@ def _check_thresholds(meta):
                          f"p_lo={p_lo!r}, p_hi={p_hi!r}")
 
 
+# The ONNX messages that can hold a tensor, and the fields leading to them (onnx.proto): the walk
+# that finds a model's external data. The package does not depend on `onnx`, so it reads them here.
+_ONNX_CHILDREN = {
+    "model": {7: "graph", 20: "training", 25: "function"},
+    "training": {1: "graph", 2: "graph"},                        # TrainingInfoProto
+    "function": {7: "node", 11: "attribute"},                    # nodes, attribute defaults
+    "graph": {1: "node", 5: "tensor", 15: "sparse"},             # initializer, sparse_initializer
+    "node": {5: "attribute"},
+    "attribute": {5: "tensor", 6: "graph", 10: "tensor", 11: "graph", 22: "sparse", 23: "sparse"},
+    "sparse": {1: "tensor", 2: "tensor"},                        # values, indices
+    "tensor": {13: "entry"},                                     # external_data
+}
+
+
+def _pb_varint(buf, i, end):
+    value = shift = 0
+    while True:
+        if i >= end or shift > 63:
+            raise ValueError("malformed varint")
+        b = buf[i]
+        i += 1
+        value |= (b & 0x7F) << shift
+        if not b & 0x80:
+            return value, i
+        shift += 7
+
+
+def _pb_fields(buf, start, end):
+    """(field number, wire type, value) for each field of the protobuf message in buf[start:end];
+    a length-delimited value is its (start, end) span, a fixed-width one None."""
+    i = start
+    while i < end:
+        key, i = _pb_varint(buf, i, end)
+        key &= 0xFFFFFFFF                        # protobuf reads a tag as 32 bits
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            value, i = _pb_varint(buf, i, end)
+        elif wire == 2:
+            n, i = _pb_varint(buf, i, end)
+            value, i = (i, i + n), i + n
+        elif wire in (1, 5):
+            value, i = None, i + (8 if wire == 1 else 4)
+        else:
+            raise ValueError(f"unsupported protobuf wire type {wire}")
+        if i > end:
+            raise ValueError("truncated protobuf field")
+        yield field, wire, value
+
+
+def _external_data_locations(model_bytes):
+    """The files an ONNX model's tensors keep their data in (each tensor's external_data
+    ``location``), sorted; empty for a model that holds all its weights. Raises ValueError when
+    the bytes are not a well-formed protobuf."""
+    buf, found, todo = bytes(model_bytes), set(), [("model", 0, len(model_bytes))]
+    while todo:                                  # a stack, so deep nesting can't overflow
+        kind, start, end = todo.pop()
+        for field, wire, span in _pb_fields(buf, start, end):
+            child = _ONNX_CHILDREN.get(kind, {}).get(field)
+            if child is None or wire != 2:
+                continue
+            if child != "entry":
+                todo.append((child, *span))
+                continue
+            entry = {f: buf[s:e] for f, w, (s, e) in
+                     ((f, w, v) for f, w, v in _pb_fields(buf, *span) if w == 2)}
+            if entry.get(1) == b"location":
+                try:
+                    found.add(entry.get(2, b"").decode("utf-8"))
+                except UnicodeDecodeError:       # no file has that name: a stale entry
+                    pass
+    return sorted(found)
+
+
+def _file_sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def _load_model():
     """Try ONNX Runtime first, then a torch checkpoint. Returns (score_fn, meta)."""
     model_dir = _current_model_dir()
@@ -236,19 +374,40 @@ def _load_model():
     pt_path = os.path.join(model_dir, "strike_verdict_cnn.pt")
 
     if os.path.exists(onnx_path) and os.path.exists(meta_path):
+        import hashlib
+
         import onnxruntime as ort
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
         _check_geometry(meta)
         _check_thresholds(meta)
+        with open(onnx_path, "rb") as f:
+            model_bytes = f.read()
+        # Loaded by path, not from the bytes just read: ONNX Runtime finds a model's external data
+        # beside the model only when it has the path (from bytes it looks in the working directory).
+        # So a file replaced while it loads can leave the digests naming another model.
         sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         iname = sess.get_inputs()[0].name
+        try:                                     # no b"location" in the bytes: no external data
+            external = _external_data_locations(model_bytes) if b"location" in model_bytes else []
+        except ValueError as e:
+            raise ValueError(f"{onnx_path}: cannot read the model's external-data entries to "
+                             f"compute its digest ({e})") from None
 
         def score(batch):
             logits = sess.run(None, {iname: batch})[0].reshape(-1)
             return 1.0 / (1.0 + np.exp(-logits.astype(np.float64)))
 
         meta["runtime"] = "onnx"
+        meta["sha256"] = hashlib.sha256(model_bytes).hexdigest()
+        meta.pop("external_data", None)          # computed here, never taken from the meta JSON
+        # The session is built, so every file it read is a regular file beside the model. A
+        # location that is not (a stale entry on a tensor nothing reads, a pipe) is skipped.
+        paths = [(loc, os.path.join(model_dir, loc)) for loc in external]
+        files = [{"location": loc, "sha256": _file_sha256(p)} for loc, p in paths
+                 if os.path.isfile(p)]
+        if files:
+            meta["external_data"] = files
         return score, meta
 
     if os.path.exists(pt_path):
@@ -260,7 +419,8 @@ def _load_model():
         net.load_state_dict(ckpt["state_dict"])
         net.eval()
         meta = {"p_hi": float(ckpt["p_hi"]), "p_lo": float(ckpt["p_lo"]),
-                "version": ckpt.get("version", "unknown"), "runtime": "torch"}
+                "version": ckpt.get("version", "unknown"), "runtime": "torch",
+                "sha256": _file_sha256(pt_path)}
         _check_geometry({k: ckpt[k] for k in ("crop_h", "crop_w", "pad_x", "pad_y") if k in ckpt})
         _check_thresholds(meta)
 
@@ -276,8 +436,23 @@ def _load_model():
 
 
 def get_model_meta():
-    """Model metadata: {version, p_hi, p_lo, runtime}. Loads the model on first call."""
-    return dict(_ensure_loaded()[1])
+    """Model metadata: {version, p_hi, p_lo, runtime, sha256}, plus any other keys the model's meta
+    file holds (an ONNX model's crop geometry). Loads the model on first call.
+    ``sha256`` is the hex digest of the model file loaded (``strike_verdict_cnn.onnx``, or the
+    ``.pt``), the digest :func:`ensure_model` verifies. An ONNX model that keeps weights in
+    external data files also gets ``external_data``: one ``{location, sha256}`` per file, sorted by
+    location. Together they tell retrained models apart where ``version`` may not: for a model
+    with external data, compare ``external_data`` too, since its weights are not in the ``.onnx``.
+    The digests are of the files as read while the model loads. Returns a copy."""
+    import copy
+    return copy.deepcopy(_ensure_loaded()[1])
+
+
+def _loaded_meta():
+    """A copy of the loaded model's meta, or None when no model is loaded. Never loads one."""
+    import copy
+    model = _model
+    return copy.deepcopy(model[1]) if model is not None else None
 
 
 def _ensure_loaded():

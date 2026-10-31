@@ -12,7 +12,7 @@ tier-specific keys as optional and branch on ``tier`` — or use ``.get(...)``.
 """
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Tuple, TypedDict
+from typing import Dict, List, Literal, Optional, Tuple, TypedDict
 
 # Version of the documented output shape (the keys below and their meaning), carried as
 # ``schema_version`` on every ``DetectResult`` and CLI --json / --jsonl payload. Bumped when a key
@@ -31,7 +31,8 @@ Verdict = Literal["struck", "clean", "unsure"]
 class StruckWord(TypedDict, total=False):
     """One struck-word record. Keys common to all tiers first, then tier-specific ones."""
     page: int
-    text: str                    # the full OCR/extracted word
+    text: str                    # the full OCR/extracted word ('vector': less the U+0336
+                                 # overlays on the characters `char_span` reports)
     chars: str                   # just the struck substring (== text on a full strike)
     char_span: CharSpan          # offsets of `chars` within `text`
     partial: bool                # True when only some characters are struck
@@ -40,9 +41,13 @@ class StruckWord(TypedDict, total=False):
     verdict: Verdict
     final: bool                  # the ship decision: is this word reported as struck?
     # native only
-    coverage: float              # vector: fraction of the word's width the stroke spans;
+    coverage: float              # vector: fraction of the word's width the stroke spans (with
+                                 # U+0336 overlays, that its struck characters' boxes span);
                                  # flag/annot: fraction of its characters that are struck
-    # native 'vector' only — forensics from the dominant contributing stroke
+    garbled: bool                # present (True) when a broken character map garbled the word:
+                                 # `text` and `chars` are not what the page shows
+    # native 'vector' only: forensics from the dominant contributing stroke (absent when
+    # U+0336 overlays alone strike the word)
     stroke_color: Tuple[float, float, float]   # RGB in [0, 1]; unset paint reads as black
     stroke_width: float          # stroke line width (pt), or bar height for a filled-rect strike
     # native 'annot' only — /StrikeOut annotation forensics (present when the annotation supplies)
@@ -64,9 +69,14 @@ class StruckWord(TypedDict, total=False):
     cnn_agrees: Optional[bool]   # 'auto' records: did the CNN confirm at p_hi? (None if unscored)
     conf: Optional[float]        # OCR word confidence, if the backend supplied one
     geom_corroborated: bool      # in-band line with glyph ink on both sides (solid or shattered),
-                                 # i.e. real-strike geometry, which the DI-confidence veto spares
+                                 # or, for a word only the pair test passed, a double strike's two
+                                 # strokes: real-strike geometry, which the DI-confidence veto
+                                 # spares and ScanConfig.line_support requires
     conf_veto: bool              # True when the DI-confidence veto downgraded this record
                                  # (OCR conf > max_clean_conf AND no corroborating geometry)
+    line_support: bool           # True when ScanConfig.line_support kept this short word: the CNN
+                                 # left it unconfirmed, but it has a stroke of its own and its line
+                                 # strikes confirmed words on both sides of it
 
 
 class Passage(TypedDict, total=False):
@@ -77,10 +87,55 @@ class Passage(TypedDict, total=False):
     bbox_frac: List[float]       # union box of the passage's words, page fractions (x0, y0, x1, y1)
 
 
+class GarbledWord(TypedDict, total=False):
+    """A word, struck or not, whose text a broken character map garbled: a font that maps its
+    glyphs to the wrong characters, so ``text`` is not what the page shows."""
+    page: int
+    text: str                    # the word as extracted
+    bbox_frac: BBoxFrac
+
+
+class PageTelemetry(TypedDict, total=False):
+    """One processed page (or image frame) in :class:`Telemetry`."""
+    page: int
+    source: str                  # as in page_sources
+    seconds: Dict[str, float]    # "render", "ocr", "detect": those the page ran
+    dpi: float                   # scanned: the resolution it was detected at
+    ocr_words: int               # scanned: the words its OCR or word source gave (absent when
+                                 # they came as an iterator with no length)
+    tiers: Dict[str, int]        # candidates per tier: layer 1's on a scanned page ("weak"
+                                 # included, which the CNN pass drops), the records on a native one
+    final: int                   # its words reported struck
+    skipped: bool                # present (True) when on_missing_ocr="skip" skipped it
+
+
+class CnnProbHistogram(TypedDict):
+    """The scanned records' ``cnn_prob``: ``counts[i]`` holds ``edges[i] <= p < edges[i + 1]``,
+    the last bin ``p == 1.0`` too."""
+    edges: List[float]
+    counts: List[int]
+    unscored: int                # crops too small to score (cnn_prob None)
+    invalid: int                 # NaN or outside [0, 1]: a broken model's output
+
+
+class Telemetry(TypedDict, total=False):
+    """``telemetry=True``'s report of one detect_pdf / detect_image_file call. JSON-ready."""
+    telemetry_version: int       # bumped when a key is removed, renamed or changes meaning
+    package: str                 # the package version
+    model: Optional[Dict[str, object]]   # get_model_meta()'s version and sha256 (+ external_data)
+                                         # of the model that scored; None with no scanned page
+    seconds: float               # the whole call
+    pages: List[PageTelemetry]
+    tiers: Dict[str, int]        # the pages' tiers, summed
+    final: int
+    cnn_prob: CnnProbHistogram
+
+
 class DetectResult(TypedDict, total=False):
-    """The dict returned by :func:`pdf_strikethrough.detect_pdf`. The last three keys are present
-    only when ``include_markdown=True`` (the default); ``pages`` is present only when a ``pages=``
-    subset was requested."""
+    """The dict returned by :func:`pdf_strikethrough.detect_pdf`. The ``markdown``,
+    ``clean_text`` and ``passages`` keys are present only when ``include_markdown=True`` (the
+    default); ``pages`` only when a ``pages=`` subset was requested; ``telemetry`` only with
+    ``telemetry=True``."""
     schema_version: int          # == SCHEMA_VERSION of the release that produced it
     source: Optional[str]
     page_count: int
@@ -89,13 +144,16 @@ class DetectResult(TypedDict, total=False):
     words: List[StruckWord]
     n_struck_final: int
     warnings: List[str]
+    garbled_words: List[GarbledWord]   # every word a broken character map garbled, page order
     markdown: str
     clean_text: str
     passages: List[Passage]
+    telemetry: Telemetry
 
 
 # Re-exported so ``from pdf_strikethrough.types import ...`` covers the whole surface.
 __all__ = [
-    "StruckWord", "Passage", "DetectResult", "SCHEMA_VERSION",
+    "StruckWord", "Passage", "GarbledWord", "DetectResult", "SCHEMA_VERSION",
+    "Telemetry", "PageTelemetry", "CnnProbHistogram",
     "BBoxFrac", "CharSpan", "Tier", "Verdict",
 ]
