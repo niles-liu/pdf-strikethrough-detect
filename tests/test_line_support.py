@@ -164,9 +164,7 @@ def test_live_short_word_between_words_struck_on_their_own_stays_live(short, mon
 
 def test_the_calibrated_path_supports_a_short_word_whatever_its_confidence(cnn_says):
     """On the Azure DI calibration a short word under a crisp printed strike reads at 0.99, as
-    clean text does, so its confidence is no evidence: it is kept at 0.99 as at 0.80. Until 0.13.0
-    a word read above max_clean_conf was never kept; on printed scans that left 587 struck
-    sub-tokens of 21,492 live for 2 live ones it kept out."""
+    clean text does, so its confidence is no evidence: it is kept at 0.99 as at 0.80."""
     for conf in (0.99, 0.80):
         gray, words = _struck_run(confs=[0.70, conf, 0.72])
         cnn_says(words, [0.99, 0.30, 0.99])

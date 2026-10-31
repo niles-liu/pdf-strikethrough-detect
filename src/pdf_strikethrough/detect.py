@@ -8,9 +8,9 @@ In the CNN verdict layer, 'auto' words are kept only when the CNN confirms at p_
 small to score are kept: no counter-evidence), and on 'review' words (the geometry can't decide)
 the CNN is the decider. With confidence gating (the Azure-DI path), a struck word OCR'd above
 max_clean_conf without corroborating strike geometry is vetoed, unless its line strikes another
-word that has it. With ScanConfig.line_support, a
-short word the CNN leaves unconfirmed is kept when it has a stroke of its own and the line
-through it strikes confirmed words on both sides of it.
+word that has it. With ScanConfig.line_support, a short word the CNN leaves unconfirmed is kept
+when it has a stroke of its own and the line through it strikes confirmed words on both sides of
+it.
 """
 from __future__ import annotations
 

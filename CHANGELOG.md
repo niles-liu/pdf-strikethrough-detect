@@ -92,8 +92,9 @@ All notable changes to this project are documented here. The format follows
   under the default calibration and from 25 to 26 with `ruled_forms(rescue_clean_chains=False)`,
   recall unchanged; on BRESSAY's handwritten pages with DI words, 205 live words of 29,820 are
   marked where 202 were.
-- **`ScanConfig.azure_di()` and `ScanConfig.confidence_free()` take the other fields,** as
-  `confidence_free(line_support=False)`, since `ScanConfig(...)` itself is the DI calibration.
+- **`ScanConfig.azure_di()` and `ScanConfig.confidence_free()` accept any other `ScanConfig`
+  field as a keyword,** as in `confidence_free(line_support=False)`. Start from them rather than
+  `ScanConfig(...)`, which always has the DI calibration's confidence gating on.
 - **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
   word struck with overlay characters, `text` is `of`, not `o̶f̶`; `char_span` and `chars` index
   that text, and `markdown`, `clean_text` and `passages` follow it. A word struck by overlays

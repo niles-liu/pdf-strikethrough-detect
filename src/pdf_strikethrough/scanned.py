@@ -168,7 +168,8 @@ class ScanConfig:
     the rule is ink below the underline. Ruled text is then judged like unruled text. A long solid
     line through a word's middle band with no glyph ink on either side is judged on all ink, so
     one of a double rule stays a rule. ``ScanConfig.confidence_free(glyph_ink=False)`` (or
-    ``dataclasses.replace(preset, glyph_ink=False)``) measures on all ink, with no thick-bar retry and no double-strike pair test, which read glyph ink.
+    ``dataclasses.replace(preset, glyph_ink=False)``) measures on all ink, with no thick-bar
+    retry and no double-strike pair test, which read glyph ink.
 
     ``line_support`` (on by default; off in ``precision_first()``) keeps a word of three characters
     or fewer, not counting surrounding punctuation, that StrikeNet leaves unconfirmed when the line
