@@ -437,7 +437,8 @@ All notable changes to this project are documented here. The format follows
   so a double-struck word they pass without ink on both sides of its line (under an in-band line
   of 0.5 in or more, or, with Azure DI words read at 0.974 or below, through the confidence rescue
   under a shorter one) gains no strike geometry, and the veto still drops it when it was read
-  above 0.955. Only under a line at most 4 in long, at
+  above 0.955 (for a rescued word, until the confidence-rescue fix below). Only under a line at
+  most 4 in long, at
   most 4 px thick (at 200 dpi, scaled with the dpi, with a 2 px floor) and straight
   (`straightness` under 1.3 px, an unmeasured one counting as not straight): in handwriting, the
   ruling of lined paper or a pen stroke beside another stroke made pairs. A double rule has
@@ -471,6 +472,27 @@ All notable changes to this project are documented here. The format follows
   both verified before either is written, so a rejected download leaves the cache as it was. The
   record is written first and only when it changes; when it cannot be written, a later call with
   neither may be refused.
+- **With Azure DI words, the DI-confidence veto could drop a struck word the confidence rescue
+  had passed.** A word read at 0.974 or below, under a line shorter than 0.5 in and without glyph
+  ink on both sides of it, passed through the rescue before any retry ran, so a double strike or
+  a thick bar over it got no strike geometry, and the veto dropped it when it was read above
+  0.955; read at 0.975, where the rescue does not apply, the retries passed it with geometry and
+  it was kept. A rescued word now goes through the retries too. One is taken only when it gives
+  strike geometry (in the band with ink on both sides, or a pair), and then sets `off` and the
+  row the span is read at as for any word a retry passes; a partial word's stroke-row retry is
+  not taken when it would move the word past `PARTIAL_ISO_MAX_OFF`. Otherwise the rescue stands
+  as before.
+  On BRESSAY's handwritten training and validation pages with Azure Document Intelligence words
+  (the 70 that have them), struck words found are unchanged and one live word gains a partial
+  mark. On 472 printed pages with DI words (newly generated synthetic pages, Senate bills
+  published before the frontier benchmark's cutoff and the dev pages of its public redline
+  corpus), two more struck words are found (a short word under a thick bar and one under a
+  double strike) and a struck word gains a partial mark, not enough to count as found; nothing
+  found before is lost and no live word gains a mark. Without OCR confidences
+  (`ScanConfig.confidence_free()`) the rescue never runs, so nothing changes there. A scanned
+  page's detection, OCR aside, takes 0.4% longer at the median on the 70 handwritten pages and
+  the same time on 80 of the printed ones, within the noise of timing the change off against
+  itself. `scanned.RESCUE_RETRIES = False` gives the previous behavior.
 - **`benchmarks/confidence_veto.py` split its counts where the veto does not.** Its default mode
   counted a word read at exactly `max_clean_conf` (0.955) as high-confidence, but the veto acts
   only above it. The split now uses the veto's boundary. One reported word on its ruled-table set
