@@ -134,10 +134,10 @@ class ScanConfig:
     """Confidence calibration for the scanned classifier. The defaults are the Azure Document
     Intelligence calibration, built on degraded ruled forms, where DI reads struck words at
     0.43-0.94 and clean text at 0.976-1.0; on a crisp printed scan it reads struck words as clean.
-    So ``ScanConfig(...)`` keeps confidence gating on whatever else it sets: for another engine
-    start from ``confidence_free(...)``, which takes the same fields. The functions that take a
-    config default to ``confidence_free()``, except ``detect_pdf`` on the pages a ``di_result``
-    covers.
+    So ``ScanConfig(...)`` keeps confidence gating on unless given ``confidence_gating=False``:
+    for another engine start from ``confidence_free(...)``, which takes the same fields. The
+    functions that take a config default to ``confidence_free()``, except ``detect_pdf`` on the
+    pages a ``di_result`` covers.
 
     ``confidence_free()`` disables EVERY confidence-dependent decision: the chain-rejection
     gate, the ink-fail rescue, the DI-confidence veto, and the

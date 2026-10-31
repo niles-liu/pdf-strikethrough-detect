@@ -6,546 +6,116 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-01
+
+Minor, not patch: it adds public API (telemetry, garbled-word flags, `ScanConfig.line_support`,
+`lines.rule_mask`, the model's sha256). Results keep `schema_version` 1. Each PR linked below has
+the measurements behind its change. What it still gets wrong (CJK scans, handwriting, dashed and
+steep strikes) is in the README's scope table.
+
+### Highlights
+- **Scans find more strikes:** thick 2 to 3 pt strikes, double strikes, strikes whose detected line
+  runs a few px off the stroke, and short struck words between confirmed ones. Underlined text on
+  a table rule is no longer read as struck, and a stroke over most of a word no longer strikes all
+  of it.
+- **Born-digital PDFs:** strike lines leaning up to 12 degrees, strikes of 3 to 6 pt and U+0336
+  overlay text are found; baseline underlines, fraction bars, radical bars and gridlines behind a
+  legend are no longer strikes; words from a broken font map are flagged.
+- **Azure DI words:** the default calibration finds more strikes on printed scans (95.2% of the
+  scanned-recovery benchmark's known strikes, 91% in 0.12.1).
+- **RapidOCR:** the orientation classifier, which turned struck lines upside down, is off; stray
+  CJK characters on English pages are removed.
+- **Monitoring:** opt-in run telemetry, and `get_model_meta()` gives the model's sha256.
+- **PyMuPDF 2.0** is supported.
+
 ### Added
-- **`benchmarks/frontier/` holds a pre-registered benchmark against frontier models.** Can they do
-  this package's job, finding struck text and keeping it out of the live text? `PLAN.md` gives the
-  reasons and `PREREG.md` the binding protocol, tagged `prereg-1` (2026-10-16) and `prereg-2`
-  (2026-10-17), each a release here and a version on Zenodo, with what each tag fixed in
-  `config/prereg1.json` and `config/prereg2.json`. The benchmark ran in an environment pinning the
-  package to the 0.12.1 release and every dependency (the lock's sha256 is in
-  `config/prereg2.json`), so no later change on `main` reaches its results.
-- **`benchmarks/frontier/RESULTS.md` reports that benchmark's test run,** pre-registered as
-  `prereg-1` and `prereg-2`: the four primary endpoints, every arm on every set, the routes, the
-  audits and the limitations, with its tables in `benchmarks/frontier/results/`, every prompt
-  template it used in `benchmarks/frontier/prompts/`, and each change to a rule since `prereg-1` in
-  `benchmarks/frontier/DEVIATIONS.md`. A new `.gitattributes` checks `benchmarks/frontier/` out
-  byte for byte, so its files match the sha256s the pre-registration pins on every platform. The
-  README gains the run's summary, in the form the pre-registration fixed.
-- **The benchmark's harness and scorer are in `benchmarks/frontier/`:** the code, its tests, its
-  config and its pinned environment, committed as their history from `prereg-2` on, with a README
-  on checking the code against the pre-registration's pins and re-scoring the run from the Hugging
-  Face dataset.
-- **`lines.rule_mask(ink, min_len_px, tolerance_px=0)` finds horizontal ruling in an ink mask:**
-  the pixels on horizontal runs at least `min_len_px` long (a 1 x `min_len_px` opening), with
-  `tolerance_px` rows of vertical slack for a thin rule a skewed scan has broken into steps. The
-  scanned path uses it for the underline fix below.
-- **`ScanConfig.line_support`, on by default, and a `line_support: True` key on the scanned
-  records it keeps,** also in the CLI's JSON output and the `dump_crops` manifest. See Changed.
-- **Words a broken character map garbled are flagged, and their page gets a warning.** Some PDFs
-  map a font's glyphs to the wrong characters, so the text layer, and `clean_text` with it, says
-  something other than the page. Equations Word exports in Cambria Math are the common case:
-  `·(0.955) −` reads `⋅ሺ0.955ሻെ`. `detect_pdf` lists such words in a new `garbled_words` key
-  (`page`, `text`, `bbox_frac`; type `GarbledWord`), also in the CLI's `--json` and `--jsonl`. A
-  struck record of such a word carries `garbled: True`, whichever native detector made it. Each
-  page holding any gets an entry in `warnings`, and one `GarbledTextWarning` (a `UserWarning`)
-  names those pages. The text is unchanged by default; the new `on_garbled="drop"` leaves those
-  words out of `markdown`, `clean_text` and `passages`. A word is flagged for a noncharacter or a
-  code point unassigned inside the blocks of Ethiopic, the Indic scripts and similar scripts,
-  letters, marks or digits of two of those scripts (Ethiopic beside Malayalam), one of their
-  characters beside a mathematical letter or a private-use character, a vowel sign after a
-  character of another script with no letter of its own following, or one of their characters
-  drawn in a math font. Real Ethiopic, Indic, Arabic, Hebrew and Thai text, digits and Latin
-  abbreviations included, is not flagged, nor are letters assigned in Unicode 14 to 18 that an
-  older Python calls unassigned. On the dev pages of the frontier benchmark's public redline corpus
-  it flags the same 957 words the benchmark's own check flags, and none on newly generated
-  synthetic pages or on Senate bills published before the benchmark's cutoff.
-- **The CLI's `--on-garbled keep|drop` sets `detect_pdf()`'s `on_garbled`.** With `drop`, words a
-  broken character map garbled are left out of `--markdown`, `--clean-text`, `--provenance` and the
-  `passages` in `--json`, whose `garbled_words` still lists them. The default, `keep`, gives the
-  same output as before. Batch output has no markdown, clean text or passages, so there the option
-  is ignored with a warning, as `--markdown` is.
-- **`get_model_meta()` reports the loaded model's sha256,** so a log or a report can tell
-  retrained models apart where `version` cannot: the training script stamps its own version
-  string. It is the digest of `strike_verdict_cnn.onnx` (or the `.pt`), the same one
-  `ensure_model` verifies. An ONNX model that keeps its weights in external data files, as torch's
-  newer exporter writes by default, also gets `external_data`, the location and sha256 of each
-  file, and only both together identify its weights. The model still loads by path, so ONNX
-  Runtime finds those files beside it and never in the working directory. `get_model_meta()` now
-  returns a deep copy.
-- **Run telemetry: `detect_pdf(telemetry=True)` and `detect_image_file(telemetry=True)`.** The
-  result gains `telemetry`, a JSON-ready report for monitoring: the package version, the scoring
-  model's `version` and `sha256`, the seconds taken, a ten-bin histogram of the scanned records'
-  `cnn_prob`, and per page its source, its render, OCR and detection seconds, its candidates per
-  tier and its struck count. A scanned page also gives its dpi and OCR word count, and its tiers
-  count the geometry stage's candidates, including the `weak` ones the CNN pass drops. The rest of
-  the result is unchanged. The CLI's `--telemetry FILE` appends one report per document to FILE as
-  a JSON line, batch mode included, where a file that fails gets a line with its error.
-  `pdf_strikethrough.types.Telemetry` documents the shape, versioned by `telemetry_version`.
-- **The README documents loading a model from a URL as a supported way to deploy one,** so a
-  retrained model can go into service without a new release of the package. `cnn.ensure_model`
-  has done this since 0.9.0; the README now covers its cache, what a digest mismatch does, that it
-  does not load the model (one that cannot load fails at the first score), when a new model takes
-  effect, the demo's fallback to the packaged weights, models with external data files, which it
-  does not fetch, and the CLI, which takes `PDF_STRIKETHROUGH_MODEL_DIR`, not a URL. No code
-  changes.
+- `telemetry=True` on `detect_pdf` and `detect_image_file`, and the CLI's `--telemetry FILE`: per
+  page timing, candidates per tier and a `cnn_prob` histogram (`types.Telemetry`). (#73, #85)
+- `res["garbled_words"]`, `garbled: True` on struck records, a warning per affected page and one
+  `GarbledTextWarning`, for words a broken character map garbled; `on_garbled="drop"` (CLI
+  `--on-garbled drop`) leaves them out of the text. (#62, #64, #85)
+- `get_model_meta()["sha256"]`, and `external_data` for ONNX weights kept in separate files. (#71)
+- `ScanConfig.line_support` (on by default) and the `line_support: True` record key. (#61)
+- `lines.rule_mask()`: horizontal ruling in an ink mask. (#59)
+- `benchmarks/frontier/`: a pre-registered benchmark against frontier models, with its results,
+  harness and scorer. (#39 to #48, and commits on `main`)
 
 ### Changed
-- **The Azure DI calibration finds more struck words on printed scans.** DI reads a word under a
-  crisp printed strike as clean text. So the DI-confidence veto dropped such a word whenever its
-  own ink showed no strike geometry, though its line struck the words beside it, and line support
-  never kept a short word read above `max_clean_conf`. The veto now spares a word whose line
-  strikes another confirmed word with strike geometry, and line support no longer reads
-  confidences. On 472 printed pages with DI words (newly generated synthetic pages, Senate bills
-  published before the frontier benchmark's cutoff and the dev pages of its public redline
-  corpus), struck sub-tokens found rose from 17,663 to 19,116 of 21,492, with 203 live sub-tokens
-  marked where 199 were. On the private ruled-forms corpus false strikes rose from 123 to 133
-  under the default calibration and from 25 to 26 with `ruled_forms(rescue_clean_chains=False)`,
-  recall unchanged; on BRESSAY's handwritten pages with DI words, 205 live words of 29,820 are
-  marked where 202 were.
-- **`ScanConfig.azure_di()` and `ScanConfig.confidence_free()` accept any other `ScanConfig`
-  field as a keyword,** as in `confidence_free(line_support=False)`. Start from them rather than
-  `ScanConfig(...)`, which always has the DI calibration's confidence gating on.
-- **A vector record's `text` leaves out the U+0336 overlays on the characters it reports.** On a
-  word struck with overlay characters, `text` is `of`, not `o̶f̶`; `char_span` and `chars` index
-  that text, and `markdown`, `clean_text` and `passages` follow it. A word struck by overlays
-  alone has no stroke, so its record carries no `stroke_color` or `stroke_width`. On any word with
-  overlays, whether alone or with a drawn line, `coverage` is the share of the word's width its
-  struck characters span. `SCHEMA_VERSION` stays 1: only words carrying U+0336 change, and 0.12.1
-  reported those only under a drawn line.
-- **On scanned pages, a stroke over most but not all of a word no longer strikes the whole word.**
-  A word was a full strike whenever its strokes covered 70% of its characters, as estimated from
-  the OCR box, so the live end of a partly struck long word was dropped with the struck part. A
-  word is now a full strike only when its strokes also reach its first and last character, and a
-  character at a stroke's end counts as struck when the stroke covers at least half of it. Both are
-  measured against the word's glyph ink near the stroke, not its OCR box, which runs loose and on
-  RapidOCR can hold several words, and against the stroke's own ink, not the detected line's ends.
-  Pieces of a stroke across short breaks count as one stroke: a pen skip, typed hyphens, or dashes
-  at least half a character long with breaks of at most a quarter of one. A strike with shorter
-  dashes or wider breaks can still leave a long word partly struck. Partial spans move onto the
-  struck characters the same way, so a stroke over the letters alone now leaves the punctuation
-  around them live. Which words are reported struck does not change, only their spans and whether
-  they are full or partial. A box with no glyph ink to measure keeps the old rule. Measured on its
-  own against 0.12.1 with the frontier benchmark's scorer, on pages outside its test sets and not
-  used to tune it: the live part of a partly struck word is marked 19 times in 318 where it was 71
-  (synthetic pages) and 27 times in 149 where it was 42 (real redlined documents). The character
-  error rate of the live text, which also counts a whole struck word now left with a character live,
-  falls from 6.36% to 6.06% on the synthetic pages, from 11.29% to 10.96% on the redlined documents
-  and from 3.18% to 3.17% on Senate bills.
-- **The scanned path keeps short struck words that StrikeNet leaves unsure.** A word of three
-  characters or fewer, not counting surrounding punctuation, is mostly padding at StrikeNet's input
-  width, so a struck "of" or "a" often scored below the 0.85 struck threshold inside a run of
-  confirmed struck words and stayed live. Such a word is now kept, struck whole, when the line
-  through it strikes confirmed words on both sides of it, it shows strike geometry on that line,
-  and it has a stroke of its own: one unbroken stretch of ink at the line's height across at least
-  65% of the word (`detect.LINE_SUPPORT_MIN_RUN`), with more ink there than in the glyph ink just
-  above and below it. Two words struck one by one can be joined into one line across the live word
-  between them, whose glyph ink at that height ("a", "&", a crossbar) is not one such stroke. On
-  the calibrated-confidence path a word read above `max_clean_conf` is never kept.
-  `precision_first()` turns the rule off, and `line_support=False` gives the previous output.
-  Measured on its own against 0.12.1: on scanned pages of Senate bills published before the
-  benchmark's cutoff (the half not used to pick the rule), struck words found rose from 89.2% to
-  96.7% of those read, with no new live words marked; on synthetic redlines that strike each word
-  on its own, live words marked stayed at 88 (112 without the own-stroke test). A lower `cnn_p_hi`
-  is not a substitute: it marks far more live words.
-- **Only a release whose tag starts with `v` (or `V`) runs `publish.yml`'s jobs.** A GitHub
-  Release with another tag, such as the ones that timestamp the benchmark's pre-registration,
-  builds and publishes nothing and asks for no approval. A version tag still has to match
-  `__version__`. Releases are now immutable (a repository setting): a published release's tag
-  cannot be moved.
-- **CI's copies of the dependency pins can no longer drift from `pyproject.toml`.** The lint job
-  reads ruff's version from the `dev` extra instead of keeping its own copy, and moves to
-  ruff-action v4.1.0. The `lowest-bounds` job still copies the dependency floors, and
-  `tests/test_dependency_floors.py` now fails when its copy and `pyproject.toml` disagree. The
-  `pymupdf` floor may rise above `native.FLAG_MIN_PYMUPDF` (1.26.6, where the flag detector's
-  1.26.3–1.26.5 crash ends), but still not fall below it.
-- **The `onnxruntime` floor is now 1.18.** PyMuPDF 2.0 loads ONNX layout models when it is
-  imported, and they need ONNX IR version 10, which onnxruntime reads from 1.18. Under 2.0 an older
-  onnxruntime made `import pdf_strikethrough` fail; on Python 3.10 the layout models that
-  pymupdf4llm 1.28 loads broke `clean_markdown()`. 2.0 also makes `import pymupdf` about ten times
-  slower, which adds seconds to the start of each CLI `--jobs` worker that starts a fresh
-  interpreter.
-- **The `pillow` floor is now 10.1.** Pillow 9.2 through 10.0 turn a TIFF with an orientation tag
-  upright on load but still report the tag, so `detect_image_file()` rotated it a second time: an
-  OCR backend got the page sideways, and supplied word boxes drew a spurious EXIF warning. CI's
-  `lowest-bounds` job installed 9.0, which is not affected, so it never showed.
-- **The Gradio demo no longer installs the `[markdown]` extra,** which it never used.
-- **`rapidocr_backend()` builds its engine with RapidOCR's text-line orientation classifier
-  off.** RapidOCR turns it on by default, and it turned struck, underlined and some plain lines
-  upside down, which then read as stray letters or not at all: struck text could reach
-  `clean_text`, and live text could go missing from it. The default goes in as
-  `params={"Global.use_cls": False}` under any `params` you pass, so
-  `params={"Global.use_cls": True}` turns the classifier back on; the default also overrides a
-  `use_cls` set in a `config_path` file. A page scanned upside down now reads as stray letters:
-  turn it upright first, or turn the classifier back on. An engine passed as `engine=` is used as
-  is, so build it with `RapidOCR(params={"Global.use_cls": False})`; the Gradio demo now does.
-- **`rapidocr_backend()` removes lone CJK characters from a page without CJK text.** RapidOCR's
-  default recognizer reads Chinese and Japanese as well as English, and on English redlines it read
-  small marks as CJK characters, which reached `clean_text` as inserted text: a table's footnote
-  marker `(a)` as `(斗)`, an `=` in an equation as `二`. On a page where no two CJK characters (Han,
-  kana, Hangul, bopomofo) come one right after the other in reading order, the backend now removes
-  each one: a word left empty is dropped, and one inside a word becomes a space. Real CJK standing
-  alone goes too (`100 円` loses the unit); a page with runs of CJK text is returned as read, and CJK
-  punctuation and fullwidth forms are kept. `drop_lone_cjk=False` keeps every character, also for
-  an engine passed as `engine=`. The CLI's `--ocr rapidocr` always removes them.
-- **CI's extras job now runs the RapidOCR adapter's tests** against the real engine. The test jobs
-  don't install RapidOCR, so its one real-engine test was always skipped there.
-- **`detect_scanned_image`, `analyze_scanned_page` and `scanned.classify_lines` default to
-  `ScanConfig.confidence_free()`,** as `detect_pdf` without a `di_result`, `detect_image_file`,
-  `words_by_page=` and the CLI have since 0.12.0. They defaulted to the Azure DI calibration,
-  which reads the near-1.0 confidences other engines give struck words as clean text: on a
-  synthetic page, a struck word read at 0.99 scored 0.40 (`review`) where the high-level paths
-  score it 0.67 (`auto`). Words without confidences get the same output either way (see Fixed).
-  Azure DI words passed with no config also lose that calibration's chain gate and confidence
-  veto; pass `config=ScanConfig.azure_di()` to keep the old behavior.
-
-### Removed
-- **The TestPyPI rehearsal.** A manual run of `publish.yml` tried to publish to TestPyPI, where this
-  repository had no trusted publisher, so it failed at the login each time. A manual run now builds
-  the sdist and wheel, checks them and tests the wheel, and publishes nothing; a GitHub Release
-  publishes to PyPI as before.
-- **`benchmarks/di_parity.py` and `benchmarks/ocr_backend_table.py`.** They read two manifest
-  fields, `di_result` and `di_reference_struck`, that no manifest entry has, so they ran on nothing,
-  and the README no longer quotes what they measured. `scanned_recovery.py`, added in 0.9.0,
-  measures the scanned path's recovery on this repository's own corpus.
+- The Azure DI calibration's confidence veto spares a word whose line strikes another word with
+  strike geometry, and line support no longer reads confidences: DI reads a word under a crisp
+  printed strike as clean text. On 472 printed pages with DI words, struck words found rose from
+  82.2% to 88.9% against the release before this change, with 203 live words marked where 199
+  were. (#87)
+- On the private ruled-forms corpus, false strikes under the default DI calibration went from 113
+  in 0.12.1 to 133 across this release (123 before #87), and from 25 to 26 with
+  `ruled_forms(rescue_clean_chains=False)`; recall is unchanged.
+- `ScanConfig.azure_di()` and `ScanConfig.confidence_free()` accept any other `ScanConfig` field as
+  a keyword, as in `confidence_free(line_support=False)`; `ScanConfig(...)` has the DI
+  calibration's confidence gating on unless given `confidence_gating=False`. (#87)
+- `detect_pdf` with a `di_result` chooses the calibration per page: DI's on the pages the result
+  covers, confidence-free on pages an `ocr` backend reads. (#86)
+- `detect_scanned_image`, `analyze_scanned_page` and `scanned.classify_lines` default to
+  `ScanConfig.confidence_free()`, like every other entry point without a `di_result`. For Azure DI
+  words pass `config=ScanConfig.azure_di()`. (#67)
+- On scans, a word is fully struck only when the stroke reaches its first and last character.
+  Spans and full/partial can change; which words are struck does not. (#60)
+- A vector record's `text` leaves out the U+0336 overlays on the characters it reports. (#56)
+- `rapidocr_backend()` turns RapidOCR's orientation classifier off
+  (`params={"Global.use_cls": True}` turns it back on) and removes lone CJK characters from pages
+  without CJK text (`drop_lone_cjk=False` keeps them). (#53, #54)
+- `ensure_model` reuses a cached meta only for the model it was verified with: it could pair a
+  cached meta with another model, and a call with neither `meta_url` nor `meta` can now raise
+  `ValueError`. (#80)
+- New floors: `onnxruntime>=1.18`, `pillow>=10.1`. On Python 3.11+ `[markdown]` installs PyMuPDF
+  2.0. (#49, #51)
+- Only `v*` release tags publish to PyPI; a manual `publish.yml` run is a dry run. (#37, #39)
 
 ### Fixed
-- **The vector detector missed text struck with overlay characters.** Online strikethrough
-  generators strike text by writing U+0336 COMBINING LONG STROKE OVERLAY after each character
-  (`o̶f̶`), with no drawing, so the vector path found nothing and the struck letters stayed in
-  `clean_text`. It now strikes each character a U+0336 follows, with its accents, part of a word
-  included, so `both` reads them too; `flag` and `annot` don't, and their output is unchanged.
-  `clean_markdown()` drops overlaid characters. A record holds one span, so a word with a drawn
-  strike reports that span merged with any overlay run it touches. Overlays on characters outside
-  the reported span stay in the record's `text` and in `markdown`, and `clean_text` drops those
-  characters, as `clean_markdown()` does. Only U+0336 is read: U+0338 is the slash of a
-  decomposed ≠ and U+0334 is the IPA mark for velarization. The short overlays U+0335 and
-  U+0337, which some generators emit, are left out too, so text struck with them is still missed.
-- **The vector detector struck words underlined at the baseline in Courier and other fonts.** The
-  strike test used the middle share of the word's box, which in Courier and many other fonts holds
-  the baseline. The stroke is now measured in ems from the glyph baseline, read from the
-  characters' origins: it counts where its center is more than 0.03 em above the baseline
-  (`STRIKE_BAND_LO`) and at most 0.58 em (`STRIKE_BAND_HI_LEVEL`), or 0.65 em for a stroke leaning
-  more than 2 degrees (`STRIKE_BAND_HI`). A word with no usable baseline keeps the old box-share
-  band. The character pass turns PyMuPDF's quad corrections on for itself, so the output is the
-  same after pymupdf4llm turns them off. The edges were picked on newly generated pages from the
-  frontier benchmark's synthetic redline generator and on strike-free LaTeX and plotting PDFs. On
-  200 such pages, the 687 words with a Courier baseline underline are no longer marked, and nothing
-  else changes; 208 pages of Senate bills published before the benchmark's cutoff are unchanged; on
-  the dev pages of the benchmark's public redline corpus 16 words change, 14 of them invisible
-  text; the strike-free PDFs get 252 marks, down from 270, none new. Reading character data for
-  every word a stroke crosses adds a few milliseconds per page, up to 3 times the detector's time
-  on a page of underlined text.
-- **The scanned path dropped strikes thicker than about 1.4 pt.** A line more than 4 px thick at
-  200 dpi was taken for a bold glyph's bar, so a 2 or 3 pt pen or marker strike (5.6 to 8.3 px)
-  was lost. The cap is now 9 px, plus 1 px of slack because a thickness is counted in whole pixels
-  while the cap scales with the dpi. A line thicker than 4 px is kept only when it is at least 1.4
-  times as thick as the stems of the glyph ink just above and below it. A bold glyph's bars, and
-  the chains of them stitched along a bold heading, are about as thick as its stems, so they stay
-  out: on bold headings in nine fonts at 10 to 24 pt, the cap alone would have sent 2.7 times as
-  many words to the CNN, and with the stem test it sends about 10% more. The same test drops a
-  real strike less than 1.4 times as thick as the stems it crosses: at 2 pt, that is a strike
-  through bold text above about 10 pt or regular text above about 18 pt, which 0.12.1 lost as
-  well. On a soft scan a 3 pt strike can merge with the glyphs it crosses into a piece thicker
-  than the stitching accepts, and is then still lost. `lines.STEM_RATIO = 0` turns the stem test
-  off but keeps the 9 px cap; 0.12.1's behavior also needs `lines.MAX_STROKE_RUN_PX = 4` and
-  `lines.RUN_SLACK_PX = 0`.
-- **The scanned path marked underlined text sitting on a table rule as struck.** A line below a
-  word's middle band is kept only with ink on both sides of it, and under an underline the ink
-  below was the table's rule, so underlined numbers in ruled tables became candidates that the CNN
-  then confirmed. The test of the ink above and below a line now reads glyph ink: the page's ink
-  without its horizontal runs of 0.25 in or more (50 px at 200 dpi, scaled with the dpi). A strike
-  low in the glyphs, or a short strike, on ruled or underlined text is now treated as it would be
-  on unruled text, since the rule no longer counts as ink. A long solid line through a word's
-  middle with no glyph ink on either side is judged on all ink, so one of a double rule is still
-  taken for a rule. `ScanConfig(glyph_ink=False)` measures on all ink, as before.
-  `scanned.classify_lines` takes the raster's `dpi=` for the scaling, and `glyph_ink=` to supply
-  the mask.
-- **The flag detector's version guard could not read PyMuPDF 2.0's version.** 2.0 reports `2.0`,
-  with no patch number, so the guard read it as unknown. Unknown means unguarded, so 2.0 users were
-  never blocked, but the test that the installed PyMuPDF clears the floor failed in every CI job
-  that ran it on 2.0. A two-part version now reads as patch 0.
-- **The `[markdown]` extra could install without a usable pymupdf4llm.** PyMuPDF 2.0 ships the
-  pymupdf4llm module itself, and the pymupdf4llm 2.0 package is an empty placeholder. Beside a
-  PyMuPDF below 2.0 (always on Python 3.10, which 2.0 does not support, or under a pin below 2.0)
-  the extra resolved that placeholder, and `clean_markdown()` asked for the extra that was already
-  installed. The extra now takes `pymupdf4llm>=0.0.27,<2` on Python 3.10 and PyMuPDF 2.0 on 3.11
-  and later. On 3.11 and later, `[markdown]` with PyMuPDF pinned below 2.0 now fails to resolve:
-  to stay below 2.0 there, install the base package with `pymupdf4llm<2` instead of the extra.
-  Detection output on the benchmark corpus is unchanged under 2.0; `clean_markdown()`'s layout
-  changes in places, mostly around equations.
-- **`clean_markdown()` wrote to stdout.** On PyMuPDF 2.0, pymupdf4llm prints a "Document parser
-  messages" banner on every call ("RapidOCR is missing" without RapidOCR, "Using RapidOCR" with
-  it), and older pymupdf4llm releases print a hint on their first call. Both now go to stderr,
-  except where the caller has routed PyMuPDF's messages elsewhere, which is kept. The switch is
-  process-wide while a call runs, so calls from several threads now run one at a time. The CLI
-  was not affected: its markdown is built from word records.
-- **The model card described the CNN thresholds wrongly.** Of the two, only `p_hi` decides what
-  is reported: a candidate the CNN does not confirm at `p_hi` is dropped, and `p_lo` only labels
-  the rest clean or unsure. The card wrote the unsure band as `[p_lo, p_hi)`, said unsure words
-  were deferred to geometry, and gave `ScanConfig.precision_first` a `cnn_p_lo` argument; it
-  takes `cnn_p_hi`.
-- **`tools/export_model.py` could leave a new model beside an old meta.** It wrote the ONNX into
-  the package before its parity check, an `assert` that `python -O` skips. It now writes to a
-  temporary file and replaces the model and meta only after the check passes, and no longer
-  crashes printing `Δ` on a cp1252 console after writing the files. Both training tools write
-  their meta with LF line endings.
-- **`training/train_strikenet.py` checked its validation split only after training**, and one
-  labeled crop crashed it on an empty training split. It now stops before the first epoch and
-  says what the split lacks; the same seed still gives the same split and model.
-- **One RapidOCR word box off the page no longer loses the whole document.** RapidOCR can place a
-  word partly or wholly past the edge of the page (the last word of one equation line ran from
-  0.78 to 1.57 of the page width). `Word` refuses a box past 1.5, its guard against pixel
-  coordinates, so `rapidocr_backend()` raised `ValueError` inside `detect_pdf()` or
-  `detect_image_file()` and the call raised, so nothing came back. The backend now clamps each word
-  box to the page, so a word placed wholly off it keeps its text on a zero-width box at the edge; a
-  box only slightly past the edge, which `Word` accepted before, is clamped too.
-- **The README said RapidOCR reads every CJK script and that CJK scans work end to end.** RapidOCR's
-  default model has no Hangul; the README now gives a Korean route (rapidocr 3.3 or later, Python
-  only), says to check a CJK scan's struck words (on synthetic 200-dpi sans-serif scans the scanned
-  path marked 13–28% of unstruck Korean, Chinese and Japanese words struck, and no English ones),
-  and lists text-layer CJK PDFs and scans separately in its scope table.
-- **A strike line leaning more than 2° and rising more than 1.5 pt struck nothing.** The vector
-  detector kept a line only when it rose at most 1.5 pt or leaned at most 2°, so a line-tool strike
-  drawn by hand across a word was often dropped. Lines leaning up to 12° now count, each word
-  tested where the line crosses it, except on a line of text that itself leans more than 2°, where
-  a line along the text crosses its upright box. A steeper line or curve is never a strike on its
-  own, however short; before, any line rising 1.5 pt or less counted at any angle. The steeper
-  pieces of a hand-drawn strike still count when they chain with level ones. On synthetic pages,
-  strikes leaning 3° or more went from none found to 96%; the rest lean past 12° across words of
-  three letters or fewer.
-- **A strike shorter than 6 pt struck nothing,** so a struck digit, comma or period, or the old
-  letter of a relettered item (`(ba)`, `(iv)`), stayed in `clean_text`. The floor is now 3 pt.
-  A short mark must also be flat: a tick across one character (3 pt across, 1.5 pt up), drawn as
-  a line, a curve or a filled shape, is still not a strike, nor is a box or bar under 6 pt wide
-  and over 1.5 pt tall. A stroke under 6 pt counts only on a character whose own strike band it
-  crosses (the band above the baseline, measured from that character's own origin and em, or the
-  middle of its box when it has no usable baseline), so the bar of a small fraction or a root
-  beside full-size text is not a strike. A character extracted with no width, such as the 'i' of
-  an 'fi' ligature, is struck with the character before it. Segments under 6 pt are still chained
-  across the gaps of a dashed strike before the floor applies.
-- **Invisible text over an inserted letter could be marked struck.** Some redline tools lay a
-  hidden glyph a little low over a letter, so the underline of an inserted letter crossed the
-  hidden word's strike band. On an invisible word (render mode 3, or fully transparent) that
-  overlaps visible text, a stroke under 6 pt now counts only through the strike band of the
-  visible characters beneath it, so the hidden word is struck with a struck letter and not by an
-  underline. A strike over a text layer that is all invisible, such as an OCR'd scan with its
-  markup flattened, still counts.
-- **One word box off the page from Azure Document Intelligence, Textract or Document AI no longer
-  loses the whole document.** `Word` refuses a box past 1.5, its guard against pixel coordinates,
-  so one such box made `words_from_azure_di()` (which `di_result` goes through),
-  `words_from_textract()` or `words_from_docai()` raise `ValueError`, and `detect_pdf()` or
-  `detect_image_file()` with it. The adapters now clamp each word box to the page, as
-  `rapidocr_backend()` does, and drop a box that is not finite. A page where most boxes lie past
-  1.5, as with boxes in pixels or inches, still raises: clamped, its struck words would come back
-  as clean text.
-- **A blank page in a Textract result refused the whole scan.** `words_from_textract()` listed
-  only pages with words, so `detect_pdf()` and the CLI's `--textract-result` raised on a scanned
-  page with none. Every page in the result is now a key, with an empty list when it has no usable
-  words, as Document AI and Azure DI already report it.
-- **`clean_markdown()`'s docstring and the README now say what MuPDF's strikeout flag does:** it
-  can take in the character a strike ends against when no space separates them (the `M` of a `May`
-  printed straight after a struck `December`), as `method="flag"` can, more often under PyMuPDF
-  2.0 than before; `method="vector"` and `"both"` stop at the struck characters. The docstring also says how
-  `clean_markdown()` treats U+0336 overlays and code blocks. No code changes.
-- **Under the Azure DI calibration, scanned words with no OCR confidence scored at most 0.60.**
-  With `ScanConfig()` and words that carry no confidence, the chain gate already ran without
-  confidences, but the evidence score kept its confidence term and read every word as clean
-  text: on a synthetic page a clear strike scored 0.47 (`review`) where `confidence_free()` gives
-  0.78 (`auto`). The score now drops the term whenever the page has no confidences, as the gate
-  does, so such a page gets the same output under either calibration. Words with confidences
-  score as before.
-- **`apply_cnn_verdict` could drop an annotation record.** It leaves native records to their own
-  detector, but its list of native tiers predated `annot`, so a `/StrikeOut` record passed to it
-  was dropped whenever StrikeNet read the crop as clean. `detect_pdf` never passes it native
-  records; only a direct call was affected.
-- **A caller-built line without a `fill` could lose its words to the table-rule test.**
-  `classify_lines` read a missing `fill` as 1.0 there, so a long line through a word's middle
-  with glyph ink on one side only was dropped as a solid rule, the failure 0.10.0 fixed in the
-  printed-rule veto. A missing or `None` `fill` now triggers neither fill test (the table-rule test
-  and the chain gate, which already skipped it) and still scores as 0.80
-  (`scanned.FILL_UNMEASURED`); a `None` used to raise. Lines from `strike_lines` always carry one.
-- **A scanned page missing from `words_by_page` raised "no OCR backend was provided".** The
-  `OcrRequiredError` now names the pages `words_by_page` covers, as the error for a partial
-  `di_result` does; `on_missing_ocr="skip"`'s warning names `words_by_page` too.
-- **`markdown.strip_struck` kept characters struck with U+0336 overlays.** It was a copy of
-  `strip_struck_markdown` from before overlays were read; it now calls it and trims the result.
-- **The vector detector no longer reads fraction bars, radical bars and gridlines behind a legend
-  as strikes,** which dropped that text from `clean_text`. A stroke now strikes a character only
-  through that character's own band, so a fraction bar no longer strikes a small numerator or
-  denominator joined into one word with full-size text, nor a radical's bar its radicand. A radical
-  sign is struck only when the strike crosses at least half of it and its radicand is struck too.
-  A stroke under a fill at least half opaque, painted between it and the text, is behind the
-  text's background, as a plot's gridline is behind its legend's box; where the paint order can't
-  be read, the stroke is kept. On 137 strike-free PDFs, mostly LaTeX documents and matplotlib
-  figures, false strikes go from 421 to 4. Newly generated synthetic pages and Senate bills
-  published before the benchmark's cutoff are unchanged; on the dev pages of the benchmark's
-  public redline corpus, 13 marks go, all fraction bars in equations. Limits: a strike over a
-  radical sign alone, or drawn under such a fill where it still shows through, is lost; an overline
-  or a radical's bar just above x-height letters (`√x`), or a gridline through text with no box,
-  is still read as a strike. The detector takes 1–4% longer.
-- **The scanned path dropped thick strikes through bold or large text.** A 2 pt strike through bold
-  text above about 10 pt, or regular text above about 18 pt, is as thick as the stems it crosses, so
-  it read as a bold glyph's bar, and in larger bold text it merged with the bars it touches into one
-  piece too thick to stitch. A second pass now adds such a line where none was found: a thick line
-  is kept when its ink runs on unbroken for two and a half glyph heights, since a bold glyph's bar
-  ends with its glyph, and where a piece is too thick to stitch, the band it fills end to end is
-  taken as the line. Every line found before comes out unchanged, and `strike_lines` still needs no
-  OCR. On synthetic scanned pages in 42 fonts, struck words found rose from 3,853 to 4,997 of 12,782
-  (2 to 3 pt strikes from 944 to 1,717 of 4,247), with none lost and no more live words marked, and
-  strike-free bold text on shading, in boxes and under rules marked no more words. Struck bold
-  headings drawn with underlines, rules and boxes marked 46 live words where they marked 40. On
-  newly generated synthetic pages from the frontier benchmark, the half not used to tune, struck
-  sub-tokens found rose from 2,694 to 2,707 of 3,560 with no new over-marks; Senate bills published
-  before the benchmark's cutoff and the dev pages of its public redline corpus are unchanged.
-  `strike_lines` takes about 10% longer on struck pages and 7% on strike-free bold headings. A
-  strike thicker than about 3 pt is still over the 9 px cap, and a thin strike merged into bold
-  glyph bars is still lost. `lines.SOLID_GLYPHS = 0` gives the previous behavior.
-- **The scanned path dropped struck words whose line ran a few px off the stroke.** Stitching can
-  run a line a few px above or below a thin or light stroke, along the glyph pieces it crosses.
-  Read from there, the ink on one side of the line is under the glyphs, so one of two tests
-  dropped the word: a line outside the word's middle band, or a short one, needs glyph ink on both
-  sides, and a long solid line with ink on one side only is taken for a table rule. A word either
-  test drops is now tried again at the stroke's own row: the row within 4 px of the line (at 200
-  dpi, scaled with the dpi) whose unbroken run of ink covers the most of the columns the word
-  shares with the line, and at least 80% of them. The tests themselves are unchanged, and a word
-  they pass is judged as before. On the half of each set not used for tuning, struck sub-tokens
-  found rose from 2,707 to 2,797 of 3,560 on newly generated synthetic pages from the frontier
-  benchmark, from 2,599 to 2,631 of 2,798 on the dev pages of its public redline corpus, and from
-  5,548 to 5,561 of 5,752 on Senate bills published before its cutoff, with none lost. Three live
-  sub-tokens were newly marked, all in partly struck words: two struck words already found took
-  one or two more characters, and one OCR box holding a live word and the struck word after it
-  was marked whole. A stroke over less than 80% of those columns, or more than 4 px off, is still
-  lost. The reach was tuned at 200 dpi. At 72 and 100 dpi it is 1 or 2 px, and glyph rows of
-  serif and bold text can run as far as a stroke: on synthetic pages at those resolutions it
-  found 350 and 710 more struck words, and marked 97 and 10 more live ones. A scanned page's
-  detection takes 1.5 to 3.2% longer on average, OCR aside, and up to 1.17 times as long on one
-  page. `scanned.STROKE_SNAP_PX = 0` gives the previous behavior.
-- **The scanned path dropped 2 to 3 pt strikes over words with few ascenders or descenders.** A
-  thick bar through the middle of the x-height leaves two to four rows of it above and below the
-  bar, and the ink tests read glyph ink from 2 px past the stroke's edges, which takes those rows.
-  Finding no ink on one side, they took a long line for a table rule and a short one for no
-  strike. A word either test drops under a thick line (`run_px` above 4 px at 200 dpi, scaled
-  with the dpi, and above 2 px) up to 4 in long is now tried again with the glyph ink read from
-  the stroke's edges, when the line runs through the word's middle band and covers at least 45%
-  of it. A line that wobbles (`straightness` 1.2 or more, or not measured) must also be at least
-  1.5 times as thick as the median ink run in the two rows on each side that reading adds (the
-  stem test): under a printed bar those are the struck letters' stems, beside a pen stroke its
-  own uneven edge and strokes of the same pen. Rows next to the line inked across the word are
-  taken for the stroke's own. The ink test's verdict on a word it passed before is unchanged.
-  With `ScanConfig(glyph_ink=False)` there is no retry. On newly generated synthetic pages from
-  the frontier benchmark, the half not used to tune, struck sub-tokens found rose from 2,797 to
-  2,849 of 3,560 (2 to 3 pt strikes from 195 to 235 of 330), with none lost and no live
-  sub-tokens newly marked; Senate bills published before its cutoff and the dev pages of its
-  public redline corpus are unchanged. On 2,160 synthetic strike-free pages with a 2 to 3 pt bar
-  below, on or above the text, the words put to StrikeNet rose from 1,691 to 1,723 (short glyph
-  chains, mostly in bold text), and none was marked either way. On 103 handwritten pages of
-  BRESSAY's validation split, read by RapidOCR, live words marked rose from 1,722 to 1,745 of
-  43,628 (1,777 without the stem test), with no struck word gained. Under a bar that wobbles, the
-  stem test can still drop a strike over bold text or, less often, over regular serif or
-  monospace text. Detection time per scanned page moved by under 0.5%, OCR aside.
-  `scanned.INK_GAP_THICK_PX = 2` gives the previous behavior,
-  `scanned.INK_GAP_THICK_STEM_RATIO = 0` turns the stem test off, and
-  `scanned.INK_GAP_THICK_STEM_WOBBLE = 0` applies it to every line.
-- **The scanned path could drop a double strike when it found only one of its two lines.** Each
-  line of a double strike sits off the middle of the x-height, and the line finder gives one of
-  them, or one stitched along the glyph pieces beside it, which the retry at the stroke's own row
-  first moves onto the stroke. The ink tests read glyph ink from 2 px past that line, which skips
-  the one to three rows of the x-height on its outer side, so the struck word read as a table rule
-  or as ink on one side only. A word the ink tests drop now passes them when its line covers at
-  least 45% of it and a second unbroken stroke runs beside that line within 30% of the box
-  height, with glyph ink between them in at least 35% of the columns and a gap between the two
-  strokes, both strokes at least one and a half character widths long and about as long as each
-  other, and their middle in the word's middle band. StrikeNet still judges it, and like a word
-  with ink on both sides of its line the word counts as strike geometry (`geom_corroborated`): the
-  DI-confidence veto spares it, and `ScanConfig.line_support` can keep it when it has three
-  characters or fewer and StrikeNet does not confirm it. Only a word the ink tests drop is tried,
-  so a double-struck word they pass without ink on both sides of its line (under an in-band line
-  of 0.5 in or more, or, with Azure DI words read at 0.974 or below, through the confidence rescue
-  under a shorter one) gains no strike geometry, and the veto still drops it when it was read
-  above 0.955 (for a rescued word, until the confidence-rescue fix below). Only under a line at
-  most 4 in long, at
-  most 4 px thick (at 200 dpi, scaled with the dpi, with a 2 px floor) and straight
-  (`straightness` under 1.3 px, an unmeasured one counting as not straight): in handwriting, the
-  ruling of lined paper or a pen stroke beside another stroke made pairs. A double rule has
-  nothing between its lines, a double underline's middle is below the word's middle band, and one
-  glyph's bars (a P's bowl, an equals sign) are shorter. Glyph ink only: with
-  `ScanConfig(glyph_ink=False)` there is no pair test. On newly generated synthetic pages from the
-  frontier benchmark, the half no value was fitted to, struck sub-tokens found rose from 2,849 to
-  2,870 of 3,560 (double strikes from 247 to 268 of 300), and on 100 pages from a further
-  generator seed, from 5,674 to 5,731 of 7,057, with none lost and no live sub-tokens newly
-  marked; Senate bills published before its cutoff and the dev pages of its public redline corpus
-  found and marked the same. On BRESSAY's handwritten pages, read by RapidOCR, no mark changes on
-  its training split, and on its validation split 2 of the 43,628 live words are newly marked, on
-  2 pages, plus 2 OCR words on a third page that the live-word count does not register (a live
-  word marked only in its last letter, and a word matching nothing in the ground truth); with
-  Azure Document Intelligence words, on the 70 of those pages that have them, no mark changes. A
-  scanned page's detection takes 0.7% longer on synthetic pages and 0.3% on the bills, OCR aside.
-  `scanned.PAIR_REACH = 0` gives the previous behavior, and setting `scanned.PAIR_MAX_LEN_IN`,
-  `PAIR_MAX_RUN_PX`, `PAIR_LEN_RATIO` or `PAIR_MAX_WOBBLE` to 0 turns that limit off. With
-  `scanned.STROKE_SNAP_PX = 0`, a line stitched beside a stroke is not paired either.
-- **`ensure_model` could pair a cached meta with another model.** Called with neither `meta_url`
-  nor `meta`, it reused whatever meta its cache folder held, so in a `cache_dir` shared by two
-  models, or after a call whose meta was rejected once its model was written, one model ran with
-  the other's thresholds. Each call given `meta_url` or `meta` now records, in the cache folder
-  (`strike_verdict_cnn.meta.verified.json`), the model's sha256 with the sha256 of the meta it
-  verified or wrote, and a call with neither raises `ValueError`, writing no file, unless that
-  record pairs this model with the meta as it is now. A folder with no record, written before there
-  was one, is trusted as before when it is the model's default folder or already holds the model,
-  so one that an earlier version left holding a mismatched pair is still trusted until a call
-  passes `meta_url` or `meta` once. A meta placed by hand in a `cache_dir` that does not yet hold
-  the model is no longer trusted: pass `meta_url` or `meta` once. The model and the meta are now
-  both verified before either is written, so a rejected download leaves the cache as it was. The
-  record is written first and only when it changes; when it cannot be written, a later call with
-  neither may be refused.
-- **With Azure DI words, the DI-confidence veto could drop a struck word the confidence rescue
-  had passed.** A word read at 0.974 or below, under a line shorter than 0.5 in and without glyph
-  ink on both sides of it, passed through the rescue before any retry ran, so a double strike or
-  a thick bar over it got no strike geometry, and the veto dropped it when it was read above
-  0.955; read at 0.975, where the rescue does not apply, the retries passed it with geometry and
-  it was kept. A rescued word now goes through the retries too. One is taken only when it gives
-  strike geometry (in the band with ink on both sides, or a pair), and then sets `off` and the
-  row the span is read at as for any word a retry passes; a partial word's stroke-row retry is
-  not taken when it would move the word past `PARTIAL_ISO_MAX_OFF`. Otherwise the rescue stands
-  as before.
-  On BRESSAY's handwritten training and validation pages with Azure Document Intelligence words
-  (the 70 that have them), struck words found are unchanged and one live word gains a partial
-  mark. On 472 printed pages with DI words (newly generated synthetic pages, Senate bills
-  published before the frontier benchmark's cutoff and the dev pages of its public redline
-  corpus), two more struck words are found (a short word under a thick bar and one under a
-  double strike) and a struck word gains a partial mark, not enough to count as found; nothing
-  found before is lost and no live word gains a mark. Without OCR confidences
-  (`ScanConfig.confidence_free()`) the rescue never runs, so nothing changes there. A scanned
-  page's detection, OCR aside, takes 0.4% longer at the median on the 70 handwritten pages and
-  the same time on 80 of the printed ones, within the noise of timing the change off against
-  itself. `scanned.RESCUE_RETRIES = False` gives the previous behavior.
-- **`benchmarks/confidence_veto.py` split its counts where the veto does not.** Its default mode
-  counted a word read at exactly `max_clean_conf` (0.955) as high-confidence, but the veto acts
-  only above it. The split now uses the veto's boundary. One reported word on its ruled-table set
-  reads at exactly 0.955 in both 0.9.0 and 0.9.1, so the 0.9.1 figures it reproduces become 94 → 21
-  (−78%) high-confidence over-flags, not 95 → 22 (−77%). The struck-final counts (188 → 115) are
-  unchanged.
-- **The docs said a few things that were no longer true.** `SECURITY.md` said the package makes no
-  network calls, but `cnn.ensure_model` downloads the URL it is given. The failing-page issue
-  template said `--dump-crops` exports only the affected crops and leaks no surrounding text; it
-  exports every scored crop with its OCR text, and `--pages` limits it to the pages named. The
-  README said the package exports about 37 names (it exports 47, all in its table), its relative
-  links broke on PyPI, and its quick starts passed `ScanConfig.confidence_free()`, which `ocr=`
-  already implies. The README, `CONTRIBUTING.md` and the benchmark docs now say each thing once,
-  and most code comments no longer tell their own history. No code changes.
-- **Indic, Thai or pointed Hebrew text struck with U+0336 overlays was flagged as garbled.** An
-  overlay written after every character lands between a consonant and its vowel sign, which read
-  as a broken character map; with `on_garbled="drop"` the live characters of a partly struck word
-  left `clean_text`. The garbled check now skips the overlays.
-- **`clean_markdown()` kept a `_` or `*` struck with an overlay.** An overlay after one now strikes
-  it, except after emphasis markup that opens a word in pymupdf4llm's markdown.
-  `markdown.strip_struck` reads every `*` and `_` as text, since `detect_pdf`'s markdown has no
-  emphasis markup.
-- **A full disk under the CLI's `--telemetry` in batch mode ended the run with a traceback** and
-  exit code 1 after every result was written. Telemetry now stops with a warning and the run ends
-  as it would have.
-- **`--on-garbled` is now ignored with a warning** for a `.docx`, an image file and
-  `--dump-crops`, as other flags that do not apply are.
-- **Scanned pages: three fixes where this release's changes interacted.** A double strike whose
-  detected line ran just outside a word's middle band, read by Azure DI at 0.96 to 0.974, was
-  dropped by the DI-confidence veto, though the same word read at 0.975 was kept; it is now kept. A
-  partly struck word the OCR-confidence rescue passed could lose its strike geometry beside a word
-  its line crosses; it now keeps it. Line support could miss a short word's own stroke when the
-  detected line ran a few px off it; it now reads the stroke where the word's geometry was found.
-- **Pages an `ocr` backend read beside a partial `di_result` ran under the Azure DI calibration,**
-  which misreads that backend's confidences. `detect_pdf` now picks the default calibration per
-  page, and the CLI's `--di-result` follows it.
+- **Scanned path:** strikes thicker than about 1.4 pt were dropped (#58), as were thick strikes
+  through bold or large text (#69) and over words with few ascenders (#75), double strikes where
+  only one line was found (#76), and strikes whose line ran a few px off the stroke (#70).
+  Underlined text on a table rule read as struck (#59). With Azure DI words, the confidence veto
+  could drop a double or thick strike the confidence rescue had passed (#83, #86). Words with no
+  OCR confidence scored at most 0.60 under the DI calibration, `apply_cnn_verdict` could drop an
+  `annot` record, and a caller-built line without `fill` could lose its words (#67).
+- **Vector detector, missed:** strike lines leaning more than 2 degrees and strokes under 6 pt
+  (#55), and U+0336 overlay text (#56, #85). **Read as strikes:** an underline through hidden text
+  laid over an inserted letter (#55), baseline underlines in Courier and similar fonts (#57), and
+  fraction bars, radical bars and gridlines behind a legend (#68).
+- **OCR adapters:** one word box off the page from RapidOCR, Azure DI, Textract or Document AI
+  lost the whole document (#53, #63); a blank Textract page refused the scan (#63); a page missing
+  from `words_by_page` gave the wrong error (#67).
+- **Model loading and tools:** `tools/export_model.py` could leave a new model beside an old meta,
+  and `training/train_strikenet.py` checked its validation split only after training (#40).
+- **PyMuPDF 2.0:** the flag detector's version guard could not read `2.0`; `[markdown]` could
+  install without a usable pymupdf4llm; `clean_markdown()` printed to stdout. (#49, #51)
+- **Docs:** the model card's thresholds, `SECURITY.md`'s network claim, the failing-page template,
+  and the README on CJK scans and MuPDF's strikeout flag. (#40, #65, #66, #74)
 
-## [0.12.1] — 2026-10-08
+### Removed
+- `benchmarks/di_parity.py` and `benchmarks/ocr_backend_table.py`, which ran on nothing. (#72)
+- The TestPyPI rehearsal. (#37)
+
+### Restoring 0.12.1 behavior
+Module constants are process-wide and outside the stability contract: they are here to compare
+outputs, and may go.
+
+| Change | Setting |
+|---|---|
+| Short-word line support (#61) | `line_support=False` on the preset, as `ScanConfig.confidence_free(line_support=False)` |
+| Glyph-ink test (#59) | `glyph_ink=False` on the preset |
+| Thick-strike cap and stem test (#58) | `lines.STEM_RATIO = 0`, `lines.MAX_STROKE_RUN_PX = 4`, `lines.RUN_SLACK_PX = 0` |
+| Thick strikes through bold text (#69) | `lines.SOLID_GLYPHS = 0` |
+| Stroke-row retry (#70) | `scanned.STROKE_SNAP_PX = 0` |
+| Thick-bar retry (#75) | `scanned.INK_GAP_THICK_PX = 2` |
+| Double-strike pairs (#76) | `scanned.PAIR_REACH = 0` |
+| Rescued words get the retries (#83) | `scanned.RESCUE_RETRIES = False` |
+| RapidOCR orientation classifier (#53) | `rapidocr_backend(params={"Global.use_cls": True})` |
+| Lone CJK removal (#54) | `rapidocr_backend(drop_lone_cjk=False)` |
+| The DI calibration in `detect_scanned_image` and `analyze_scanned_page` (#67) | `config=ScanConfig.azure_di()` |
+| One calibration for every page with a partial `di_result` (#86) | `scan_config=ScanConfig.azure_di()` |
+
+## [0.12.1] - 2026-10-08
 
 Correctness patch for the shipped StrikeNet's documentation and the tooling around it. Nothing
 under `src/` changes except the version, so detection output is identical to 0.12.0's. The model
@@ -623,7 +193,7 @@ reproduce from a fresh clone.
   replacement and records what it was trained on; it does not reproduce the shipped weights or the
   process that made them (see **Fixed**).
 
-## [0.12.0] — 2026-10-08
+## [0.12.0] - 2026-10-08
 
 A correctness release. An audit of the whole package (native path, scanned path, public API, CLI
 and packaging) reproduced every defect it reported before any was fixed; all but the few under
@@ -838,7 +408,7 @@ Several fixes change output, so read **Changed** before upgrading.
 - On a scan, a strike over the first letters of a long word can read as a full-word strike.
 - A tracked move in a Word document (`w:moveFrom`) is not reported.
 
-## [0.11.0] — 2026-09-04
+## [0.11.0] - 2026-09-04
 
 Minor, not patch: adds public API (`ScanConfig.rescue_clean_chains`). The headline is the shaded-
 and highlighted-block fix (issue #15), which changes scanned-path output on any page carrying a
@@ -985,7 +555,7 @@ on the 2170-strike recovery benchmark are identical to 0.10.0.
   could meet the bar is abstention with a conformal guarantee, which needs mass negatives in the
   failing regime, and no supply of them has been found. Full reasoning in the issue thread.
 
-## [0.10.0] — 2026-07-29
+## [0.10.0] - 2026-07-29
 
 Minor, not patch: adds public API (`ScanConfig.ruled_forms()`, `veto_printed_rules`, the
 `straightness` line field). Nothing changes by default.
@@ -1038,7 +608,7 @@ depend on it.
   #4·C). Directions rejected on measurement — DI `tables[]` cell geometry, detrended `straightness`, a
   line-length floor, a higher wobble bar — are recorded with their numbers at each site in the source.
 
-## [0.9.1] — 2026-07-26
+## [0.9.1] - 2026-07-26
 
 Correctness patch for scanned, tightly-ruled tables and forms analyzed via Azure Document
 Intelligence (issue #4): the detector over-flagged clean printed text as struck. On a private
@@ -1084,7 +654,7 @@ changes; pure precision.
   explicit (`E4/E7/E9/F`, the documented intent) so a floating newer ruff no longer fails `lint`
   with rules the project never opted into. `dev` extra and the `ruff-action` version now match.
 
-## [0.9.0] — 2026-07-06
+## [0.9.0] - 2026-07-06
 
 Prove it: the evidence & model program. This release ships the *machinery* — operating points,
 calibration, an active-learning export, a digest-verified model loader, a reproducible training
@@ -1159,7 +729,7 @@ R-cal precision/recall figure.
   (1477 vs 1484)" (both from the original private validation) are now the measured "95% (DI) / 97%
   (RapidOCR) of the native strike set recovered", produced by `scanned_recovery.py`.
 
-## [0.8.0] — 2026-07-06
+## [0.8.0] - 2026-07-06
 
 Scale & armor: robustness on hostile and high-resolution input, dashed/curve-drawn strikes,
 column-aware reading order, and a batch CLI. All pure-code — no new dependencies or shipped assets.
@@ -1194,7 +764,7 @@ column-aware reading order, and a batch CLI. All pure-code — no new dependenci
   tables are left as rows (a struck table row stays one passage) and strikes across a hyphenated
   line break still group into one passage.
 
-## [0.7.0] — 2026-07-05
+## [0.7.0] - 2026-07-05
 
 Beyond PDFs: the same strike detection now reaches raster images, Word documents, and the AWS/Google
 OCR ecosystems, plus an audit-preserving text mode for RAG. All pure-code — no new dependencies.
@@ -1226,7 +796,7 @@ OCR ecosystems, plus an audit-preserving text mode for RAG. All pure-code — no
 - **Fixed a clobbered `## [0.5.0]` heading** in this changelog (the 0.6.0 edit dropped it, orphaning
   the 0.5.0 notes under the 0.6.0 section).
 
-## [0.6.0] — 2026-07-05
+## [0.6.0] - 2026-07-05
 
 Annotations & evidence: complete the *evidence story* for the signals already detected — an
 explicit annotation pass with redline forensics, stroke color/width on vector records, a visual
@@ -1268,7 +838,7 @@ shipped assets.
   that removes onnxruntime and loads a `.pt` through the CNN's torch fallback — a shipped code path
   CI never touched.
 
-## [0.5.0] — 2026-07-05
+## [0.5.0] - 2026-07-05
 
 Reachable & credible: new public API/CLI surface, inline typing, runnable examples, a reproducible
 benchmark harness, and release/CI hardening.
@@ -1336,7 +906,7 @@ benchmark harness, and release/CI hardening.
   non-Latin scripts whose strikes run along a different axis are out of scope (`native.py` module
   docstring). Full support is roadmap R-cjk.
 
-## [0.4.1] — 2026-07-05
+## [0.4.1] - 2026-07-05
 
 ### Fixed
 - **Encryption gate now recognizes authenticated documents.** Detection gated on
@@ -1374,7 +944,7 @@ benchmark harness, and release/CI hardening.
 - `import fitz` replaced with `import pymupdf` throughout (the `fitz` alias is deprecated upstream
   and collides with the abandoned `fitz` PyPI package).
 
-## [0.4.0] — first public release
+## [0.4.0] - first public release
 
 - Detect struck-through (deleted) text in born-digital PDFs (exact vector/flag detection) and scanned pages (stroke geometry + OCR + ONNX CNN), with `~~struck~~` markdown, clean text, and grouped passages via a Python API and CLI.
 
