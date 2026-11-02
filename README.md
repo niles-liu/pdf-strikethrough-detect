@@ -118,10 +118,12 @@ takes the same fields.
 
 **RapidOCR defaults.** `rapidocr_backend()` turns RapidOCR's orientation classifier off, since it
 turns struck and underlined lines upside down; turn upside-down pages upright first, or pass
-`params={"Global.use_cls": True}`. The default model can read a small mark as a CJK character (`(a)`
-as `(斗)`), so on a page with no run of CJK text it removes lone CJK characters, real ones included
-(`100 円` loses the unit); `drop_lone_cjk=False` keeps them, and the CLI always removes them. Word
-boxes past the page edge are clamped to it.
+`params={"Global.use_cls": True}`. On rapidocr 3.4 and later it has RapidOCR log only errors
+(`params={"Global.log_level": "info"}` restores its log; RapidOCR keeps one log level for the
+process, set by the engine built last). The default model can read a small mark as a CJK character
+(`(a)` as `(斗)`), so on a page with no run of CJK text it removes lone CJK characters, real ones
+included (`100 円` loses the unit); `drop_lone_cjk=False` keeps them, and the CLI always removes
+them. Word boxes past the page edge are clamped to it.
 
 **Operating points.** `ScanConfig.recall_first()` catches more deletions at the cost of more review;
 `ScanConfig.precision_first()` avoids dropping live text (RAG, indexing). Fit a threshold to your
