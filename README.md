@@ -290,14 +290,14 @@ The top-level package (`import pdf_strikethrough as st`) exports these names, pl
 
 | Group | Names |
 |---|---|
-| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `provenance_text`, `detect_pdf`, `detect_image_file`, `detect_scanned_image`, `strikethroughs_in_docx`, `open_pdf`, `render_page_gray`, `render_overlay`, `save_overlays` |
+| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `provenance_text`, `render_text`, `detect_pdf`, `detect_image_file`, `detect_scanned_image`, `strikethroughs_in_docx`, `open_pdf`, `render_page_gray`, `render_overlay`, `save_overlays` |
 | Native detectors | `native_page_strikes`, `native_flag_strikes`, `native_annot_strikes`, `native_doc_strikes`, `page_strikes`, `native_markdown`, `strip_struck_markdown` |
 | Scanned geometry + classifier | `strike_lines`, `ink_mask`, `to_gray_u8`, `analyze_scanned_page`, `ScanConfig`, `classify_page_source`, `apply_cnn_verdict` |
 | CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta`, `ensure_model` |
 | Active learning + calibration | `dump_crops`, `pdf_strikethrough.calibration` (`threshold_for_recall`, `threshold_for_precision`, `conformal_threshold`, `pr_curve`) |
 | OCR (backends + cloud-result adapters) | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di`, `words_from_textract`, `words_from_docai` |
-| Errors and warnings | `OcrRequiredError`, `EncryptedPdfError`, `GarbledTextWarning` |
-| Types | `StruckWord`, `DetectResult`, `Passage`, `GarbledWord`, `Telemetry` (in `pdf_strikethrough.types`) |
+| Errors and warnings | `OcrRequiredError`, `EncryptedPdfError`, `InvalidPdfError`, `LimitExceededError`, `GarbledTextWarning` |
+| Types | `StruckWord`, `DetectResult`, `Passage`, `GarbledWord`, `PageWords`, `Telemetry` (in `pdf_strikethrough.types`) |
 
 Every `detect_pdf` and `detect_image_file` result, and every CLI `--json` and `--jsonl` payload,
 carries `schema_version` (`pdf_strikethrough.types.SCHEMA_VERSION`, now `1`). It goes up when a
