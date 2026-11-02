@@ -6,6 +6,54 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-02
+
+Minor, not patch: it adds public API (`InvalidPdfError`, `LimitExceededError`, `page_words=` with
+`render_text`, `max_pages=` and `max_mpix=`). Detection output is unchanged: with the new options
+off, every result 0.13.1 gave on a valid PDF, or on an image through `detect_image_file`, is the
+same. What changed is the handling of inputs 0.13.1 failed on, of files that are not readable
+PDFs, and of damaged PDFs (below). Results keep `schema_version` 1.
+
+### Added
+- `page_words=True` on `detect_pdf` and `detect_image_file` adds `res["page_words"]`, every word
+  each page's text is built from (`types.PageWords`). Given a copy of `res["words"]` with a
+  reviewer's changes to `final`, `render_text(res, words)` rebuilds `markdown`, `clean_text` and
+  `passages` as reviewed, also from a result saved as JSON. (#101)
+- `max_pages=` and `max_mpix=` on `detect_pdf` and `detect_image_file` raise `LimitExceededError`
+  (a `ValueError`) before any page is detected. Toward `max_mpix`, a scanned PDF page counts as
+  rendered, an image frame as stored and a born-digital page not at all; an image file's frames
+  are read only up to the first one over a limit. (#99)
+- `InvalidPdfError`, for a file that is not a readable PDF: a `ValueError`, and still a
+  `pymupdf.FileDataError`, the error a file MuPDF cannot open raised before. (#96)
+- The README says what a record's `verdict` means. (#97)
+
+### Changed
+- The PDF functions (`detect_pdf`, `open_pdf`, `strikethroughs_in_pdf`, `clean_markdown`,
+  `render_overlay`, `save_overlays`) refuse a file MuPDF reads as another format, such as an
+  image or an EPUB, with `InvalidPdfError`; most of them used to read it. Use `detect_image_file`
+  for an image. A document you opened yourself is not refused for its format, and the CLI reads
+  any document MuPDF opens, as before. (#96)
+- MuPDF's own errors for a file the package cannot read arrive as `InvalidPdfError`, so code
+  that caught `pymupdf.mupdf.FzErrorFormat` (a broken page tree) or `pymupdf.EmptyFileError`
+  (an empty file) should catch `InvalidPdfError`. (#96)
+- `open_pdf` loads every page once to check the page tree, and `detect_pdf` loads page 0 and the
+  pages it will process. On a damaged PDF that MuPDF repairs as it reads, that can move the
+  repair earlier, so a page can read differently. (#96)
+- `rapidocr_backend()` sets RapidOCR's `Global.log_level` to `"error"` on rapidocr 3.4 and later;
+  `params` you pass take precedence. (#98)
+
+### Fixed
+- **Broken page trees:** a PDF whose page tree holds fewer pages than it claims raised
+  `IndexError` at the first missing page; it is now read as the pages it holds, and detection
+  warns with both counts. A page tree MuPDF cannot walk (a cycle, a missing `/Kids`, a `/Count`
+  above the file's object count) raises `InvalidPdfError` before any page is detected, and the
+  CLI reports it without a traceback. (#96)
+- **Long, narrow scans:** a page or image frame RapidOCR cannot resize (over 2000 px long and
+  more than about 118 times as long as it is wide) is skipped with a warning; RapidOCR's
+  `ResizeImgError` used to stop the document. (#100)
+- On Windows, a PDF that failed to open, or whose page tree MuPDF cannot walk, stayed locked for
+  as long as the caller kept the error; the error no longer holds the file. (#96)
+
 ## [0.13.1] - 2026-10-31
 
 Patch: one CLI fix. Detection output is identical to 0.13.0's.
