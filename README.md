@@ -82,8 +82,19 @@ struck = [w for w in res["words"] if w["final"]]
 `detect_pdf` routes each page: native pages take the exact path, scanned pages go through stroke
 geometry, OCR word boxes and StrikeNet (the bundled model), and `markdown`, `clean_text` and
 `passages` cover both. A scanned page with no OCR raises `OcrRequiredError` (`on_missing_ocr="skip"`
-skips it); a password-protected PDF raises `EncryptedPdfError`. An image's dpi comes from its
-metadata (else 200), and a photo's EXIF rotation is applied.
+skips it). A password-protected PDF raises `EncryptedPdfError`, and a file that is not a readable
+PDF (an image, say, or one whose page tree MuPDF cannot walk) raises `InvalidPdfError` before any
+page is detected. An image's dpi comes from its metadata (else 200), and a photo's EXIF rotation
+is applied.
+
+Every record has a `verdict`: `"struck"`, `"clean"` or `"unsure"`, and `final` is true exactly when
+it is `"struck"`. Born-digital records are always `"struck"`. On a scan, `"clean"` means StrikeNet
+ruled the candidate out, and `"unsure"` that it could not decide or the Azure DI calibration
+vetoed it: the words to send to a reviewer.
+
+`page_words=True` adds `res["page_words"]`, every word each page's text is built from. Given a
+copy of `res["words"]` with a reviewer's changes to `final`, `st.render_text(res, words)` rebuilds
+`markdown`, `clean_text` and `passages` as reviewed, also from a result saved as JSON.
 
 ### OCR backends
 
@@ -111,10 +122,13 @@ takes the same fields.
 
 **RapidOCR defaults.** `rapidocr_backend()` turns RapidOCR's orientation classifier off, since it
 turns struck and underlined lines upside down; turn upside-down pages upright first, or pass
-`params={"Global.use_cls": True}`. The default model can read a small mark as a CJK character (`(a)`
-as `(斗)`), so on a page with no run of CJK text it removes lone CJK characters, real ones included
-(`100 円` loses the unit); `drop_lone_cjk=False` keeps them, and the CLI always removes them. Word
-boxes past the page edge are clamped to it.
+`params={"Global.use_cls": True}`. On rapidocr 3.4 and later it has RapidOCR log only errors
+(`params={"Global.log_level": "info"}` restores its log; RapidOCR keeps one log level for the
+process, set by the engine built last). The default model can read a small mark as a CJK character
+(`(a)` as `(斗)`), so on a page with no run of CJK text it removes lone CJK characters, real ones
+included (`100 円` loses the unit); `drop_lone_cjk=False` keeps them, and the CLI always removes
+them. Word boxes past the page edge are clamped to it. A page RapidOCR cannot resize, one too long
+for its width, is skipped with a warning.
 
 **Operating points.** `ScanConfig.recall_first()` catches more deletions at the cost of more review;
 `ScanConfig.precision_first()` avoids dropping live text (RAG, indexing). Fit a threshold to your
@@ -253,6 +267,8 @@ with `--dump-crops` output is the fastest way to get a case fixed.
 
 Scans above 300 dpi are worked at 200, the resolution the geometry and model are calibrated at;
 a page over 128 Mpix is also scaled down, with a warning ([`SECURITY.md`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/SECURITY.md)).
+To refuse large input up front, `max_pages=` and `max_mpix=` on `detect_pdf` and
+`detect_image_file` raise `LimitExceededError` before any page is detected.
 
 ## Against frontier models
 
@@ -274,14 +290,14 @@ The top-level package (`import pdf_strikethrough as st`) exports these names, pl
 
 | Group | Names |
 |---|---|
-| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `provenance_text`, `detect_pdf`, `detect_image_file`, `detect_scanned_image`, `strikethroughs_in_docx`, `open_pdf`, `render_page_gray`, `render_overlay`, `save_overlays` |
+| High-level | `strikethroughs_in_pdf`, `clean_markdown`, `provenance_text`, `render_text`, `detect_pdf`, `detect_image_file`, `detect_scanned_image`, `strikethroughs_in_docx`, `open_pdf`, `render_page_gray`, `render_overlay`, `save_overlays` |
 | Native detectors | `native_page_strikes`, `native_flag_strikes`, `native_annot_strikes`, `native_doc_strikes`, `page_strikes`, `native_markdown`, `strip_struck_markdown` |
 | Scanned geometry + classifier | `strike_lines`, `ink_mask`, `to_gray_u8`, `analyze_scanned_page`, `ScanConfig`, `classify_page_source`, `apply_cnn_verdict` |
 | CNN | `score_word`, `score_crops`, `std_crop`, `word_crop_px`, `verdict_of`, `get_model_meta`, `ensure_model` |
 | Active learning + calibration | `dump_crops`, `pdf_strikethrough.calibration` (`threshold_for_recall`, `threshold_for_precision`, `conformal_threshold`, `pr_curve`) |
 | OCR (backends + cloud-result adapters) | `Word`, `rapidocr_backend`, `tesseract_backend`, `words_from_azure_di`, `words_from_textract`, `words_from_docai` |
-| Errors and warnings | `OcrRequiredError`, `EncryptedPdfError`, `GarbledTextWarning` |
-| Types | `StruckWord`, `DetectResult`, `Passage`, `GarbledWord`, `Telemetry` (in `pdf_strikethrough.types`) |
+| Errors and warnings | `OcrRequiredError`, `EncryptedPdfError`, `InvalidPdfError`, `LimitExceededError`, `GarbledTextWarning` |
+| Types | `StruckWord`, `DetectResult`, `Passage`, `GarbledWord`, `PageWords`, `Telemetry` (in `pdf_strikethrough.types`) |
 
 Every `detect_pdf` and `detect_image_file` result, and every CLI `--json` and `--jsonl` payload,
 carries `schema_version` (`pdf_strikethrough.types.SCHEMA_VERSION`, now `1`). It goes up when a

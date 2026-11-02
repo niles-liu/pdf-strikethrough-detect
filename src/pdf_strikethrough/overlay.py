@@ -45,7 +45,7 @@ def render_overlay(source, result=None, *, dpi=150, pages=None,
 
     Returns a list of ``{"page": int, "image": PIL.Image.Image, "n_struck": int}`` in page order.
     """
-    doc, owned = detect._open_doc(source)
+    doc, owned = detect._open_doc(source, walk=False)     # only the pages drawn are loaded
     try:
         if result is None:
             # skip (not raise on) scanned pages with no OCR: a native-only overlay of a mixed doc
@@ -58,6 +58,7 @@ def render_overlay(source, result=None, *, dpi=150, pages=None,
                 by_page.setdefault(w["page"], []).append(w)
         targets = (detect._normalize_pages(pages, doc.page_count) if pages is not None
                    else sorted(by_page))
+        detect._walk_page_tree(doc, targets)
         lw = max(1, round(dpi / 100))
         out = []
         for pno in targets:

@@ -19,7 +19,10 @@ from _synth import _final_chars
 _BLANK = np.zeros((100, 200, 3), np.uint8)
 
 
-def _fake_rapidocr_module(monkeypatch):
+QUIET = {"Global.log_level": "error"}       # the default on rapidocr 3.4 and later
+
+
+def _fake_rapidocr_module(monkeypatch, version="3.10.0"):
     """Install a stand-in ``rapidocr`` module; returns the kwargs of every engine it builds."""
     built = []
 
@@ -31,7 +34,7 @@ def _fake_rapidocr_module(monkeypatch):
             return SimpleNamespace(word_results=())
 
     mod = types.ModuleType("rapidocr")
-    mod.__version__ = "3.10.0"
+    mod.__version__ = version
     mod.RapidOCR = RapidOCR
     monkeypatch.setitem(sys.modules, "rapidocr", mod)
     return built
@@ -62,13 +65,14 @@ def test_the_built_engine_has_the_orientation_classifier_off(monkeypatch):
     backend = rapidocr_backend()
     assert built == []                                  # built lazily, on the first page
     assert backend(_BLANK) == []
-    assert built == [{"params": {"Global.use_cls": False}}]
+    assert built == [{"params": {**QUIET, "Global.use_cls": False}}]
 
 
 @pytest.mark.parametrize("params, expected", [
-    ({"Global.use_cls": True}, {"Global.use_cls": True}),                       # the opt-in
-    ({"Global.text_score": 0.3}, {"Global.use_cls": False, "Global.text_score": 0.3}),
-    (None, {"Global.use_cls": False}),
+    ({"Global.use_cls": True}, {**QUIET, "Global.use_cls": True}),              # the opt-in
+    ({"Global.text_score": 0.3}, {**QUIET, "Global.use_cls": False, "Global.text_score": 0.3}),
+    (None, {**QUIET, "Global.use_cls": False}),
+    ({"Global.log_level": "info"}, {"Global.log_level": "info", "Global.use_cls": False}),
 ])
 def test_the_callers_params_win(monkeypatch, params, expected):
     built = _fake_rapidocr_module(monkeypatch)
@@ -88,7 +92,22 @@ def test_the_readmes_korean_recognizer_reaches_the_engine_as_enums(monkeypatch):
     params = {"Rec.lang_type": lang.KOREAN, "Rec.ocr_version": version.PPOCRV5,
               "Rec.model_type": model.MOBILE}
     rapidocr_backend(params=params)(_BLANK)
-    assert built == [{"params": {"Global.use_cls": False, **params}}]   # a member != its value
+    assert built == [{"params": {**QUIET, "Global.use_cls": False, **params}}]   # member != value
+
+
+@pytest.mark.parametrize("version", ["3.2.0", "3.3.1"])
+def test_rapidocr_before_3_4_gets_no_log_level(monkeypatch, version):
+    # 3.4.0 added Global.log_level; 3.2 and 3.3 raise ValueError on a key they don't know
+    built = _fake_rapidocr_module(monkeypatch, version)
+    rapidocr_backend()(_BLANK)
+    assert built == [{"params": {"Global.use_cls": False}}]
+
+
+@pytest.mark.parametrize("version", ["3.4.0", "3.4.1"])
+def test_rapidocr_from_3_4_logs_only_errors(monkeypatch, version):
+    built = _fake_rapidocr_module(monkeypatch, version)
+    rapidocr_backend()(_BLANK)
+    assert built == [{"params": {**QUIET, "Global.use_cls": False}}]
 
 
 def test_a_prebuilt_engine_is_used_as_is(monkeypatch):
@@ -169,7 +188,7 @@ def test_drop_lone_cjk_false_keeps_it(monkeypatch):
     assert _texts(words) == ["67.8", "(", "斗", ")", "17.38"]
     built = _fake_rapidocr_module(monkeypatch)
     rapidocr_backend(drop_lone_cjk=False)(_BLANK)
-    assert built == [{"params": {"Global.use_cls": False}}]   # the switch never reaches RapidOCR
+    assert built == [{"params": {**QUIET, "Global.use_cls": False}}]   # never reaches RapidOCR
 
 
 @pytest.mark.parametrize("texts", [

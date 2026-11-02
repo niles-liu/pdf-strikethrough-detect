@@ -33,17 +33,19 @@ from . import (active, calibration, cnn, detect, docx, lines, markdown, native, 
 from .active import dump_crops
 from .cnn import (ensure_model, get_model_meta, score_crops, score_word, std_crop, verdict_of,
                   word_crop_px)
-from .detect import (EncryptedPdfError, GarbledTextWarning, OcrRequiredError, apply_cnn_verdict,
+from .detect import (EncryptedPdfError, GarbledTextWarning, InvalidPdfError,
+                     LimitExceededError, OcrRequiredError, apply_cnn_verdict,
                      classify_page_source, detect_image_file, detect_pdf, detect_scanned_image)
 from .docx import strikethroughs_in_docx
 from .lines import ink_mask, strike_lines, to_gray_u8
+from .markdown import render_text
 from .native import (native_annot_strikes, native_doc_strikes, native_flag_strikes,
                      native_markdown, native_page_strikes, page_strikes, strip_struck_markdown)
 from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di,
                   words_from_docai, words_from_textract)
 from .overlay import render_overlay, save_overlays
 from .scanned import ScanConfig, analyze_scanned_page
-from .types import DetectResult, GarbledWord, Passage, StruckWord, Telemetry
+from .types import DetectResult, GarbledWord, PageWords, Passage, StruckWord, Telemetry
 
 # Library logging etiquette: attach a NullHandler so importing the package never emits records on
 # its own. Diagnostics (page routing, per-page record counts, OCR/CNN timing) are logged at DEBUG
@@ -52,11 +54,11 @@ from .types import DetectResult, GarbledWord, Passage, StruckWord, Telemetry
 # ``warnings`` stays reserved for caller-facing hazards (silent-[] on scans, scanned-fallback, ...).
 _logging.getLogger("pdf_strikethrough").addHandler(_logging.NullHandler())
 
-__version__ = "0.13.1"
+__version__ = "0.14.0"
 
 __all__ = [
     # high-level
-    "strikethroughs_in_pdf", "clean_markdown", "provenance_text", "detect_pdf",
+    "strikethroughs_in_pdf", "clean_markdown", "provenance_text", "render_text", "detect_pdf",
     "detect_image_file", "detect_scanned_image", "strikethroughs_in_docx",
     "open_pdf", "render_page_gray", "render_overlay", "save_overlays",
     # native
@@ -66,7 +68,8 @@ __all__ = [
     "strike_lines", "ink_mask", "to_gray_u8", "analyze_scanned_page", "ScanConfig",
     "classify_page_source", "apply_cnn_verdict",
     # errors and warnings
-    "OcrRequiredError", "EncryptedPdfError", "GarbledTextWarning",
+    "OcrRequiredError", "EncryptedPdfError", "InvalidPdfError", "LimitExceededError",
+    "GarbledTextWarning",
     # OCR (backends + pre-fetched cloud-result adapters)
     "Word", "rapidocr_backend", "tesseract_backend", "words_from_azure_di",
     "words_from_textract", "words_from_docai",
@@ -76,7 +79,7 @@ __all__ = [
     # active learning
     "dump_crops",
     # typing
-    "StruckWord", "DetectResult", "Passage", "GarbledWord", "Telemetry",
+    "StruckWord", "DetectResult", "Passage", "GarbledWord", "PageWords", "Telemetry",
     # submodules
     "active", "calibration", "cnn", "docx", "lines", "native", "ocr", "overlay", "scanned",
     "detect", "markdown", "types",
@@ -87,7 +90,9 @@ def open_pdf(source):
     """Open `source` (path, bytes, an open binary file, or an already-open fitz document) as a
     fitz document.
     Raises EncryptedPdfError for password-protected PDFs (routes through the same gate as
-    ``detect_pdf``; an already-authenticated document passes)."""
+    ``detect_pdf``; an already-authenticated document passes), and InvalidPdfError for a file that
+    is not a readable PDF or whose page tree MuPDF cannot walk. Loads every page once to check;
+    to read a few pages of an untrusted file, pass it to ``detect_pdf`` with ``pages=``."""
     return detect._open_doc(source)[0]
 
 
@@ -109,6 +114,8 @@ def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
     ``detect_pdf(..., ocr=...)`` instead."""
     doc = open_pdf(source)
     try:
+        if note := detect._page_tree_note(doc):
+            _warnings.warn(note, stacklevel=2)
         scanned_pages = [p for p in range(doc.page_count)
                          if detect.classify_page_source(doc[p]) == "scanned"]
         if scanned_pages:
@@ -145,6 +152,8 @@ def clean_markdown(source) -> str:
     such as a paragraph set entirely in a monospaced font, since it writes no ``~~`` there."""
     doc = open_pdf(source)
     try:
+        if note := detect._page_tree_note(doc):
+            _warnings.warn(note, stacklevel=2)
         if doc.page_count == 0:
             return ""
         return native.strip_struck_markdown(native.native_markdown(doc))
