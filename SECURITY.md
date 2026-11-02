@@ -26,7 +26,7 @@ A few defensive choices worth knowing:
 ## Resource limits
 
 Rendering a scanned page allocates a raster of `page_size × dpi²` pixels, so a hostile
-document (a huge mediabox, or an absurd requested DPI) could otherwise exhaust memory. Two
+document (a huge mediabox, or an absurd requested DPI) could otherwise exhaust memory. Three
 guards bound this:
 
 - **Per-page raster budget (128 Mpix).** A page that would exceed it is rendered at a
@@ -34,6 +34,11 @@ guards bound this:
   raster. Output coordinates are page fractions, so results are unaffected.
 - **High-DPI normalization.** Rasters above ~300 dpi are worked at 200 dpi internally (the
   detector's calibration point); extra resolution adds cost without accuracy.
+- **Limits you set.** `max_pages=` and `max_mpix=` on `detect_pdf` and `detect_image_file`
+  refuse a document with more pages to read, or more megapixels to hold in all, with
+  `LimitExceededError`, before any page is detected: a scanned PDF page counts as rendered, an
+  image frame as stored. An image file's frames are read only up to the first one over a
+  limit.
 
 Image files are additionally subject to Pillow's decompression-bomb guard
 (`PIL.Image.MAX_IMAGE_PIXELS`), which raises on a maliciously large image before it is decoded.
