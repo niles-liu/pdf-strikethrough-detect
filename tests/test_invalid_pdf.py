@@ -43,8 +43,19 @@ NO_KIDS = _raw_pdf([CATALOG, "<< /Type /Pages /Count 1 >>"])
 BROKEN_AFTER_FIRST_PAGE = _raw_pdf([
     CATALOG, "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>", PAGE,
     "<< /Type /Pages /Kids [2 0 R] /Count 1 /Parent 2 0 R >>"])
+def _count_past_the_file_is_refused():
+    """Whether this MuPDF refuses a /Count above the file's object count outright (page_count
+    raises; 1.28 and 2.0 do). PyMuPDF 1.26 counts the pages the tree holds instead."""
+    try:
+        pymupdf.open("pdf", _claims(9)).page_count
+    except RuntimeError:
+        return True
+    return False
+
+
+COUNT_PAST_REFUSED = _count_past_the_file_is_refused()
 UNWALKABLE = {
-    "count past the file's objects": _claims(9),        # PyMuPDF's page_count itself raises
+    **({"count past the file's objects": _claims(9)} if COUNT_PAST_REFUSED else {}),
     "cycle": CYCLE,
     "no kids": NO_KIDS,
     "broken after the first page": BROKEN_AFTER_FIRST_PAGE,
@@ -275,10 +286,22 @@ def test_a_broken_first_page_matters_only_when_it_is_read(tmp_path, capsys):
     assert "cannot open" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(not COUNT_PAST_REFUSED, reason="this MuPDF counts the pages it holds")
 def test_a_document_the_caller_opened_whose_page_count_raises():
     for call in (st.detect_pdf, st.open_pdf):
         with pytest.raises(st.InvalidPdfError):
             call(pymupdf.open("pdf", _claims(9)))
+
+
+def test_a_count_past_the_files_objects():
+    # refused where MuPDF refuses it (and so in UNWALKABLE); where it counts the pages the tree
+    # holds, read as any short page tree is
+    if COUNT_PAST_REFUSED:
+        with pytest.raises(st.InvalidPdfError, match="page tree"):
+            st.detect_pdf(_claims(9))
+    else:
+        with pytest.warns(UserWarning, match="says it has 9 pages but its page tree holds 1"):
+            assert st.detect_pdf(_claims(9))["page_count"] == 1
 
 
 def _callers_own_step():
