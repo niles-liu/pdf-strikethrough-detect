@@ -279,6 +279,14 @@ def _ver_tuple(v):
     return tuple(parts)
 
 
+def _is_shape_error(error):
+    """RapidOCR's ResizeImgError: it scales a long side over max_side_len down to it and raises
+    when the short side rounds to 0, on an image too long for its width. detect_pdf and
+    detect_image_file skip such a page with a warning. RapidOCR defines two, in two modules, so it
+    is known by its name."""
+    return type(error).__name__ == "ResizeImgError"
+
+
 def _require_rapidocr_3_2(version):
     """Raise a clear error on rapidocr < 3.2, whose result object predates the ``word_results``
     nested shape this adapter reads (older installs throw opaque unpack errors or emit garbage)."""

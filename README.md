@@ -123,7 +123,8 @@ turns struck and underlined lines upside down; turn upside-down pages upright fi
 process, set by the engine built last). The default model can read a small mark as a CJK character
 (`(a)` as `(斗)`), so on a page with no run of CJK text it removes lone CJK characters, real ones
 included (`100 円` loses the unit); `drop_lone_cjk=False` keeps them, and the CLI always removes
-them. Word boxes past the page edge are clamped to it.
+them. Word boxes past the page edge are clamped to it. A page RapidOCR cannot resize, one too long
+for its width, is skipped with a warning.
 
 **Operating points.** `ScanConfig.recall_first()` catches more deletions at the cost of more review;
 `ScanConfig.precision_first()` avoids dropping live text (RAG, indexing). Fit a threshold to your
