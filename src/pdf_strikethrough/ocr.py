@@ -292,6 +292,9 @@ def _require_rapidocr_3_2(version):
 # by default) turns struck, underlined and some plain lines upside down, and they then read as stray
 # letters or not at all.
 _RAPIDOCR_DEFAULT_PARAMS = {"Global.use_cls": False}
+# Merged in too on rapidocr 3.4 and later, which added the key (3.2 and 3.3 reject it): RapidOCR
+# logs each engine build at INFO, and each page with no text at WARNING.
+_RAPIDOCR_QUIET_PARAMS = {"Global.log_level": "error"}
 
 
 # CJK letters and ideographs. CJK punctuation (U+3000-303F but for U+3005), the katakana double
@@ -352,10 +355,12 @@ def rapidocr_backend(engine=None, *, drop_lone_cjk=True, **engine_kwargs):
     extra (``>=3.2``). The engine is built lazily as ``RapidOCR(**engine_kwargs)``, with
     ``params={"Global.use_cls": False}`` merged under any ``params`` you pass: RapidOCR's
     text-line orientation classifier is off, since it turns struck and underlined lines upside
-    down. Your ``params`` keys win, so ``params={"Global.use_cls": True}`` turns it back on. The
-    default goes in as a param, so it also overrides ``use_cls`` in a ``config_path`` file. With
-    the classifier off, a page scanned upside down reads as stray letters: turn it upright first,
-    or turn the classifier back on.
+    down. On rapidocr 3.4 and later ``"Global.log_level": "error"`` is merged in too, so RapidOCR
+    logs only its errors (it keeps one log level for the process, set by the engine built last).
+    Your ``params`` keys win, so ``params={"Global.use_cls": True}`` turns the classifier back on.
+    The defaults go in as params, so they also override a ``config_path`` file. With the
+    classifier off, a page scanned upside down reads as stray letters: turn it upright first, or
+    turn the classifier back on.
 
     `engine` may be a preconstructed ``rapidocr.RapidOCR``, used as is: the default above does not
     apply to it, so build it with ``RapidOCR(params={"Global.use_cls": False})``.
@@ -393,6 +398,8 @@ def rapidocr_backend(engine=None, *, drop_lone_cjk=True, **engine_kwargs):
                     version = "0"
             _require_rapidocr_3_2(version)
             from rapidocr import RapidOCR
+            if _ver_tuple(version) >= (3, 4):
+                engine_kwargs["params"] = {**_RAPIDOCR_QUIET_PARAMS, **engine_kwargs["params"]}
             holder["eng"] = RapidOCR(**engine_kwargs)
         h, w = image.shape[:2]
         res = holder["eng"](image, return_word_box=True)
