@@ -33,8 +33,9 @@ from . import (active, calibration, cnn, detect, docx, lines, markdown, native, 
 from .active import dump_crops
 from .cnn import (ensure_model, get_model_meta, score_crops, score_word, std_crop, verdict_of,
                   word_crop_px)
-from .detect import (EncryptedPdfError, GarbledTextWarning, OcrRequiredError, apply_cnn_verdict,
-                     classify_page_source, detect_image_file, detect_pdf, detect_scanned_image)
+from .detect import (EncryptedPdfError, GarbledTextWarning, InvalidPdfError, OcrRequiredError,
+                     apply_cnn_verdict, classify_page_source, detect_image_file, detect_pdf,
+                     detect_scanned_image)
 from .docx import strikethroughs_in_docx
 from .lines import ink_mask, strike_lines, to_gray_u8
 from .native import (native_annot_strikes, native_doc_strikes, native_flag_strikes,
@@ -66,7 +67,7 @@ __all__ = [
     "strike_lines", "ink_mask", "to_gray_u8", "analyze_scanned_page", "ScanConfig",
     "classify_page_source", "apply_cnn_verdict",
     # errors and warnings
-    "OcrRequiredError", "EncryptedPdfError", "GarbledTextWarning",
+    "OcrRequiredError", "EncryptedPdfError", "InvalidPdfError", "GarbledTextWarning",
     # OCR (backends + pre-fetched cloud-result adapters)
     "Word", "rapidocr_backend", "tesseract_backend", "words_from_azure_di",
     "words_from_textract", "words_from_docai",
@@ -87,7 +88,9 @@ def open_pdf(source):
     """Open `source` (path, bytes, an open binary file, or an already-open fitz document) as a
     fitz document.
     Raises EncryptedPdfError for password-protected PDFs (routes through the same gate as
-    ``detect_pdf``; an already-authenticated document passes)."""
+    ``detect_pdf``; an already-authenticated document passes), and InvalidPdfError for a file that
+    is not a readable PDF or whose page tree MuPDF cannot walk. Loads every page once to check;
+    to read a few pages of an untrusted file, pass it to ``detect_pdf`` with ``pages=``."""
     return detect._open_doc(source)[0]
 
 
@@ -109,6 +112,8 @@ def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
     ``detect_pdf(..., ocr=...)`` instead."""
     doc = open_pdf(source)
     try:
+        if note := detect._page_tree_note(doc):
+            _warnings.warn(note, stacklevel=2)
         scanned_pages = [p for p in range(doc.page_count)
                          if detect.classify_page_source(doc[p]) == "scanned"]
         if scanned_pages:
@@ -145,6 +150,8 @@ def clean_markdown(source) -> str:
     such as a paragraph set entirely in a monospaced font, since it writes no ``~~`` there."""
     doc = open_pdf(source)
     try:
+        if note := detect._page_tree_note(doc):
+            _warnings.warn(note, stacklevel=2)
         if doc.page_count == 0:
             return ""
         return native.strip_struck_markdown(native.native_markdown(doc))

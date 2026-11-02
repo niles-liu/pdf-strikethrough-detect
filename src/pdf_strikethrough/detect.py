@@ -21,7 +21,9 @@ import logging
 import numbers
 import operator
 import os
+import sys
 import time
+import traceback
 import warnings as _warnings
 
 import pymupdf
@@ -67,6 +69,14 @@ class EncryptedPdfError(ValueError):
     """The PDF is password-protected; decrypt or authenticate before processing."""
 
 
+class InvalidPdfError(ValueError, pymupdf.FileDataError):
+    """The source is not a PDF the package can read: MuPDF cannot open it, it opens as another
+    format (an image, say), or its page tree cannot be walked (a cycle, a malformed node, a /Count
+    above the file's object count). Raised before any page is detected. A ValueError like the
+    package's other input errors, and a ``pymupdf.FileDataError`` (so a RuntimeError), the error
+    opening a broken file raised before."""
+
+
 def _raise_if_encrypted(doc):
     """The single encryption gate for the whole package (open_pdf and detect_pdf both route
     through it). Gates on ``is_encrypted``, which a successful ``doc.authenticate(password)``
@@ -78,22 +88,128 @@ def _raise_if_encrypted(doc):
             "(or save a decrypted copy) before processing")
 
 
-def _open_doc(source):
-    """Open `source` (path, bytes, an open binary file, or an already-open fitz document) as a
-    fitz document, applying the encryption gate. Returns ``(doc, owned)`` — `owned` is True when
-    we opened it and the caller must close it. On EncryptedPdfError a doc WE opened is closed
-    before raising, so no handle leaks (which would lock the file on Windows)."""
-    if hasattr(source, "page_count"):
-        doc, owned = source, False
-    elif isinstance(source, (bytes, bytearray)):
-        doc, owned = pymupdf.open(stream=bytes(source), filetype="pdf"), True
-    elif hasattr(source, "read"):                         # io.BytesIO, open(path, "rb")
-        doc, owned = pymupdf.open(stream=source.read(), filetype="pdf"), True
-    else:
-        doc, owned = pymupdf.open(source), True
+_PAGE_TREE_NOTE = "_pdf_strikethrough_page_tree_note"   # set on a document by its first walk
+_IMAGE_FORMATS = ("Image", "TIFF", "BMP", "PNM", "PAM", "PSD", "JBIG2")   # MuPDF's, for a raster
+
+
+def _drop_frames(error, outer):
+    """Clear the frames of `error`'s traceback and of the errors it chains, up to `outer`, the
+    error the caller was handling when it called the package (``sys.exc_info()[1]`` on entry),
+    which is left alone. PyMuPDF's frames there hold the document, which on Windows keeps its
+    file locked, even once closed, for as long as the error is kept."""
+    seen = set()
+    while error is not None and error is not outer and id(error) not in seen:
+        seen.add(id(error))
+        traceback.clear_frames(error.__traceback__)
+        error = error.__cause__ or error.__context__
+
+
+def _claimed_pages(doc):
+    """The page count a PDF's page tree claims (the root /Count), or None."""
+    if not doc.is_pdf:
+        return None
     try:
+        kind, value = doc.xref_get_key(-1, "Root/Pages/Count")
+    except (RuntimeError, ValueError):
+        return None
+    return int(value) if kind == "int" else None
+
+
+_TREE_ERRORS = (RuntimeError, ValueError, IndexError, pymupdf.mupdf.FzErrorBase)
+
+
+def _settle_page_count(doc):
+    """Load the first page, so ``page_count`` is the number of pages the page tree holds. MuPDF
+    takes a PDF's page count from its page tree's /Count until the first page load walks the
+    tree, then counts the pages it found; a /Count past the end of the file makes ``page_count``
+    itself raise (InvalidPdfError here).
+
+    MuPDF also rewrites the /Count in memory then, so the first call on a document reads the claim
+    beforehand and keeps detect_pdf's warning on the document when fewer pages are found (a
+    document its caller loaded a page of first has lost the claim, and gets none), with the count
+    found, so the warning is dropped once the caller adds or deletes pages. A first page that does
+    not load is left to _walk_page_tree, an error only where page 0 is processed, unless the
+    failed load leaves MuPDF counting no page."""
+    outer = sys.exc_info()[1]
+    first = not hasattr(doc, _PAGE_TREE_NOTE)
+    claimed = _claimed_pages(doc) if first else None
+    try:
+        if doc.page_count:
+            try:
+                doc.load_page(0)
+            except _TREE_ERRORS:
+                if not doc.page_count:     # the failed load left no page to read
+                    raise
+        found = doc.page_count
+    except _TREE_ERRORS as e:
+        _drop_frames(e, outer)
+        raise InvalidPdfError(f"not a readable PDF: its page tree is broken ({e})") from e
+    if first:
+        note = None
+        if claimed is not None and claimed > found:
+            read = ("no page was read" if found == 0 else
+                    "only that page was read" if found == 1 else "only those pages were read")
+            note = (f"the PDF says it has {claimed} pages but its page tree holds {found}; "
+                    f"{read}, so strikes on the missing pages are not reported")
+        setattr(doc, _PAGE_TREE_NOTE, (found, note))
+
+
+def _page_tree_note(doc):
+    """The warning _settle_page_count kept on `doc` for a page tree holding fewer pages than it
+    claims, or None (also once the caller has added or deleted pages)."""
+    found, note = getattr(doc, _PAGE_TREE_NOTE, (None, None))
+    return note if note and doc.page_count == found else None
+
+
+def _walk_page_tree(doc, page_indices=None):
+    """Load each page of `page_indices` (default: every page) once, so a page tree MuPDF cannot
+    walk raises InvalidPdfError here, before any page is detected, instead of a bare IndexError
+    or MuPDF error partway through. Call _settle_page_count first."""
+    outer = sys.exc_info()[1]
+    try:
+        for pno in range(doc.page_count) if page_indices is None else page_indices:
+            if 0 <= pno < doc.page_count:      # one out of range is the caller's IndexError
+                doc.load_page(pno)
+    except _TREE_ERRORS as e:
+        _drop_frames(e, outer)
+        raise InvalidPdfError(f"not a readable PDF: its page tree is broken ({e})") from e
+
+
+def _open_doc(source, walk=True):
+    """Open `source` (path, bytes, an open binary file, or an already-open fitz document) as a
+    fitz document, applying the encryption gate, settling the page count and, with `walk`, loading
+    every page (detect_pdf loads only the pages it will process). Returns ``(doc,
+    owned)`` — `owned` is True when we opened it and the caller must close it. A source we open
+    must be a PDF (InvalidPdfError otherwise); a document the caller opened is used as it is. On
+    EncryptedPdfError or InvalidPdfError a doc WE opened is closed before raising, so no handle
+    leaks (which would lock the file on Windows)."""
+    outer = sys.exc_info()[1]
+    if hasattr(type(source), "page_count"):    # the class: reading page_count itself can raise
+        if getattr(source, "is_closed", False):
+            raise ValueError("document closed")      # as PyMuPDF itself says
+        doc, owned = source, False
+    else:
+        try:
+            if isinstance(source, (bytes, bytearray)):
+                doc = pymupdf.open(stream=bytes(source), filetype="pdf")
+            elif hasattr(source, "read"):                 # io.BytesIO, open(path, "rb")
+                doc = pymupdf.open(stream=source.read(), filetype="pdf")
+            else:
+                doc = pymupdf.open(source)
+        except pymupdf.FileDataError as e:                # EmptyFileError too
+            _drop_frames(e, outer)
+            raise InvalidPdfError(f"not a readable PDF: MuPDF cannot open it ({e})") from e
+        owned = True
+    try:
+        if owned and not doc.is_pdf:       # MuPDF opens image bytes as an image, even as "pdf"
+            fmt = (doc.metadata or {}).get("format") or "another format"
+            hint = "; for an image use detect_image_file" if fmt in _IMAGE_FORMATS else ""
+            raise InvalidPdfError(f"not a PDF: MuPDF reads it as {fmt}{hint}")
         _raise_if_encrypted(doc)
-    except EncryptedPdfError:
+        _settle_page_count(doc)
+        if walk:
+            _walk_page_tree(doc)
+    except (EncryptedPdfError, InvalidPdfError):
         if owned:
             doc.close()
         raise
@@ -832,7 +948,9 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
 
     Args:
         source: path, bytes, an open binary file (read once, from its current position), or an
-            open fitz document. Encrypted PDFs raise EncryptedPdfError.
+            open fitz document. Encrypted PDFs raise EncryptedPdfError; a file that is not a
+            readable PDF, or whose page tree MuPDF cannot walk, raises InvalidPdfError before any
+            page is detected.
         ocr: an OCR backend ``(image_ndarray) -> list[Word]`` (see ``pdf_strikethrough.ocr``).
             Required only if the document has scanned pages and `di_result` is not given.
         scan_config: ``ScanConfig`` for the scanned classifier. Default: Azure-DI calibration
@@ -891,7 +1009,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
     records (not by stripping the markdown), so the two always agree. A PDF that MuPDF had to
-    repair to open carries a warning: its text or drawings may be incomplete.
+    repair to open carries a warning: its text or drawings may be incomplete. So does one whose
+    page tree holds fewer pages than it says: ``page_count`` is the pages read.
     """
     tel = _Telemetry() if telemetry else None
     method = _resolve_native_method(method, native_method)
@@ -907,9 +1026,10 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                          "for scanned pages, with a different calibration)")
     wbp = _normalize_words_by_page(words_by_page)
     di_pages = _di_pages(di_result)
-    doc, close = _open_doc(source)
+    doc, close = _open_doc(source, walk=False)
     try:
         page_indices = _normalize_pages(pages, doc.page_count)
+        _walk_page_tree(doc, page_indices)
         if wbp is not None:
             _check_words_by_page(wbp, doc.page_count)
         sources = {p: classify_page_source(doc[p]) for p in page_indices}
@@ -921,6 +1041,9 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                        else (ScanConfig.azure_di(), ScanConfig.confidence_free()))
         meta = None
         words, warns = [], []
+        if note := _page_tree_note(doc):
+            _warnings.warn(note, stacklevel=2)
+            warns.append(note)
         if getattr(doc, "is_repaired", False):
             msg = ("the PDF is damaged and MuPDF repaired it to open it; text or drawings may be "
                    "missing, so a page with no strikes found is not proof that it has none")
