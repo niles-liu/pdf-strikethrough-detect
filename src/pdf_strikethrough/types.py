@@ -106,7 +106,8 @@ class PageTelemetry(TypedDict, total=False):
     tiers: Dict[str, int]        # candidates per tier: layer 1's on a scanned page ("weak"
                                  # included, which the CNN pass drops), the records on a native one
     final: int                   # its words reported struck
-    skipped: bool                # present (True) when on_missing_ocr="skip" skipped it
+    skipped: bool                # present (True) when on_missing_ocr="skip" skipped it, or
+                                 # RapidOCR could not read a page that long for its width
 
 
 class CnnProbHistogram(TypedDict):

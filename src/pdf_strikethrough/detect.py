@@ -30,7 +30,7 @@ import pymupdf
 
 from . import cnn, markdown as _md, native
 from .lines import RENDER_DPI
-from .ocr import words_from_azure_di
+from .ocr import _is_shape_error, words_from_azure_di
 from .scanned import ScanConfig, _glyph_ink, _own_stroke, analyze_scanned_page
 from .types import SCHEMA_VERSION
 
@@ -814,8 +814,24 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         pt = tel.page(pno, "scanned") if tel else None
         if page_words is None:
             t0 = time.perf_counter()
-            with _clock(pt, "ocr"):
-                page_words = ocr(np.stack([gray] * 3, axis=-1))
+            try:
+                with _clock(pt, "ocr"):
+                    page_words = ocr(np.stack([gray] * 3, axis=-1))
+            except Exception as e:
+                if not _is_shape_error(e):
+                    raise
+                note = (f"frame {pno}: RapidOCR cannot read an image this long for its width "
+                        f"({gray.shape[1]} x {gray.shape[0]} px); it was skipped, so no text or "
+                        f"strikes are reported for it")
+                _warnings.warn(note, stacklevel=2)
+                warns.append(note)
+                if tel is not None:
+                    pt["skipped"] = True
+                    tel.end_page(pt, [])
+                if include_markdown:
+                    page_md.append("")
+                    page_clean.append("")
+                continue
             log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
                       pno, len(page_words), (time.perf_counter() - t0) * 1e3)
         if meta is None:
@@ -1186,7 +1202,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 log.debug("page %d: native detector (%s) -> %d strike record(s)",
                           pno, method, len(recs))
             elif sources[pno] == "scanned":
-                page_words = None
+                page_words = unreadable = None
                 R = page.rect
                 page_dpi, note = _working_dpi(R.width / 72.0, R.height / 72.0, dpi)
                 page_dpi = int(round(page_dpi))
@@ -1203,11 +1219,17 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                     t0 = time.perf_counter()
                     with _clock(pt, "render"):
                         rgb = _render_rgb(page, page_dpi)
-                    with _clock(pt, "ocr"):
-                        page_words = ocr(rgb)
+                    try:
+                        with _clock(pt, "ocr"):
+                            page_words = ocr(rgb)
+                    except Exception as e:
+                        if not _is_shape_error(e):
+                            raise
+                        unreadable = f"{rgb.shape[1]} x {rgb.shape[0]} px"
                     del rgb                                # freed before the page is detected
-                    log.debug("page %d: OCR -> %d word(s) in %.0f ms",
-                              pno, len(page_words), (time.perf_counter() - t0) * 1e3)
+                    if page_words is not None:
+                        log.debug("page %d: OCR -> %d word(s) in %.0f ms",
+                                  pno, len(page_words), (time.perf_counter() - t0) * 1e3)
 
                 if page_words is not None:
                     with _clock(pt, "render"):
@@ -1228,6 +1250,14 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
                         seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
                                for w in page_words if (w.text or "").strip()]
+                elif unreadable is not None:
+                    msg = (f"page {pno}: RapidOCR cannot read a page this long for its width "
+                           f"({unreadable}); it was skipped, so no text or strikes are reported "
+                           f"for it")
+                    _warnings.warn(msg, stacklevel=2)
+                    warns.append(msg)
+                    if pt is not None:
+                        pt["skipped"] = True
                 elif (nat_words := page.get_text("words")) and any(
                         w[4].strip() for w in nat_words):
                     # classified scanned but has extractable text (text-bearing scan / OCR-overlay
