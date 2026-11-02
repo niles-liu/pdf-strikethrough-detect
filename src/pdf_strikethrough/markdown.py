@@ -203,3 +203,33 @@ def group_passages(items):
                     flush()
         flush()                                    # ...but never across a column boundary
     return passages
+
+
+def render_text(result, words=None):
+    """``markdown``, ``clean_text`` and ``passages`` rebuilt from a result's ``page_words`` (run
+    detection with ``page_words=True``) and its struck records. `words` defaults to the result's
+    own ``words``, which gives back the result's three exactly. Pass a copy with a reviewer's calls
+    instead, the same records in the same order with ``final`` changed (and ``char_span``,
+    ``partial`` and ``chars`` where the struck part changed), to get the text as reviewed. A word's
+    ``text`` in ``page_words`` may be corrected too. Works on a result saved as JSON and loaded
+    back. Returns ``{"markdown": str, "clean_text": str, "passages": list}``."""
+    if "page_words" not in result:
+        raise ValueError("render_text needs a result with 'page_words'; run detection with "
+                         "page_words=True")
+    recs = result["words"] if words is None else list(words)
+    if len(recs) != len(result["words"]):
+        raise ValueError(f"words has {len(recs)} records but the result has "
+                         f"{len(result['words'])}; pass them all, in the result's order")
+    page_md, page_clean, passages = [], [], []
+    for page in result["page_words"]:
+        seq = [(w["text"], w["bbox_frac"], None if w["record"] is None else recs[w["record"]])
+               for w in page["words"]]
+        page_md.append(page_markdown(seq))
+        page_clean.append(page_clean_text(seq, drop_overlaid=page["drop_overlaid"]))
+        for ps in group_passages(seq):
+            ps["page"] = page["page"]
+            passages.append(ps)
+    # joined as detect_pdf and detect_image_file join their pages
+    return {"markdown": "\n\n".join(page_md),
+            "clean_text": "\n\n".join(c for c in page_clean if c).strip(),
+            "passages": passages}

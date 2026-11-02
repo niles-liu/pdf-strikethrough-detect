@@ -95,6 +95,23 @@ class GarbledWord(TypedDict, total=False):
     bbox_frac: BBoxFrac
 
 
+class PageWord(TypedDict):
+    """One word of a page's text, in :class:`PageWords`."""
+    text: str
+    bbox_frac: BBoxFrac
+    record: Optional[int]        # index of its struck record in the result's ``words``, or None
+
+
+class PageWords(TypedDict):
+    """One processed page (or image frame) of ``page_words`` (``page_words=True``): every word
+    its ``markdown`` and ``clean_text`` are built from, which
+    :func:`pdf_strikethrough.render_text` reads."""
+    page: int
+    drop_overlaid: bool          # its clean_text leaves out U+0336-overlaid characters a record's
+                                 # span does not cover (born-digital pages read by 'vector'/'both')
+    words: List[PageWord]
+
+
 class PageTelemetry(TypedDict, total=False):
     """One processed page (or image frame) in :class:`Telemetry`."""
     page: int
@@ -135,8 +152,8 @@ class Telemetry(TypedDict, total=False):
 class DetectResult(TypedDict, total=False):
     """The dict returned by :func:`pdf_strikethrough.detect_pdf`. The ``markdown``,
     ``clean_text`` and ``passages`` keys are present only when ``include_markdown=True`` (the
-    default); ``pages`` only when a ``pages=`` subset was requested; ``telemetry`` only with
-    ``telemetry=True``."""
+    default); ``pages`` only when a ``pages=`` subset was requested; ``page_words`` only with
+    ``page_words=True``; ``telemetry`` only with ``telemetry=True``."""
     schema_version: int          # == SCHEMA_VERSION of the release that produced it
     source: Optional[str]
     page_count: int
@@ -149,12 +166,13 @@ class DetectResult(TypedDict, total=False):
     markdown: str
     clean_text: str
     passages: List[Passage]
+    page_words: List[PageWords]
     telemetry: Telemetry
 
 
 # Re-exported so ``from pdf_strikethrough.types import ...`` covers the whole surface.
 __all__ = [
     "StruckWord", "Passage", "GarbledWord", "DetectResult", "SCHEMA_VERSION",
-    "Telemetry", "PageTelemetry", "CnnProbHistogram",
+    "PageWords", "PageWord", "Telemetry", "PageTelemetry", "CnnProbHistogram",
     "BBoxFrac", "CharSpan", "Tier", "Verdict",
 ]

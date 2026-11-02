@@ -38,13 +38,14 @@ from .detect import (EncryptedPdfError, GarbledTextWarning, InvalidPdfError,
                      classify_page_source, detect_image_file, detect_pdf, detect_scanned_image)
 from .docx import strikethroughs_in_docx
 from .lines import ink_mask, strike_lines, to_gray_u8
+from .markdown import render_text
 from .native import (native_annot_strikes, native_doc_strikes, native_flag_strikes,
                      native_markdown, native_page_strikes, page_strikes, strip_struck_markdown)
 from .ocr import (Word, rapidocr_backend, tesseract_backend, words_from_azure_di,
                   words_from_docai, words_from_textract)
 from .overlay import render_overlay, save_overlays
 from .scanned import ScanConfig, analyze_scanned_page
-from .types import DetectResult, GarbledWord, Passage, StruckWord, Telemetry
+from .types import DetectResult, GarbledWord, PageWords, Passage, StruckWord, Telemetry
 
 # Library logging etiquette: attach a NullHandler so importing the package never emits records on
 # its own. Diagnostics (page routing, per-page record counts, OCR/CNN timing) are logged at DEBUG
@@ -57,7 +58,7 @@ __version__ = "0.13.1"
 
 __all__ = [
     # high-level
-    "strikethroughs_in_pdf", "clean_markdown", "provenance_text", "detect_pdf",
+    "strikethroughs_in_pdf", "clean_markdown", "provenance_text", "render_text", "detect_pdf",
     "detect_image_file", "detect_scanned_image", "strikethroughs_in_docx",
     "open_pdf", "render_page_gray", "render_overlay", "save_overlays",
     # native
@@ -78,7 +79,7 @@ __all__ = [
     # active learning
     "dump_crops",
     # typing
-    "StruckWord", "DetectResult", "Passage", "GarbledWord", "Telemetry",
+    "StruckWord", "DetectResult", "Passage", "GarbledWord", "PageWords", "Telemetry",
     # submodules
     "active", "calibration", "cnn", "docx", "lines", "native", "ocr", "overlay", "scanned",
     "detect", "markdown", "types",

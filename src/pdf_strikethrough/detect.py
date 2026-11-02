@@ -726,7 +726,7 @@ def _check_dpi(dpi, name="dpi"):
 
 def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_config=None,
                       dpi=None, meta=None, include_markdown=True, telemetry=False,
-                      max_pages=None, max_mpix=None, _crop_sink=None):
+                      page_words=False, max_pages=None, max_mpix=None, _crop_sink=None):
     """Detect strikethroughs in a standalone raster image (``.png/.jpg/.tiff``, incl. multi-page
     TIFF) — a photo/scan/fax that never was a PDF.
 
@@ -744,7 +744,8 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     Returns the same dict shape as :func:`detect_pdf` (``page_sources`` all ``"scanned"``); there
     is no `pages` subset and no native path. A frame with no word source raises
     ``OcrRequiredError``. With ``telemetry=True`` the result gains ``telemetry``, as
-    :func:`detect_pdf`'s does, with one entry per frame.
+    :func:`detect_pdf`'s does, with one entry per frame, and with ``page_words=True`` it gains
+    ``page_words``, one entry per frame.
 
     `max_pages` and `max_mpix` refuse an image with more frames, or more megapixels in all (each
     frame as stored), with ``LimitExceededError``. An image file's frames are read only up to the
@@ -777,7 +778,7 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         name = getattr(source, "name", None) or getattr(source, "filename", None)
         src_name = str(name) if name else None
 
-    all_words, warns, page_md, page_clean, passages = [], [], [], [], []
+    all_words, warns, page_md, page_clean, passages, pw = [], [], [], [], [], []
     for pno, (gray, upright, meta_dpi) in enumerate(frames):
         if dpi is not None:
             use_dpi = dpi
@@ -791,18 +792,18 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         else:
             use_dpi = meta_dpi or RENDER_DPI
         if wbp is not None and pno in wbp:
-            page_words = wbp[pno]
+            frame_words = wbp[pno]
         elif words is not None and len(frames) == 1:
-            page_words = words
+            frame_words = words
         elif ocr is not None:
-            page_words = None
+            frame_words = None
             if upright is not None:
                 gray = upright                             # OCR and detection on the shown image
         else:
             raise OcrRequiredError(
                 f"image frame {pno} has no OCR words; pass ocr=rapidocr_backend(), a words= list "
                 f"(single-frame), or words_by_page={{{pno}: [...]}}")
-        if page_words is not None and upright is not None:
+        if frame_words is not None and upright is not None:
             note = (f"frame {pno} carries an EXIF rotation; the supplied word boxes are read "
                     f"against the frame as stored, not as displayed")
             _warnings.warn(note, stacklevel=2)
@@ -812,11 +813,11 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
             _warnings.warn(note, stacklevel=2)
             warns.append(note)
         pt = tel.page(pno, "scanned") if tel else None
-        if page_words is None:
+        if frame_words is None:
             t0 = time.perf_counter()
             try:
                 with _clock(pt, "ocr"):
-                    page_words = ocr(np.stack([gray] * 3, axis=-1))
+                    frame_words = ocr(np.stack([gray] * 3, axis=-1))
             except Exception as e:
                 if not _is_shape_error(e):
                     raise
@@ -828,27 +829,33 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
                 if tel is not None:
                     pt["skipped"] = True
                     tel.end_page(pt, [])
+                if page_words:
+                    pw.append(_page_words_entry(pno, [], [], len(all_words), False))
                 if include_markdown:
                     page_md.append("")
                     page_clean.append("")
                 continue
             log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
-                      pno, len(page_words), (time.perf_counter() - t0) * 1e3)
+                      pno, len(frame_words), (time.perf_counter() - t0) * 1e3)
         if meta is None:
             meta = cnn.get_model_meta()
         with _clock(pt, "detect"), _layer1_tiers(pt):
-            recs = detect_scanned_image(gray, page_words, config=scan_config, meta=meta,
+            recs = detect_scanned_image(gray, frame_words, config=scan_config, meta=meta,
                                         dpi=use_dpi, crop_sink=_crop_sink)
         if tel is not None:
-            tel.scanned_page(pt, use_dpi, page_words)
+            tel.scanned_page(pt, use_dpi, frame_words)
             tel.end_page(pt, recs)
         for r in recs:
             r["page"] = pno
+        base = len(all_words)
         all_words.extend(recs)
-        if include_markdown:
+        if include_markdown or page_words:
             by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
             seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
-                   for w in page_words if (w.text or "").strip()]
+                   for w in frame_words if (w.text or "").strip()]
+        if page_words:
+            pw.append(_page_words_entry(pno, seq, recs, base, False))
+        if include_markdown:
             page_md.append(_md.page_markdown(seq))
             page_clean.append(_md.page_clean_text(seq))
             for ps in _md.group_passages(seq):
@@ -869,9 +876,21 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         result["markdown"] = "\n\n".join(page_md)
         result["clean_text"] = "\n\n".join(c for c in page_clean if c).strip()
         result["passages"] = passages
+    if page_words:
+        result["page_words"] = pw
     if tel is not None:
         result["telemetry"] = tel.report()
     return result
+
+
+def _page_words_entry(pno, seq, recs, base, drop_overlaid):
+    """One page of ``page_words``: its reading-order words `seq` (``(text, bbox_frac, rec)``), each
+    with the index of its record in the result's ``words``, where the page's `recs` start at
+    `base`."""
+    index = {id(r): base + i for i, r in enumerate(recs)}
+    return {"page": pno, "drop_overlaid": drop_overlaid,
+            "words": [{"text": t, "bbox_frac": b, "record": None if r is None else index[id(r)]}
+                      for t, b, r in seq]}
 
 
 def _native_word_seq(page, words=None):
@@ -1058,8 +1077,8 @@ def _warn_garbled(garbled, on_garbled, include_markdown):
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
                include_markdown=True, method=None, on_missing_ocr="raise",
                pages=None, progress=None, words_by_page=None, native_method=None,
-               on_garbled="keep", telemetry=False, max_pages=None, max_mpix=None,
-               _crop_sink=None):
+               on_garbled="keep", telemetry=False, page_words=False, max_pages=None,
+               max_mpix=None, _crop_sink=None):
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
@@ -1116,6 +1135,10 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             scanned page, layer 1's, ``weak`` included, with its dpi and OCR word count) and
             struck-final count, and a histogram of the scanned records' ``cnn_prob``. See
             ``pdf_strikethrough.types.Telemetry``.
+        page_words: also return ``page_words``, one entry per processed page: every word its
+            ``markdown`` and ``clean_text`` are built from, with the index of its struck record
+            in ``words`` (or None). :func:`pdf_strikethrough.render_text` rebuilds the text from
+            them with a reviewer's calls. See ``pdf_strikethrough.types.PageWords``.
         max_pages, max_mpix: refuse a document with more pages to process than `max_pages`, or
             whose scanned pages to process would render to more than `max_mpix` megapixels in
             all (at the resolution detection renders them: `dpi`, worked at 200 above 300, and
@@ -1127,7 +1150,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     Returns a dict:
         {schema_version, source, page_count, page_sources, words, n_struck_final, warnings,
          garbled_words, markdown, clean_text, passages}   (last three only if include_markdown;
-         plus ``pages`` when a subset was requested, and ``telemetry`` with telemetry=True). See
+         plus ``pages`` when a subset was requested, ``page_words`` with page_words=True and
+         ``telemetry`` with telemetry=True). See
          ``pdf_strikethrough.types.DetectResult``.
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
@@ -1177,7 +1201,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                    "missing, so a page with no strikes found is not proof that it has none")
             _warnings.warn(msg, stacklevel=2)
             warns.append(msg)
-        page_md, page_clean, passages, garbled = [], [], [], []
+        page_md, page_clean, passages, garbled, pw = [], [], [], [], []
         total = len(page_indices)
         for done, pno in enumerate(page_indices, start=1):
             page = doc[pno]
@@ -1196,13 +1220,13 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                                                _chars=chars)
                 for r in recs:
                     r["final"], r["verdict"] = True, "struck"
-                if include_markdown:
+                if include_markdown or page_words:
                     seq = _match_native_seq(page, recs, words=nat_words)
                     overlays = method in ("vector", "both")
                 log.debug("page %d: native detector (%s) -> %d strike record(s)",
                           pno, method, len(recs))
             elif sources[pno] == "scanned":
-                page_words = unreadable = None
+                ocr_words = unreadable = None
                 R = page.rect
                 page_dpi, note = _working_dpi(R.width / 72.0, R.height / 72.0, dpi)
                 page_dpi = int(round(page_dpi))
@@ -1212,44 +1236,44 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 if page_config is not None:
                     scan_config = page_config[0 if di_pages is not None and pno in di_pages else 1]
                 if di_pages is not None and pno in di_pages:
-                    page_words = words_from_azure_di(di_pages[pno])
+                    ocr_words = words_from_azure_di(di_pages[pno])
                 elif wbp is not None and pno in wbp:
-                    page_words = wbp[pno]
+                    ocr_words = wbp[pno]
                 elif ocr is not None:
                     t0 = time.perf_counter()
                     with _clock(pt, "render"):
                         rgb = _render_rgb(page, page_dpi)
                     try:
                         with _clock(pt, "ocr"):
-                            page_words = ocr(rgb)
+                            ocr_words = ocr(rgb)
                     except Exception as e:
                         if not _is_shape_error(e):
                             raise
                         unreadable = f"{rgb.shape[1]} x {rgb.shape[0]} px"
                     del rgb                                # freed before the page is detected
-                    if page_words is not None:
+                    if ocr_words is not None:
                         log.debug("page %d: OCR -> %d word(s) in %.0f ms",
-                                  pno, len(page_words), (time.perf_counter() - t0) * 1e3)
+                                  pno, len(ocr_words), (time.perf_counter() - t0) * 1e3)
 
-                if page_words is not None:
+                if ocr_words is not None:
                     with _clock(pt, "render"):
                         gray = _render_gray(page, page_dpi)
                     if meta is None:
                         meta = cnn.get_model_meta()
                     t0 = time.perf_counter()
                     with _clock(pt, "detect"), _layer1_tiers(pt):
-                        recs = detect_scanned_image(gray, page_words, config=scan_config,
+                        recs = detect_scanned_image(gray, ocr_words, config=scan_config,
                                                     meta=meta, dpi=page_dpi, crop_sink=_crop_sink)
                     log.debug("page %d: geometry+CNN -> %d struck record(s) in %.0f ms",
                               pno, len(recs), (time.perf_counter() - t0) * 1e3)
                     if pt is not None:
-                        tel.scanned_page(pt, page_dpi, page_words)
+                        tel.scanned_page(pt, page_dpi, ocr_words)
                     for r in recs:
                         r["page"] = pno
-                    if include_markdown:
+                    if include_markdown or page_words:
                         by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
                         seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
-                               for w in page_words if (w.text or "").strip()]
+                               for w in ocr_words if (w.text or "").strip()]
                 elif unreadable is not None:
                     msg = (f"page {pno}: RapidOCR cannot read a page this long for its width "
                            f"({unreadable}); it was skipped, so no text or strikes are reported "
@@ -1274,7 +1298,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                                                    _garbled=garb, _chars=chars)
                     for r in recs:
                         r["final"], r["verdict"] = True, "struck"
-                    if include_markdown:
+                    if include_markdown or page_words:
                         seq = _match_native_seq(page, recs, words=nat_words)
                         overlays = method in ("vector", "both")
                 elif di_pages is not None and on_missing_ocr != "skip":
@@ -1301,9 +1325,12 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         f"ocr=rapidocr_backend() (or another backend), di_result=/words_by_page=, "
                         f"or use on_missing_ocr='skip'")
 
+            base = len(words)
             words.extend(recs)
             if garb:
                 seq = _note_garbled(page, pno, garb, seq, on_garbled, garbled, warns)
+            if page_words:
+                pw.append(_page_words_entry(pno, seq, recs, base, overlays))
             if include_markdown:
                 page_md.append(_md.page_markdown(seq))
                 page_clean.append(_md.page_clean_text(seq, drop_overlaid=overlays))
@@ -1338,6 +1365,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             result["markdown"] = "\n\n".join(page_md)
             result["clean_text"] = "\n\n".join(c for c in page_clean if c).strip()
             result["passages"] = passages
+        if page_words:
+            result["page_words"] = pw
         if tel is not None:
             result["telemetry"] = tel.report()
         return result
