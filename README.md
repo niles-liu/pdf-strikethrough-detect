@@ -92,6 +92,10 @@ it is `"struck"`. Born-digital records are always `"struck"`. On a scan, `"clean
 ruled the candidate out, and `"unsure"` that it could not decide or the Azure DI calibration
 vetoed it: the words to send to a reviewer.
 
+`page_words=True` adds `res["page_words"]`, every word each page's text is built from. Given a
+copy of `res["words"]` with a reviewer's changes to `final`, `st.render_text(res, words)` rebuilds
+`markdown`, `clean_text` and `passages` as reviewed, also from a result saved as JSON.
+
 ### OCR backends
 
 OCR supplies the word boxes; geometry and the model do the detecting. Measured by rasterizing
