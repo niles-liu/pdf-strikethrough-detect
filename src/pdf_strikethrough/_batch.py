@@ -99,6 +99,16 @@ def _telemetry_line(source, payload):
     return {"telemetry_version": tel["telemetry_version"], "source": source, **tel}
 
 
+def _open_document(source):
+    """`source` (a path, or the bytes read from stdin) as a MuPDF document of any format MuPDF
+    reads, as the CLI has always opened it: the package's PDF functions take only PDFs, but the
+    CLI sends every file that is not a .docx or an image this way. The caller closes it."""
+    import pymupdf
+    if isinstance(source, (bytes, bytearray)):
+        return pymupdf.open(stream=bytes(source), filetype="pdf")
+    return pymupdf.open(source)
+
+
 def _detect_payload(path, opts):
     """Detect on one file and return a JSON-serializable payload (or an ``error`` one). Never
     raises — a batch of many files must not abort on one unreadable member (cloud-result flags,
@@ -125,14 +135,19 @@ def _detect_payload(path, opts):
             res = st.detect_image_file(path, ocr=ocr, scan_config=sc, dpi=opts["dpi"],
                                        telemetry=telemetry)
         else:
-            with warnings.catch_warnings():  # its pages are in the payload's "warnings"
-                warnings.simplefilter("ignore", st.GarbledTextWarning)
-                res = st.detect_pdf(path, ocr=ocr, scan_config=sc,
-                                    dpi=(opts["dpi"] if opts["dpi"] is not None
-                                         else st.detect.RENDER_DPI),
-                                    method=opts["method"],
-                                    on_missing_ocr="skip" if opts["ocr"] == "none" else "raise",
-                                    telemetry=telemetry)
+            doc = _open_document(path)
+            try:
+                with warnings.catch_warnings():  # its pages are in the payload's "warnings"
+                    warnings.simplefilter("ignore", st.GarbledTextWarning)
+                    res = st.detect_pdf(doc, ocr=ocr, scan_config=sc,
+                                        dpi=(opts["dpi"] if opts["dpi"] is not None
+                                             else st.detect.RENDER_DPI),
+                                        method=opts["method"],
+                                        on_missing_ocr=("skip" if opts["ocr"] == "none"
+                                                        else "raise"),
+                                        telemetry=telemetry)
+            finally:
+                doc.close()
         final = [w for w in res["words"] if w.get("final")]
         payload = {"schema_version": SCHEMA_VERSION, "source": path,
                    "page_count": res["page_count"], "page_sources": res["page_sources"],

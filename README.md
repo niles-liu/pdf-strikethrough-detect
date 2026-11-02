@@ -82,8 +82,10 @@ struck = [w for w in res["words"] if w["final"]]
 `detect_pdf` routes each page: native pages take the exact path, scanned pages go through stroke
 geometry, OCR word boxes and StrikeNet (the bundled model), and `markdown`, `clean_text` and
 `passages` cover both. A scanned page with no OCR raises `OcrRequiredError` (`on_missing_ocr="skip"`
-skips it); a password-protected PDF raises `EncryptedPdfError`. An image's dpi comes from its
-metadata (else 200), and a photo's EXIF rotation is applied.
+skips it). A password-protected PDF raises `EncryptedPdfError`, and a file that is not a readable
+PDF (an image, say, or one whose page tree MuPDF cannot walk) raises `InvalidPdfError` before any
+page is detected. An image's dpi comes from its metadata (else 200), and a photo's EXIF rotation
+is applied.
 
 ### OCR backends
 

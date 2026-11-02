@@ -38,7 +38,8 @@ import time
 import warnings
 
 from ._batch import (SCHEMA_VERSION, _batch_worker, _build_ocr, _check_ocr_available,
-                     _detect_payload, _docx_telemetry, _JSON_EVIDENCE, _telemetry_line)
+                     _detect_payload, _docx_telemetry, _JSON_EVIDENCE, _open_document,
+                     _telemetry_line)
 
 
 def _parse_pages(spec):
@@ -298,7 +299,10 @@ def _cmd_detect_single(args, path):
                 print(f"warning: {flag} does not apply with --dump-crops; ignored",
                       file=sys.stderr)
         dc_source = sys.stdin.buffer.read() if path == "-" else path
+        doc = None
         try:
+            if not is_image:                 # any document MuPDF opens, as the CLI always read
+                dc_source = doc = _open_document(dc_source)
             summary = active.dump_crops(
                 dc_source, args.dump_crops, ocr=ocr, scan_config=scan_config, dpi=args.dpi,
                 di_result=di_result, words_by_page=words_by_page,
@@ -309,6 +313,9 @@ def _cmd_detect_single(args, path):
         except (OSError, RuntimeError, ValueError, IndexError) as e:
             print(f"error: {path}: {e}", file=sys.stderr)
             return 1
+        finally:
+            if doc is not None:
+                doc.close()
         print(f"wrote {summary['n_crops']} crop(s) to {summary['out_dir']} "
               f"(manifest: {summary['manifest']})", file=sys.stderr)
         return 0
@@ -336,13 +343,19 @@ def _cmd_detect_single(args, path):
 
     pdf_source = sys.stdin.buffer.read() if path == "-" else path
     # Open (and gate encryption) as its own step so its error handling doesn't swallow mid-run
-    # RuntimeErrors from onnxruntime / PyMuPDF and mislabel them "cannot open FILE".
+    # RuntimeErrors from onnxruntime / PyMuPDF and mislabel them "cannot open FILE". Any document
+    # MuPDF opens, as the CLI always read; detect_pdf loads only the pages it reads (--pages).
+    doc = None
     try:
-        doc = st.open_pdf(pdf_source)
+        doc = _open_document(pdf_source)
+        st.detect._open_doc(doc, walk=False)  # the encryption gate and the page count
     except st.EncryptedPdfError as e:
+        doc.close()
         print(f"error: {e}", file=sys.stderr)
         return 2
-    except RuntimeError as e:                # pymupdf file errors (corrupt/truncated/not a PDF)
+    except RuntimeError as e:                # pymupdf file errors (corrupt/truncated/broken tree)
+        if doc is not None:
+            doc.close()
         print(f"error: cannot open {path}: {e}", file=sys.stderr)
         return 1
     if page_subset is not None and page_subset[-1] >= doc.page_count:
@@ -374,6 +387,9 @@ def _cmd_detect_single(args, path):
     except st.OcrRequiredError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    except st.InvalidPdfError as e:          # a page it reads is in a broken page tree
+        print(f"error: cannot open {path}: {e}", file=sys.stderr)
+        return 1
     except ValueError as e:                  # a cloud result that does not fit this document
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -431,8 +447,12 @@ def _emit_result(args, res, overlay_source):
             else:
                 from . import overlay as _ov
                 # reuse the results already computed; render reopens the source (doc is closed)
-                written = _ov.save_overlays(overlay_source, args.overlay, result=res,
-                                            dpi=args.overlay_dpi)
+                doc = _open_document(overlay_source)
+                try:
+                    written = _ov.save_overlays(doc, args.overlay, result=res,
+                                                dpi=args.overlay_dpi)
+                finally:
+                    doc.close()
                 print(f"wrote {len(written)} overlay image(s)" +
                       (f" to {args.overlay}" if written else " (no struck pages)"),
                       file=sys.stderr)
