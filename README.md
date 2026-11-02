@@ -87,6 +87,11 @@ PDF (an image, say, or one whose page tree MuPDF cannot walk) raises `InvalidPdf
 page is detected. An image's dpi comes from its metadata (else 200), and a photo's EXIF rotation
 is applied.
 
+Every record has a `verdict`: `"struck"`, `"clean"` or `"unsure"`, and `final` is true exactly when
+it is `"struck"`. Born-digital records are always `"struck"`. On a scan, `"clean"` means StrikeNet
+ruled the candidate out, and `"unsure"` that it could not decide or the Azure DI calibration
+vetoed it: the words to send to a reviewer.
+
 ### OCR backends
 
 OCR supplies the word boxes; geometry and the model do the detecting. Measured by rasterizing
