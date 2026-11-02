@@ -33,9 +33,9 @@ from . import (active, calibration, cnn, detect, docx, lines, markdown, native, 
 from .active import dump_crops
 from .cnn import (ensure_model, get_model_meta, score_crops, score_word, std_crop, verdict_of,
                   word_crop_px)
-from .detect import (EncryptedPdfError, GarbledTextWarning, InvalidPdfError, OcrRequiredError,
-                     apply_cnn_verdict, classify_page_source, detect_image_file, detect_pdf,
-                     detect_scanned_image)
+from .detect import (EncryptedPdfError, GarbledTextWarning, InvalidPdfError,
+                     LimitExceededError, OcrRequiredError, apply_cnn_verdict,
+                     classify_page_source, detect_image_file, detect_pdf, detect_scanned_image)
 from .docx import strikethroughs_in_docx
 from .lines import ink_mask, strike_lines, to_gray_u8
 from .native import (native_annot_strikes, native_doc_strikes, native_flag_strikes,
@@ -67,7 +67,8 @@ __all__ = [
     "strike_lines", "ink_mask", "to_gray_u8", "analyze_scanned_page", "ScanConfig",
     "classify_page_source", "apply_cnn_verdict",
     # errors and warnings
-    "OcrRequiredError", "EncryptedPdfError", "InvalidPdfError", "GarbledTextWarning",
+    "OcrRequiredError", "EncryptedPdfError", "InvalidPdfError", "LimitExceededError",
+    "GarbledTextWarning",
     # OCR (backends + pre-fetched cloud-result adapters)
     "Word", "rapidocr_backend", "tesseract_backend", "words_from_azure_di",
     "words_from_textract", "words_from_docai",

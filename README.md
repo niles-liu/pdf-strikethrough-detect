@@ -262,6 +262,8 @@ with `--dump-crops` output is the fastest way to get a case fixed.
 
 Scans above 300 dpi are worked at 200, the resolution the geometry and model are calibrated at;
 a page over 128 Mpix is also scaled down, with a warning ([`SECURITY.md`](https://github.com/niles-liu/pdf-strikethrough-detect/blob/main/SECURITY.md)).
+To refuse large input up front, `max_pages=` and `max_mpix=` on `detect_pdf` and
+`detect_image_file` raise `LimitExceededError` before any page is detected.
 
 ## Against frontier models
 

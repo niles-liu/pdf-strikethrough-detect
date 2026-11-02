@@ -77,6 +77,42 @@ class InvalidPdfError(ValueError, pymupdf.FileDataError):
     opening a broken file raised before."""
 
 
+class LimitExceededError(ValueError):
+    """The document is larger than the ``max_pages`` or ``max_mpix`` passed to detect_pdf or
+    detect_image_file, which raise it before any page is detected. ``limit`` names the option,
+    ``maximum`` is its value and ``value`` the size counted: the pages to process, or the
+    megapixels of the rasters detection would hold. An image file's frames are read only up to
+    the first one over the limit, so there ``value`` counts those (``at_least``)."""
+
+    def __init__(self, limit, value, maximum, at_least=False):
+        size = (f"{value} pages to read" if limit == "max_pages"
+                else f"{value:.3g} megapixels to read")
+        super().__init__(f"the document has {'at least ' if at_least else ''}{size}, over "
+                         f"{limit}={maximum}")
+        self.limit, self.value, self.maximum, self.at_least = limit, value, maximum, at_least
+
+    def __reduce__(self):                  # so it pickles, as from a worker process
+        return type(self), (self.limit, self.value, self.maximum, self.at_least), vars(self)
+
+
+def _check_limits(max_pages, max_mpix):
+    """Reject a limit that is not a positive integer (``max_pages``) or number (``max_mpix``)."""
+    if max_pages is not None and (isinstance(max_pages, bool)
+                                  or not isinstance(max_pages, numbers.Integral) or max_pages < 1):
+        raise ValueError(f"max_pages must be a positive integer, got {max_pages!r}")
+    if max_mpix is not None and (isinstance(max_mpix, bool)
+                                 or not isinstance(max_mpix, numbers.Real) or not max_mpix > 0):
+        raise ValueError(f"max_mpix must be a positive number, got {max_mpix!r}")
+
+
+def _enforce_limits(n_pages, mpix, max_pages, max_mpix, at_least=False):
+    """Raise LimitExceededError when `n_pages` or `mpix` (None: not measured) is over its limit."""
+    if max_pages is not None and n_pages > max_pages:
+        raise LimitExceededError("max_pages", n_pages, max_pages, at_least)
+    if max_mpix is not None and mpix is not None and mpix > max_mpix:
+        raise LimitExceededError("max_mpix", mpix, max_mpix, at_least)
+
+
 def _raise_if_encrypted(doc):
     """The single encryption gate for the whole package (open_pdf and detect_pdf both route
     through it). Gates on ``is_encrypted``, which a successful ``doc.authenticate(password)``
@@ -307,6 +343,15 @@ def _working_dpi(width_in, height_in, requested_dpi):
                 f"(see SECURITY.md)")
         dpi = capped
     return max(1.0, dpi), note
+
+
+def _render_mpix(page, dpi):
+    """Megapixels of the raster detect_pdf renders scanned `page` to when asked for `dpi`: at the
+    resolution _working_dpi gives, rounded as the page loop rounds it, with MuPDF's pixel bounds."""
+    R = page.rect
+    zoom = int(round(_working_dpi(R.width / 72.0, R.height / 72.0, dpi)[0])) / 72
+    box = (R * pymupdf.Matrix(zoom, zoom)).irect
+    return box.width * box.height / 1e6
 
 
 def _downsample_gray(gray, dpi):
@@ -583,18 +628,63 @@ def _frame_gray(frame):
     return to_gray_u8(np.asarray(frame.convert("RGB")))
 
 
-def _image_frames(source):
+def _check_frame_sizes(source, max_pages, max_mpix):
+    """Raise LimitExceededError when the image file `source` (a path or bytes) has more frames
+    than `max_pages`, or more megapixels in all than `max_mpix`, reading the frames' sizes only up
+    to the first frame over a limit. It reads a copy of its own, so detection then decodes the file
+    as it would without a limit, and leaves a file it cannot read to that decode, which raises
+    what it raises without one."""
+    import io
+
+    from PIL import Image, ImageSequence
+
+    try:
+        img = Image.open(io.BytesIO(bytes(source)) if isinstance(source, (bytes, bytearray))
+                         else source)
+    except Exception:
+        return
+    try:
+        n = px = 0
+        for frame in ImageSequence.Iterator(img):
+            n += 1
+            px += frame.size[0] * frame.size[1]
+            _enforce_limits(n, px / 1e6, max_pages, max_mpix, at_least=True)
+    except LimitExceededError:
+        raise
+    except Exception:                      # a damaged file: the decode raises what it always did
+        pass
+    finally:
+        img.close()
+
+
+def _image_frames(source, max_pages=None, max_mpix=None):
     """``[(gray_uint8, upright_gray_or_None, dpi_or_None), ...]``, one per frame of a raster image
     (a path, bytes, an open binary file, or a PIL image); multi-page TIFFs give one per frame.
     ``upright`` is the frame turned to its EXIF orientation (how a viewer shows a phone photo), or
     None when there is nothing to turn: no rotation, a rotation the decoder already applied
     (Pillow applies a TIFF's on load), or an unreadable EXIF block. ``dpi`` is the x-resolution
     recorded in the image metadata, or None. An image this opens is closed before returning, also
-    on a decode error."""
+    on a decode error. With `max_pages` or `max_mpix`, an image over a limit raises
+    LimitExceededError; a frame counts as stored, since it is decoded whole before it is scaled.
+    An image file is checked before any frame is decoded for detection (Pillow decodes a GIF or
+    APNG frame to reach the next); a PIL image you pass, or a file that check cannot read, once
+    its frames are decoded."""
     import io
 
     from PIL import Image, ImageOps, ImageSequence
 
+    limited = max_pages is not None or max_mpix is not None
+    if limited and not isinstance(source, Image.Image):
+        data = source
+        if hasattr(source, "read"):        # an open file, read as Image.open reads it
+            try:
+                source.seek(0)
+            except (AttributeError, OSError, ValueError):     # it cannot seek: read it once
+                data = source = source.read()
+            else:
+                data = source.read()
+                source.seek(0)             # the decode reads it as it would without a limit
+        _check_frame_sizes(data, max_pages, max_mpix)
     if isinstance(source, Image.Image):
         img, owned = source, False
     else:
@@ -619,6 +709,9 @@ def _image_frames(source):
                 except (TypeError, ValueError, IndexError):
                     xdpi = None
             frames.append((_frame_gray(frame), upright, xdpi))
+        if limited:
+            _enforce_limits(len(frames), sum(gray.size for gray, _u, _d in frames) / 1e6,
+                            max_pages, max_mpix)
         return frames
     finally:
         if owned:
@@ -633,7 +726,7 @@ def _check_dpi(dpi, name="dpi"):
 
 def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_config=None,
                       dpi=None, meta=None, include_markdown=True, telemetry=False,
-                      _crop_sink=None):
+                      max_pages=None, max_mpix=None, _crop_sink=None):
     """Detect strikethroughs in a standalone raster image (``.png/.jpg/.tiff``, incl. multi-page
     TIFF) — a photo/scan/fax that never was a PDF.
 
@@ -652,14 +745,20 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     is no `pages` subset and no native path. A frame with no word source raises
     ``OcrRequiredError``. With ``telemetry=True`` the result gains ``telemetry``, as
     :func:`detect_pdf`'s does, with one entry per frame.
+
+    `max_pages` and `max_mpix` refuse an image with more frames, or more megapixels in all (each
+    frame as stored), with ``LimitExceededError``. An image file's frames are read only up to the
+    first one over a limit, before any is decoded for detection; a PIL image is checked once
+    decoded. Default None: no limit.
     """
     import numpy as np
 
     tel = _Telemetry() if telemetry else None
     if dpi is not None:
         _check_dpi(dpi)
+    _check_limits(max_pages, max_mpix)
     wbp = _normalize_words_by_page(words_by_page)
-    frames = _image_frames(source)
+    frames = _image_frames(source, max_pages, max_mpix)
     if words is not None and len(frames) > 1 and wbp is None:
         raise ValueError("words= covers a single-frame image; for a multi-page TIFF pass an ocr "
                          "backend or words_by_page={frame: [...]}")
@@ -943,7 +1042,8 @@ def _warn_garbled(garbled, on_garbled, include_markdown):
 def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=None,
                include_markdown=True, method=None, on_missing_ocr="raise",
                pages=None, progress=None, words_by_page=None, native_method=None,
-               on_garbled="keep", telemetry=False, _crop_sink=None):
+               on_garbled="keep", telemetry=False, max_pages=None, max_mpix=None,
+               _crop_sink=None):
     """Detect strikethroughs across a PDF, routing each page to native or scanned.
 
     Args:
@@ -1000,6 +1100,13 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             scanned page, layer 1's, ``weak`` included, with its dpi and OCR word count) and
             struck-final count, and a histogram of the scanned records' ``cnn_prob``. See
             ``pdf_strikethrough.types.Telemetry``.
+        max_pages, max_mpix: refuse a document with more pages to process than `max_pages`, or
+            whose scanned pages to process would render to more than `max_mpix` megapixels in
+            all (at the resolution detection renders them: `dpi`, worked at 200 above 300, and
+            the per-page raster budget), with ``LimitExceededError``, before any page is
+            detected.
+            Born-digital and blank pages are not rendered and count nothing. Default None: no
+            limit.
 
     Returns a dict:
         {schema_version, source, page_count, page_sources, words, n_struck_final, warnings,
@@ -1021,6 +1128,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     if on_garbled not in ("keep", "drop"):
         raise ValueError(f"on_garbled must be 'keep' or 'drop', got {on_garbled!r}")
     _check_dpi(dpi)
+    _check_limits(max_pages, max_mpix)
     if di_result is not None and words_by_page is not None:
         raise ValueError("pass only one of di_result= / words_by_page= (each supplies the words "
                          "for scanned pages, with a different calibration)")
@@ -1029,10 +1137,14 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     doc, close = _open_doc(source, walk=False)
     try:
         page_indices = _normalize_pages(pages, doc.page_count)
+        _enforce_limits(len(page_indices), None, max_pages, None)
         _walk_page_tree(doc, page_indices)
         if wbp is not None:
             _check_words_by_page(wbp, doc.page_count)
         sources = {p: classify_page_source(doc[p]) for p in page_indices}
+        if max_mpix is not None:
+            mpix = sum(_render_mpix(doc[p], dpi) for p in page_indices if sources[p] == "scanned")
+            _enforce_limits(0, mpix, None, max_mpix)
         log.debug("detect_pdf: %d-page doc, processing %d page(s); native method=%r",
                   doc.page_count, len(page_indices), method)
         # by default each scanned page takes the calibration of its words' source: Azure DI's
