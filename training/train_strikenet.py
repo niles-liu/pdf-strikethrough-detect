@@ -13,10 +13,13 @@ failing pages back to a better model is one command each step:
 
 The dataset directory is a :func:`pdf_strikethrough.active.dump_crops` output: a ``crops.jsonl``
 whose rows carry a ``crop`` path (relative to the directory) and a filled-in ``label``, and may
-carry a ``group``, whose crops the split keeps on the same side (:func:`group_key`). The crop
-PNGs are re-standardized here through the exact same ``std_crop`` the detector uses at
-inference, so training and inference preprocessing cannot drift. Requires ``torch`` and ``onnx``,
-which torch's ONNX exporter imports (dev only: the package runs on ONNX Runtime alone).
+carry a ``group``, whose crops the split keeps on the same side (:func:`group_key`), and a
+``source``, the kind of crop p_hi is matched in (:func:`sources_of`). The crop PNGs are
+re-standardized here through the exact same ``std_crop`` the detector uses at inference, so
+training and inference preprocessing cannot drift. The new model's p_hi and p_lo are matched, on
+the validation crops, to the calls of the model the package loads (:func:`matched_pair`).
+Requires ``torch`` and ``onnx``, which torch's ONNX exporter imports (dev only: the package runs
+on ONNX Runtime alone).
 
     python training/train_strikenet.py DATASET_DIR [-o OUT_DIR] [--epochs N] [--val-frac F]
 """
@@ -35,7 +38,7 @@ import sys
 import numpy as np
 
 import pdf_strikethrough
-from pdf_strikethrough import calibration
+from pdf_strikethrough import calibration, cnn
 from pdf_strikethrough.cnn import CROP_H, CROP_W, PAD_X, PAD_Y, std_crop
 
 LABELS = {"struck": 1.0, "clean": 0.0}
@@ -89,8 +92,8 @@ def _load(dataset_dir):
 
 
 def _given(value):
-    """Whether a row's group or page holds a value: null, NaN, blank text, [] and {} count as no
-    value (an empty spreadsheet cell exports as one of them), while 0 and false are values."""
+    """Whether a row's group, page or source holds a value: null, NaN, blank text, [] and {} count
+    as no value (an empty spreadsheet cell exports as one of them), while 0 and false are values."""
     if value is None or (isinstance(value, float) and value != value):
         return False
     if isinstance(value, str):
@@ -133,6 +136,20 @@ def groups_of(rows):
     return groups, split_by, sum(len(v) == 2 for v in grouped.values())
 
 
+def sources_of(rows):
+    """Each row's ``source`` as JSON text, or None when it has none (:func:`_given`): the kinds of
+    crop, such as print and handwriting, that :func:`matched_pair` matches p_hi in one by one. Any
+    other NaN or Infinity in a source stops the script, since the meta records each source."""
+    def text(row):
+        try:
+            return json.dumps(row["source"], sort_keys=True, allow_nan=False)
+        except ValueError:
+            sys.exit(f"The \"source\" of {row['crop']} holds NaN or Infinity, which the model's "
+                     f"meta cannot record: give it text, such as \"print\"")
+    return np.array([text(row) if _given(row.get("source")) else None for row in rows],
+                    dtype=object)
+
+
 def split(n, val_frac, seed, groups=None):
     """The (validation, training) indices `train` uses for `n` crops: a seeded permutation of
     their groups (``groups[i]`` is crop i's; without them each crop is its own) whose first
@@ -167,25 +184,29 @@ def fewest(alpha):
 
 def split_shortfall(y, val_frac, seed, alpha, groups=None):
     """Why :func:`split` cannot train and calibrate a model from labels `y` (and crop `groups`), or
-    None if it can: the validation split needs enough struck crops for `alpha`'s conformal
-    threshold and a clean one, and the training split a struck and a clean crop. Too few struck
-    validation crops and conformal_threshold returns 0.0, a model that calls every candidate
-    struck; a training split without both classes trains a net that cannot learn to tell struck
-    from clean. With groups (not one per crop), it names three cases where no seed can help."""
+    None if it can: the validation split needs at least 19 struck crops for the matched p_hi (more
+    when `alpha` is below 0.05, for its conformal threshold) and a clean one for p_lo, and the
+    training split a struck and a clean crop. With fewer struck validation crops the matched p_hi
+    rests on a few, and below `alpha`'s count conformal_threshold returns 0.0; a training split
+    without both classes trains a net that cannot learn to tell struck from clean. With groups (not
+    one per crop), it names three cases where no seed can help."""
     val_idx, tr_idx = split(len(y), val_frac, seed, groups)
     n_struck = int(y[val_idx].sum())
     n_clean = len(val_idx) - n_struck
     tr_struck = int(y[tr_idx].sum())
     tr_clean = len(tr_idx) - tr_struck
-    need = fewest(alpha)
+    need = max(fewest(alpha), fewest(0.05))          # 19 for the match, whatever --alpha
     if tr_struck and tr_clean and n_struck >= need and n_clean:
         return None
+    match = need == fewest(0.05)                     # else the conformal pair asks for more
+    who = "the thresholds need" if match else f"the split-conformal pair at --alpha {alpha} needs"
+    floor = "" if match else " (19 at --alpha 0.05 or above)"
     problem = (f"The validation split holds {n_struck} struck and {n_clean} clean crops and the "
-               f"training split {tr_struck} struck and {tr_clean} clean; --alpha {alpha} needs at "
-               f"least {need} struck and 1 clean validation crop to set the thresholds, and "
-               f"training needs at least 1 struck and 1 clean crop")
+               f"training split {tr_struck} struck and {tr_clean} clean; {who} at least {need} "
+               f"struck{floor} and 1 clean validation crop, and training at least 1 struck and 1 "
+               f"clean crop")
     if groups is None or len(set(groups)) == len(groups):        # each crop its own group
-        return problem + " (label more crops, or adjust --val-frac or raise --alpha)"
+        return problem + " (label more crops, or adjust --val-frac)"
     by_group = {}
     for g, label in zip(groups, y):
         by_group.setdefault(g, []).append(float(label))
@@ -204,13 +225,12 @@ def split_shortfall(y, val_frac, seed, alpha, groups=None):
                 f"train on: use a --val-frac below 1")
     best = sum(struck[:min(held, len(struck) - 1)])    # leaving a struck group to train on
     if best < need:
-        more = ", raise --val-frac" if sum(struck) - struck[-1] >= need else ""
+        more = " or raise --val-frac" if sum(struck) - struck[-1] >= need else ""
         return (f"{problem}. Holding out {held} of the {len(by_group)} groups and leaving struck "
                 f"crops to train on keeps at most {best} struck crops for validation, so no seed "
-                f"can help: label crops from more pages{more}, or raise --alpha")
+                f"can help: label crops from more pages{more}")
     return (f"{problem} ({held} of {len(by_group)} groups held out: another --seed holds out "
-            f"others and may pass; or label crops from more pages, adjust --val-frac or raise "
-            f"--alpha)")
+            f"others and may pass; or label crops from more pages or adjust --val-frac)")
 
 
 def as_called(p):
@@ -227,13 +247,90 @@ def conformal_pair(struck, clean, alpha):
     highest, with k from the clean count, or 1.0 when that k is 0. p_lo is then capped at p_hi.
     The detector calls a score at or above p_hi struck before it checks p_lo, so p_lo == p_hi
     leaves no word unsure."""
+    return _conformal(struck, clean, alpha)[:2]
+
+
+def _conformal(struck, clean, alpha):
+    """:func:`conformal_pair`'s (p_hi, p_lo), and p_lo's mirror before the cap: the k-th highest
+    clean score, or None when k is 0."""
     struck, clean = as_called(struck), as_called(clean)
     if not (np.isfinite(struck).all() and np.isfinite(clean).all()):
         raise ValueError("validation scores must be finite")
     p_hi = calibration.conformal_threshold(struck, alpha=alpha)
     k = int(np.floor(alpha * (clean.size + 1)))      # conformal_threshold's order statistic
-    p_lo = float(np.sort(clean)[clean.size - k]) if k >= 1 else 1.0
-    return p_hi, min(p_lo, p_hi)
+    mirror = float(np.sort(clean)[clean.size - k]) if k >= 1 else None
+    return p_hi, min(1.0 if mirror is None else mirror, p_hi), mirror
+
+
+def verdicts(p, p_hi, p_lo):
+    """Each score's verdict at thresholds (p_hi, p_lo) as the detector gives it: cnn.verdict_of on
+    the score as read (:func:`as_called`), so a score at p_hi is struck even when p_lo == p_hi."""
+    meta = {"p_hi": p_hi, "p_lo": p_lo}
+    return np.array([cnn.verdict_of(v, meta) for v in as_called(p)], dtype=object)
+
+
+def matched_high(new, ref, reference):
+    """The highest p_hi at which the new model calls at least as many of these crops struck as
+    the reference model does at its thresholds `reference`, (p_hi, p_lo): the K-th highest of the
+    new model's scores as read (:func:`as_called`), K the reference's count (:func:`verdicts`), so
+    crops tied with it are called too. None when the reference calls none of them struck."""
+    new, k = as_called(new), int((verdicts(ref, *reference) == "struck").sum())
+    return float(np.sort(new)[new.size - k]) if k else None
+
+
+def matched_low(new, ref, reference):
+    """The lowest p_lo at which the new model calls at least as many of these crops clean as the
+    reference model does at its thresholds `reference`, as long as p_hi sits above it: the K-th
+    lowest of the new model's scores as read, K the reference's count, or 0.0 when the reference
+    calls none of them clean."""
+    new, k = as_called(new), int((verdicts(ref, *reference) == "clean").sum())
+    return float(np.sort(new)[k - 1]) if k else 0.0
+
+
+def matched_pair(new, ref, struck, sources, reference, groups=None, every=()):
+    """(p_hi, p_lo, how) from a new model's validation scores `new`, matched to the reference
+    model's scores `ref` for the same crops at its thresholds `reference`, (p_hi, p_lo). The
+    struck crops of each source (``sources[i]`` is crop i's, from :func:`sources_of`) set a bound,
+    :func:`matched_high`, unless the reference calls none of them struck. p_hi is the lowest
+    bound, so in no source does the new model call fewer struck crops struck than the reference;
+    with no bound at all, ValueError. p_lo is :func:`matched_low` on all the clean crops at once,
+    capped at p_hi. `how` records, for p_hi, each source's struck crops (and how many `groups`
+    they come from, when given), the reference's calls and the bound, the source that set it, and
+    the bound for all the struck crops at once, reported only; for p_lo, the clean crops, the
+    reference's calls and the match before the cap; and how many struck and clean crops each
+    model calls struck at its thresholds. Sources in `every` are listed even with no struck crop
+    here (they set no bound). Scores that are not finite raise ValueError."""
+    new, ref = as_called(new), as_called(ref)
+    if not (np.isfinite(new).all() and np.isfinite(ref).all()):
+        raise ValueError("validation scores must be finite")
+    struck, sources = np.asarray(struck, dtype=bool), np.asarray(sources, dtype=object)
+    by_source = []
+    for key in sorted(set(sources[struck].tolist()) | set(every),
+                      key=lambda s: (s is not None, s or "")):
+        here = struck & np.array([s == key for s in sources], dtype=bool)
+        entry = {"source": None if key is None else json.loads(key), "struck": int(here.sum())}
+        if groups is not None:
+            entry["groups"] = len(set(np.asarray(groups)[here].tolist()))
+        entry["reference_calls"] = int((verdicts(ref[here], *reference) == "struck").sum())
+        entry["matched"] = matched_high(new[here], ref[here], reference)
+        by_source.append(entry)
+    bounds = [entry for entry in by_source if entry["matched"] is not None]
+    if not bounds:
+        raise ValueError(f"the reference model calls none of the {int(struck.sum())} struck "
+                         f"crops struck: no recall to match")
+    set_by = min(bounds, key=lambda entry: entry["matched"])          # the first, on a tie
+    p_hi, clean = set_by["matched"], ~struck
+    low = matched_low(new[clean], ref[clean], reference)
+    p_lo = min(low, p_hi)
+    old, now = verdicts(ref, *reference), verdicts(new, p_hi, p_lo)
+    how = {"p_hi": {"by_source": by_source, "set_by": set_by["source"],
+                    "pooled": matched_high(new[struck], ref[struck], reference)},
+           "p_lo": {"clean": int(clean.sum()),
+                    "reference_calls": int((old[clean] == "clean").sum()), "matched": low},
+           "called_struck": {name: {"reference": int((old[mask] == "struck").sum()),
+                                    "new": int((now[mask] == "struck").sum())}
+                             for name, mask in (("struck", struck), ("clean", clean))}}
+    return p_hi, p_lo, how
 
 
 def train(x, y, *, groups=None, epochs=40, val_frac=0.2, batch=64, lr=1e-3, seed=0):
@@ -346,6 +443,10 @@ def export(net, out_dir, *, thresholds, version, training=None):
 
 
 def main(argv=None):
+    try:            # a log redirected on Windows is cp1252: escape what it cannot encode
+        sys.stdout.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError):
+        pass        # a stream that cannot be reconfigured (captured in tests, say)
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("dataset_dir", help="a `dump_crops` output directory (crops.jsonl + crops/)")
@@ -358,9 +459,11 @@ def main(argv=None):
     ap.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate")
     ap.add_argument("--seed", type=int, default=0, help="seeds the train/val split and torch")
     ap.add_argument("--alpha", type=float, default=0.05,
-                    help="p_hi's miss rate: on average, at most alpha of struck crops like the "
-                         "validation ones score below p_hi; p_lo mirrors p_hi on the clean crops, "
-                         "capped at p_hi, and promises no rate")
+                    help="miss rate of the split-conformal pair the meta reports beside the "
+                         "matched thresholds (alpha does not change those): on average, at most "
+                         "alpha of struck crops like the validation ones score below the pair's "
+                         "p_hi. The validation split needs at least 19 struck crops, more when "
+                         "alpha is below 0.05")
     ap.add_argument("--version", default="retrained", help="version string stamped into the meta")
     args = ap.parse_args(argv)
     if not 0.0 < args.alpha < 1.0:
@@ -371,6 +474,7 @@ def main(argv=None):
 
     x, y, digest, rows = _load(args.dataset_dir)
     groups, split_by, mixed = groups_of(rows)
+    sources = sources_of(rows)
     n_groups = len(set(groups.tolist()))
     print(f"loaded {len(x)} labeled crops ({int(y.sum())} struck, {int((1 - y).sum())} clean) "
           f"in {n_groups} group{'s' * (n_groups != 1)} ({split_by['group']} row(s) by \"group\", "
@@ -388,29 +492,86 @@ def main(argv=None):
           f"({val_struck} struck, {len(val_idx) - val_struck} clean); training: "
           f"{len(tr_idx)} crops ({int(y[tr_idx].sum())} struck, "
           f"{len(tr_idx) - int(y[tr_idx].sum())} clean)")
+    # The reference is the model the package loads: its calls on the validation crops are what
+    # the thresholds match, so whatever keeps them from matching stops here, before the epochs
+    struck = y[val_idx] > 0.5
+    try:
+        reference = cnn.get_model_meta()
+        ref = cnn.score_crops(x[val_idx])
+    except Exception as e:                          # whatever the loader raises: nothing to match
+        sys.exit(f"The thresholds are matched to the model the package loads, but no model loads "
+                 f"from {cnn._current_model_dir()}: {type(e).__name__}: {e}. Set "
+                 f"PDF_STRIKETHROUGH_MODEL_DIR to a folder with a model that loads, or unset it to "
+                 f"match the packaged model")
+    at = (reference["p_hi"], reference["p_lo"])
+    recorded = {k: reference[k] for k in ("version", "sha256", "external_data", "p_hi", "p_lo")
+                if k in reference}
+    json.dumps(recorded, allow_nan=False)           # as export writes it: fails now, not later
+    if not np.isfinite(ref).all():
+        sys.exit(f"The reference model ({reference.get('version')}, sha256 "
+                 f"{reference['sha256'][:12]}) gives {int((~np.isfinite(ref)).sum())} of the "
+                 f"{len(ref)} validation crops no finite score, so there is nothing to match: set "
+                 f"PDF_STRIKETHROUGH_MODEL_DIR to another model, or unset it to match the packaged "
+                 f"model")
+    caught = int((verdicts(ref[struck], *at) == "struck").sum())
+    print(f"reference: {reference.get('version')} (sha256 {reference['sha256'][:12]}, p_hi "
+          f"{at[0]}, p_lo {at[1]}), the model the package loads, calls {caught} of the "
+          f"{val_struck} struck validation crops struck")
+    if not caught:
+        sys.exit(f"The reference model calls none of the {val_struck} struck validation crops "
+                 f"struck, so p_hi has no recall to match: label more struck crops, try another "
+                 f"--seed, or set PDF_STRIKETHROUGH_MODEL_DIR to another reference model")
+    unheld = sorted(set(sources[y > 0.5].tolist()) - set(sources[val_idx][struck].tolist()),
+                    key=lambda s: (s is not None, s or ""))
+    for s in unheld:
+        name = "the rows without a source have" if s is None else f"source {s} has"
+        print(f"note: {name} struck crops only in the training split, so p_hi is not matched on "
+              f"them and the new model can miss more of them: another --seed holds out other "
+              f"groups")
     hparams = {"epochs": args.epochs, "val_frac": args.val_frac, "batch": args.batch,
                "lr": args.lr, "seed": args.seed}
     net = train(x, y, groups=groups, **hparams)
 
     def thresholds(score):
-        # p_hi: the split-conformal threshold on the validation strikes; p_lo: its mirror on the
-        # clean crops. Both from the exported graph's scores, as the detector reads them.
-        p, val_y = score(x[val_idx]), y[val_idx]
-        p_hi, p_lo = conformal_pair(p[val_y > 0.5], p[val_y <= 0.5], args.alpha)
-        print(f"calibrated thresholds: p_hi={p_hi:.3f}, p_lo={p_lo:.3f} (alpha={args.alpha})")
+        # Matched to the reference's calls on the validation crops, both models' scores read as
+        # the detector reads them; the split-conformal pair goes in the meta beside them
+        p = score(x[val_idx])
+        p_hi, p_lo, how = matched_pair(p, ref, struck, sources[val_idx], at, groups[val_idx],
+                                       every=unheld)
+        c_hi, c_lo, mirror = _conformal(p[struck], p[~struck], args.alpha)
+        training["calibration"] = {
+            "rule": "matched to the reference model's calls on the validation crops",
+            "reference": recorded, **how,
+            "conformal": {"alpha": args.alpha, "p_hi": c_hi, "p_lo": c_lo, "mirror": mirror}}
+        entries, setter = how["p_hi"]["by_source"], how["p_hi"]["set_by"]
+        named = "the rows without a source" if setter is None else f"source {json.dumps(setter)}"
+        by = f" (set by {named})" if len(entries) > 1 else ""
+        print(f"matched thresholds: p_hi={p_hi:.3f}{by}, p_lo={p_lo:.3f}")
+        for e in entries:
+            name = ("rows without a source" if e["source"] is None
+                    else f"source {json.dumps(e['source'])}")
+            if not e["struck"]:
+                print(f"  {name}: no struck validation crops, so no bound")
+                continue
+            bound = "no bound" if e["matched"] is None else f"matched at {e['matched']:.3f}"
+            print(f"  {name}: {e['struck']} struck validation crops from {e['groups']} group(s), "
+                  f"{e['reference_calls']} called struck by the reference: {bound}")
+        lo, called = how["p_lo"], how["called_struck"]
+        cap = f", capped at p_hi {p_hi:.3f}" if p_lo < lo["matched"] else ""
+        print(f"  {lo['clean']} clean validation crops, {lo['reference_calls']} called clean by "
+              f"the reference: matched at {lo['matched']:.3f}{cap}")
+        print(f"called struck by the reference and the new model: {called['struck']['reference']} "
+              f"and {called['struck']['new']} of the {val_struck} struck validation crops, "
+              f"{called['clean']['reference']} and {called['clean']['new']} of the {lo['clean']} "
+              f"clean")
+        print(f"split-conformal pair at --alpha {args.alpha}, reported only: p_hi={c_hi:.3f}, "
+              f"p_lo={c_lo:.3f}")
         if p_lo == p_hi:
-            clean = as_called(p[val_y <= 0.5])
-            k = int(np.floor(args.alpha * (len(clean) + 1)))   # conformal_pair's clean k
-            if k < 1:
-                why = (f"--alpha {args.alpha} needs {fewest(args.alpha)} clean validation crops "
-                       f"for p_lo to sit below p_hi and the validation split holds {len(clean)} "
-                       f"(label more clean crops, or raise --val-frac or --alpha)")
-            else:
-                why = (f"at --alpha {args.alpha}, {k} or more clean validation crops at or above "
-                       f"p_hi is too many for p_lo to sit below p_hi")
-            print(f"note: p_lo equals p_hi, so the model calls no word unsure: {why}. Clean "
-                  f"validation crops at or above p_hi, so called struck: "
-                  f"{int((clean >= p_hi).sum())} of {len(clean)}")
+            print(f"note: p_lo equals p_hi, so the model calls no word unsure: to call as many "
+                  f"clean validation crops clean as the reference ({lo['reference_calls']} of "
+                  f"{lo['clean']}), p_lo would sit at {lo['matched']:.3f}, at or above p_hi. "
+                  f"Clean validation crops at or above p_hi, so called struck: "
+                  f"{called['clean']['new']} of {lo['clean']}")
         return p_hi, p_lo
 
     import torch

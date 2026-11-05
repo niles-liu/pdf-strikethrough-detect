@@ -33,23 +33,58 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
   detector uses at inference, and the export records the crop geometry (`crop_h/crop_w/pad_x/pad_y`)
   into the meta, and `cnn._check_geometry` refuses to load a model whose geometry disagrees with the
   code constants.
-- **Thresholds are calibrated, not guessed.** `p_hi` is a split-conformal threshold on held-out
-  struck-word probabilities (`--alpha` sets the recall floor, `1 - alpha`). `p_lo` mirrors `p_hi`
-  on the clean class (the k-th highest clean validation score, k from the clean count), capped at
-  `p_hi`, so it carries no floor of its own. See `pdf_strikethrough.calibration`. Both are set on
-  the scores the detector compares with them: the exported model's scores for the validation
-  crops, rounded to 3 decimals as the detector rounds them. `p_hi`'s floor holds on average for
-  new crops exchangeable with the validation crops. The validation crops come from groups the
-  model did not train on (next note), so for a dump, whose rows carry the page, the thresholds are
-  set on pages the model has not seen. Still, a new page's crops are generally not exchangeable
-  with them, because crops of one page tend to look alike. So struck crops from few held-out pages
-  count for less than their number suggests: with few such pages, recall on new pages can fall
-  below the floor, and on new documents more so. Before it trains, the script stops if the
-  validation split holds fewer struck crops than `--alpha` needs (19 at the default 0.05) or no
-  clean ones, or if the training split has no struck crop or no clean crop. With 1 to 18 clean
-  validation crops at the default `--alpha` it trains anyway and `p_lo` equals `p_hi`, as it does
-  when too many clean validation crops score at or above `p_hi`; then the model calls no word
-  unsure, and the script says so.
+- **Thresholds are matched to the model the package loads.** The script scores the validation crops
+  with the new model and with a reference: the model the package loads, which is the packaged one
+  unless `PDF_STRIKETHROUGH_MODEL_DIR` or `cnn.set_model_dir` points at another. `p_hi` is the
+  highest threshold at which the new model calls at least as many struck validation crops struck
+  as the reference does at its own `p_hi`, in each source (next note). `p_lo` is the lowest at
+  which it calls at least as many clean validation crops clean as the reference does at its own
+  `p_lo`, capped at `p_hi`. So on the validation crops the new model calls at least as many
+  strikes struck as the reference does, in every source, and training mostly changes how many
+  clean crops it calls struck. The script prints both models' counts. Both thresholds use the
+  scores the detector compares with them: each model's scores for the validation crops, rounded
+  to 3 decimals as the detector rounds them. Before it trains, the script stops if the reference
+  does not load, gives a validation crop no finite score, or calls none of the struck validation
+  crops struck. It also stops if the validation split holds fewer than 19 struck crops (more when
+  `--alpha` is below 0.05) or no clean one, or if the training split has no struck crop or no
+  clean crop. When the match puts `p_lo` at or above `p_hi`, `p_lo` equals `p_hi` and the model
+  calls no word unsure; the script says so.
+- **Sources.** A row may carry a `source`: the kind of crop, such as `"print"` or
+  `"handwriting"`, not the document or page it came from (name those in `group`). Any JSON value
+  will do, compared as JSON text, so `"Print"` and `"print"` are two sources. As for `group`,
+  null, NaN, blank text, `[]` and `{}` count as none, and those rows form a source of their own.
+  Any other NaN or Infinity, such as one inside a list, stops the script. `p_hi` is matched in each
+  source that has struck validation crops. Each match is a bound on `p_hi`, and the lowest bound
+  is kept, so on the validation crops no source loses recall. A source sets no bound when the
+  reference calls none of its validation strikes struck, or when the split holds out none of its
+  strikes, which is likely for a source in few groups; the script names it either way. Each source
+  can only lower `p_hi`, and a source with few struck validation crops sets a noisy bound that is
+  often the lowest, so one crop can set `p_hi` for every source and raise the number of clean
+  crops called struck. Since every source can bound `p_hi`, label only crops like the ones the
+  detector will score: a generated or augmented strike can land in the validation split like any
+  other crop and bound `p_hi` there. `p_lo` is matched on all the clean crops at once.
+- **What the match promises.** It holds on the validation crops. On new crops it holds only on
+  average, and only to within a small shortfall, even for crops exchangeable with the validation
+  ones: in a source with n struck validation crops, the new model's expected recall can trail the
+  reference's by up to 1/(n + 1) (5 points when n is 19), and on one split it can trail by twice
+  that or more. The validation crops come from groups the model did not train on (see the split
+  below), but crops of one page or writer tend to look alike, so with few held-out groups the new
+  model can trail further on new pages. The match holds the new model to the reference's recall,
+  not more: if the reference misses many of your strikes, the new model misses about as many. To
+  catch more strikes at the cost of more clean words called struck, pass a lower `cnn_p_hi` when
+  you detect, with `ScanConfig(cnn_p_hi=...)`. The meta's `training.calibration.conformal.p_hi` is
+  one choice, when it is below `p_hi`. Matching to an earlier retrain adds its shortfall to the
+  new model's whenever the validation crops change, as they do when you label more pages or change
+  `--seed`, so recall can drift down over retrains. To match to the packaged model, unset
+  `PDF_STRIKETHROUGH_MODEL_DIR` when you train. `ScanConfig.recall_first()` and
+  `precision_first()` set `cnn_p_hi` to 0.50 and 0.97, values on the packaged model's scale, so
+  with a retrained model pass `cnn_p_hi` yourself.
+- **The split-conformal pair is only reported.** The meta also records a split-conformal pair
+  from the new model's validation scores. Its `p_hi` is `calibration.conformal_threshold` at
+  `--alpha`: on average, at most `alpha` of struck crops exchangeable with the validation ones
+  score below it, and a new page's crops generally are not exchangeable with them. Its `p_lo` is
+  the script's mirror of that on the clean scores (the k-th highest, k from the clean count),
+  capped at `p_hi`. Neither sets the thresholds.
 - **The split holds out whole groups.** A row's group is its `group` field if set, else its
   `page` within its crop's folder, else the row alone. A `group` can be any JSON value, such as a
   document name or a writer's ID; null, NaN, blank text, `[]` and `{}` count as not set.
@@ -75,8 +110,19 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
   their page, or stood alone, as `row`), `n_groups`, `n_val_groups` (how many groups are held out)
   and `groups_sha256` (the sha256 of one line per labeled row with its group's number, groups
   numbered in order of first appearance). The numpy version is there because numpy draws the
-  split, and its random stream can change between versions. `pdf_strikethrough.cnn.get_model_meta()`
-  returns it with the rest.
+  split, and its random stream can change between versions. `calibration` records how the
+  thresholds were set. `rule` states the rule. `reference` holds the reference's `version`,
+  `sha256`, `external_data` (when it has any), `p_hi` and `p_lo`. `p_hi.by_source` has one entry
+  per source with labeled strikes: `source` (null for the rows without one); `struck`, its struck
+  validation crops (0 when the split holds none out); `groups`, how many groups they come from;
+  `reference_calls`, how many of them the reference calls struck; and `matched`, the bound they
+  set (null when there is none). `p_hi.set_by` is the source that set `p_hi`, and `p_hi.pooled`
+  the bound on all sources at once, reported only. `p_lo` holds `clean`, the clean validation
+  crops; `reference_calls`, how many of them the reference calls clean; and `matched`, the match
+  before the cap. `called_struck` counts, for the `struck` and the `clean` validation crops, how
+  many each model (`reference`, `new`) calls struck. `conformal` holds the split-conformal pair:
+  `alpha`, `p_hi`, `p_lo`, and `mirror`, which is `p_lo` before the cap (null with too few clean
+  crops). `pdf_strikethrough.cnn.get_model_meta()` returns it with the rest.
 - **A failed check changes nothing.** The ONNX goes to a temporary file. It replaces the output
   directory's model only once ONNX Runtime scores it like the trained net and its thresholds pass
   the loader's check (`0 <= p_lo <= p_hi <= 1`). If the replace itself fails, the old model and
