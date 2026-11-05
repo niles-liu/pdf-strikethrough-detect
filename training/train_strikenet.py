@@ -154,6 +154,17 @@ def split(n, val_frac, seed, groups=None):
     return crops(perm[:n_val]), crops(perm[n_val:])
 
 
+def fewest(alpha):
+    """The fewest validation crops of one class from which conformal_threshold sets a threshold at
+    `alpha`: the smallest n with floor(alpha * (n + 1)) >= 1, computed as it computes k."""
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f"alpha must be in (0, 1), not {alpha}")
+    need = int(np.ceil(1 / alpha)) - 1
+    while int(np.floor(alpha * (need + 1))) < 1:     # 1/alpha can round down to a whole number
+        need += 1                                     # (161.0 at alpha = 1/161): ceil one short
+    return need
+
+
 def split_shortfall(y, val_frac, seed, alpha, groups=None):
     """Why :func:`split` cannot train and calibrate a model from labels `y` (and crop `groups`), or
     None if it can: the validation split needs enough struck crops for `alpha`'s conformal
@@ -166,7 +177,7 @@ def split_shortfall(y, val_frac, seed, alpha, groups=None):
     n_clean = len(val_idx) - n_struck
     tr_struck = int(y[tr_idx].sum())
     tr_clean = len(tr_idx) - tr_struck
-    need = int(np.ceil(1 / alpha)) - 1
+    need = fewest(alpha)
     if tr_struck and tr_clean and n_struck >= need and n_clean:
         return None
     problem = (f"The validation split holds {n_struck} struck and {n_clean} clean crops and the "
@@ -202,18 +213,40 @@ def split_shortfall(y, val_frac, seed, alpha, groups=None):
             f"--alpha)")
 
 
+def as_called(p):
+    """Each probability as the detector compares it with p_hi and p_lo: rounded to 3 decimals by
+    Python's round(), as detect.apply_cnn_verdict sets a record's cnn_prob. Not np.round, which
+    differs at some .0005 edges (0.0085 gives 0.008 there, 0.009 here)."""
+    return np.array([round(float(v), 3) for v in np.asarray(p, dtype=float).reshape(-1)])
+
+
+def conformal_pair(struck, clean, alpha):
+    """(p_hi, p_lo) from validation scores, rounded as the detector rounds them
+    (:func:`as_called`). p_hi is calibration.conformal_threshold of the struck scores at `alpha`:
+    the k-th lowest, k = floor(alpha * (n + 1)). p_lo mirrors it on the clean scores: the k-th
+    highest, with k from the clean count, or 1.0 when that k is 0. p_lo is then capped at p_hi.
+    The detector calls a score at or above p_hi struck before it checks p_lo, so p_lo == p_hi
+    leaves no word unsure."""
+    struck, clean = as_called(struck), as_called(clean)
+    if not (np.isfinite(struck).all() and np.isfinite(clean).all()):
+        raise ValueError("validation scores must be finite")
+    p_hi = calibration.conformal_threshold(struck, alpha=alpha)
+    k = int(np.floor(alpha * (clean.size + 1)))      # conformal_threshold's order statistic
+    p_lo = float(np.sort(clean)[clean.size - k]) if k >= 1 else 1.0
+    return p_hi, min(p_lo, p_hi)
+
+
 def train(x, y, *, groups=None, epochs=40, val_frac=0.2, batch=64, lr=1e-3, seed=0):
     """Train StrikeNet on standardized crops, holding out :func:`split`'s validation groups.
-    Returns (net, val_probs, val_labels)."""
+    Returns the trained net, in eval mode."""
     import torch
     from torch import nn
 
     from pdf_strikethrough.cnn import _build_torch_net
     torch.manual_seed(seed)
-    val_idx, tr_idx = split(len(x), val_frac, seed, groups)
+    _, tr_idx = split(len(x), val_frac, seed, groups)
     xt = torch.from_numpy(x[tr_idx][:, None, :, :])
     yt = torch.from_numpy(y[tr_idx])
-    xv = torch.from_numpy(x[val_idx][:, None, :, :])
 
     net = _build_torch_net()
     pos = float(y[tr_idx].sum())
@@ -232,19 +265,37 @@ def train(x, y, *, groups=None, epochs=40, val_frac=0.2, batch=64, lr=1e-3, seed
         if (ep + 1) % 10 == 0 or ep == epochs - 1:
             print(f"  epoch {ep + 1}/{epochs}: train loss {loss.item():.4f}")
     net.eval()
-    with torch.no_grad():
-        val_probs = torch.sigmoid(net(xv)).numpy()
-    return net, val_probs, y[val_idx]
+    return net
 
 
-def export(net, out_dir, *, p_hi, p_lo, version, training=None):
+def score_graph(graph, crops, batch=512):
+    """StrikeNet probabilities for standardized crops from the ONNX graph `graph` (bytes),
+    computed as cnn.score_crops computes them."""
+    import onnxruntime as ort
+    if not len(crops):
+        return np.zeros(0)
+    sess = ort.InferenceSession(graph, providers=["CPUExecutionProvider"])
+    name = sess.get_inputs()[0].name
+    x = np.stack(crops).astype(np.float32)[:, None, :, :]
+    logits = [sess.run(None, {name: x[i:i + batch]})[0].reshape(-1)
+              for i in range(0, len(x), batch)]
+    return 1.0 / (1.0 + np.exp(-np.concatenate(logits).astype(np.float64)))
+
+
+def export(net, out_dir, *, thresholds, version, training=None):
     """Export the trained net to ONNX + meta.json in the layout the loader expects, recording the
     crop geometry so a preprocessing mismatch is caught at load time (cnn._check_geometry), and
     `training` (what the model was trained on) when given. The graph goes to a temporary file and
-    must score like `net` before it replaces anything: otherwise this raises RuntimeError and
-    leaves `out_dir`'s previous model as it was."""
+    must score like `net`. Then export calls ``thresholds(score)``, where ``score(crops)`` scores
+    standardized crops through that graph as cnn.score_crops will (:func:`score_graph`), and
+    writes the (p_hi, p_lo) it returns as given: they must already be rounded to 3 decimals
+    (:func:`as_called`) and satisfy the loader's check, 0 <= p_lo <= p_hi <= 1. Nothing is
+    replaced until all that succeeds: a failure raises and leaves `out_dir`'s previous model as
+    it was. If the replace itself fails, the old model and its meta stay."""
     import onnxruntime as ort
     import torch
+
+    from pdf_strikethrough.cnn import _check_thresholds
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     onnx_path = out_dir / "strike_verdict_cnn.onnx"
@@ -260,21 +311,37 @@ def export(net, out_dir, *, p_hi, p_lo, version, training=None):
         x = np.random.default_rng(0).standard_normal((8, 1, CROP_H, CROP_W)).astype(np.float32)
         with torch.no_grad():
             want = net(torch.from_numpy(x)).numpy().reshape(-1)
-        sess = ort.InferenceSession(tmp.read_bytes(), providers=["CPUExecutionProvider"])
-        drift = float(np.abs(sess.run(None, {"crop": x})[0].reshape(-1) - want).max())
+        graph = tmp.read_bytes()
+        sess = ort.InferenceSession(graph, providers=["CPUExecutionProvider"])
+        got = sess.run(None, {sess.get_inputs()[0].name: x})[0].reshape(-1)
+        drift = float(np.abs(got - want).max())
         if not drift < 1e-3:                        # ~2e-4 in probability; NaN fails too
             raise RuntimeError(f"the ONNX export disagrees with the trained net: max |dlogit| "
                                f"{drift:.2e}")
+        p_hi, p_lo = (float(t) for t in thresholds(lambda crops: score_graph(graph, crops)))
+        meta = {"version": version, "p_hi": p_hi, "p_lo": p_lo,
+                "crop_h": CROP_H, "crop_w": CROP_W, "pad_x": PAD_X, "pad_y": PAD_Y}
+        if training is not None:
+            meta["training"] = training
+        _check_thresholds(meta)
+        if round(p_hi, 3) != p_hi or round(p_lo, 3) != p_lo:
+            raise ValueError(f"p_hi {p_hi!r} and p_lo {p_lo!r} must be rounded to 3 decimals, as "
+                             f"the detector rounds the scores it compares with them (see "
+                             f"as_called)")
+        text = json.dumps(meta, indent=2, allow_nan=False)
+        old = meta_path.read_bytes() if meta_path.exists() else None
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    meta = {"version": version, "p_hi": round(float(p_hi), 4), "p_lo": round(float(p_lo), 4),
-            "crop_h": CROP_H, "crop_w": CROP_W, "pad_x": PAD_X, "pad_y": PAD_Y}
-    if training is not None:
-        meta["training"] = training
-    meta_path.unlink(missing_ok=True)               # the new graph never sits beside an old meta
-    tmp.replace(onnx_path)
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8", newline="\n")
+    try:
+        meta_path.unlink(missing_ok=True)           # the new graph never sits beside an old meta
+        tmp.replace(onnx_path)
+    except BaseException:
+        if old is not None and tmp.exists() and not meta_path.exists():
+            meta_path.write_bytes(old)              # the replace failed: the old pair stands
+        tmp.unlink(missing_ok=True)
+        raise
+    meta_path.write_text(text, encoding="utf-8", newline="\n")
     return onnx_path, meta
 
 
@@ -291,10 +358,13 @@ def main(argv=None):
     ap.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate")
     ap.add_argument("--seed", type=int, default=0, help="seeds the train/val split and torch")
     ap.add_argument("--alpha", type=float, default=0.05,
-                    help="conformal miss rate for p_hi: a >= 1-alpha recall floor on crops like "
-                         "the validation set")
+                    help="p_hi's miss rate: on average, at most alpha of struck crops like the "
+                         "validation ones score below p_hi; p_lo mirrors p_hi on the clean crops, "
+                         "capped at p_hi, and promises no rate")
     ap.add_argument("--version", default="retrained", help="version string stamped into the meta")
     args = ap.parse_args(argv)
+    if not 0.0 < args.alpha < 1.0:
+        ap.error(f"--alpha must be between 0 and 1, not {args.alpha}")
     missing = [m for m in ("torch", "onnx") if importlib.util.find_spec(m) is None]
     if missing:                                     # now, not after the epochs: export needs both
         sys.exit(f"training needs {' and '.join(missing)}: pip install {' '.join(missing)}")
@@ -320,25 +390,38 @@ def main(argv=None):
           f"{len(tr_idx) - int(y[tr_idx].sum())} clean)")
     hparams = {"epochs": args.epochs, "val_frac": args.val_frac, "batch": args.batch,
                "lr": args.lr, "seed": args.seed}
-    net, val_probs, val_y = train(x, y, groups=groups, **hparams)
+    net = train(x, y, groups=groups, **hparams)
 
-    # p_hi: split-conformal threshold on validation struck-word probabilities (a 1-alpha recall
-    # floor on crops like them). p_lo: the precision-oriented clean boundary, mirrored below.
-    struck_probs, clean_probs = val_probs[val_y > 0.5], val_probs[val_y <= 0.5]
-    p_hi = calibration.conformal_threshold(struck_probs, alpha=args.alpha)
-    p_lo = float(np.quantile(clean_probs, 1 - args.alpha))
-    p_lo = min(p_lo, p_hi)                          # keep the 'unsure' band well-formed
-    print(f"calibrated thresholds: p_hi={p_hi:.3f}, p_lo={p_lo:.3f} (alpha={args.alpha})")
+    def thresholds(score):
+        # p_hi: the split-conformal threshold on the validation strikes; p_lo: its mirror on the
+        # clean crops. Both from the exported graph's scores, as the detector reads them.
+        p, val_y = score(x[val_idx]), y[val_idx]
+        p_hi, p_lo = conformal_pair(p[val_y > 0.5], p[val_y <= 0.5], args.alpha)
+        print(f"calibrated thresholds: p_hi={p_hi:.3f}, p_lo={p_lo:.3f} (alpha={args.alpha})")
+        if p_lo == p_hi:
+            clean = as_called(p[val_y <= 0.5])
+            k = int(np.floor(args.alpha * (len(clean) + 1)))   # conformal_pair's clean k
+            if k < 1:
+                why = (f"--alpha {args.alpha} needs {fewest(args.alpha)} clean validation crops "
+                       f"for p_lo to sit below p_hi and the validation split holds {len(clean)} "
+                       f"(label more clean crops, or raise --val-frac or --alpha)")
+            else:
+                why = (f"at --alpha {args.alpha}, {k} or more clean validation crops at or above "
+                       f"p_hi is too many for p_lo to sit below p_hi")
+            print(f"note: p_lo equals p_hi, so the model calls no word unsure: {why}. Clean "
+                  f"validation crops at or above p_hi, so called struck: "
+                  f"{int((clean >= p_hi).sum())} of {len(clean)}")
+        return p_hi, p_lo
 
     import torch
     groups_digest = hashlib.sha256("".join(f"{g}\n" for g in groups).encode("utf-8")).hexdigest()
     training = {"dataset_sha256": digest, "n_struck": int(y.sum()),
-                "n_clean": int((1 - y).sum()), "n_val": len(val_y), "split_by": split_by,
+                "n_clean": int((1 - y).sum()), "n_val": len(val_idx), "split_by": split_by,
                 "n_groups": n_groups, "n_val_groups": n_val_groups,
                 "groups_sha256": groups_digest, **hparams,
                 "alpha": args.alpha, "package_version": pdf_strikethrough.__version__,
                 "numpy_version": np.__version__, "torch_version": torch.__version__}
-    onnx_path, meta = export(net, args.out, p_hi=p_hi, p_lo=p_lo, version=args.version,
+    onnx_path, meta = export(net, args.out, thresholds=thresholds, version=args.version,
                              training=training)
     print(f"exported {onnx_path} + meta.json: {meta}")
 
