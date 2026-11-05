@@ -18,6 +18,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from pdf_strikethrough import cnn
+
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "training" / "train_strikenet.py"
 if not SCRIPT.is_file():
     pytest.skip("running against an installed package, not a source checkout",
@@ -232,7 +234,7 @@ def test_split_shortfall_says_what_a_grouped_split_can_still_try():
     few = np.array([1.0] * 10 + [0.0] * 300, dtype=np.float32)        # each crop its own group:
     for groups in (None, list(range(310))):                             # the crop split's advice
         assert train_strikenet.split_shortfall(few, 0.2, 0, 0.05, groups).endswith(
-            "(label more crops, or adjust --val-frac or raise --alpha)")
+            "(label more crops, or adjust --val-frac)")
 
 
 def test_split_shortfall_says_when_no_seed_can_help():
@@ -241,12 +243,12 @@ def test_split_shortfall_says_when_no_seed_can_help():
     for seed in range(20):
         got = train_strikenet.split_shortfall(nine, 0.2, seed, 0.05, pages)
         assert "1 of the 9 groups" in got and "keeps at most 12 struck crops" in got
-        assert "no seed can help: label crops from more pages, raise --val-frac, or raise" in got
+        assert got.endswith("no seed can help: label crops from more pages or raise --val-frac")
     two = np.array([1.0] * 30 + [0.0] * 200, dtype=np.float32)           # 2 pages of 15 struck:
     pages = [i // 15 for i in range(30)] + [2 + i // 10 for i in range(200)]   # one must train
     got = train_strikenet.split_shortfall(two, 0.2, 0, 0.05, pages)
     assert "4 of the 22 groups" in got and "keeps at most 15 struck crops" in got
-    assert "more pages, or raise --alpha" in got                       # more groups can't help
+    assert got.endswith("no seed can help: label crops from more pages")  # more groups can't help
     edge = np.array([1.0] * 19 + [0.0] * 5 + [1.0] + [0.0] * 85, dtype=np.float32)
     pages = [0] * 24 + [1] * 6 + [2 + i // 10 for i in range(80)]      # at most exactly 19
     got = [train_strikenet.split_shortfall(edge, 0.2, s, 0.05, pages) for s in range(40)]
@@ -281,8 +283,12 @@ def test_train_holds_out_the_groups_it_is_given(monkeypatch):
 
 
 def _stub_training(monkeypatch, seen):
-    """main() up to the export, without torch: train() keeps the groups it was asked to split by,
-    and export() keeps what main() hands it."""
+    """main() up to the export, without torch: the reference model calls every crop struck,
+    train() keeps the groups it was asked to split by, and export() keeps what main() hands it."""
+    monkeypatch.setattr(cnn, "get_model_meta",
+                        lambda: {"version": "ref", "sha256": "0" * 64, "p_hi": 0.85, "p_lo": 0.15})
+    monkeypatch.setattr(cnn, "score_crops", lambda crops, batch_size=512: np.full(len(crops), 0.9))
+
     def train(x, y, *, groups=None, **hparams):
         seen["groups"] = groups
         return None
