@@ -263,29 +263,29 @@ def test_train_holds_out_the_groups_it_is_given(monkeypatch):
         pass
     handed = []
 
-    def from_numpy(a):                       # train() hands torch x[tr], y[tr], then x[val]
+    def from_numpy(a):                       # train() hands torch x[tr], then y[tr]
         handed.append(a)
-        if len(handed) == 3:
+        if len(handed) == 2:
             raise Stop
         return a
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
         manual_seed=lambda s: None, from_numpy=from_numpy, nn=None))
     groups = [i // 4 for i in range(40)]
     x = np.repeat(np.arange(40, dtype=np.float32), 4).reshape(40, 2, 2)   # crop i is all i
+    y = (np.arange(40) % 3 == 0).astype(np.float32)
     with pytest.raises(Stop):
-        train_strikenet.train(x, np.zeros(40, np.float32), groups=groups, val_frac=0.25, seed=7)
+        train_strikenet.train(x, y, groups=groups, val_frac=0.25, seed=7)
     val, tr = train_strikenet.split(40, 0.25, 7, groups)
-    assert handed[0][:, 0, 0, 0].tolist() == tr.tolist()
-    assert handed[2][:, 0, 0, 0].tolist() == val.tolist()
+    assert handed[0][:, 0, 0, 0].tolist() == tr.tolist()             # the training groups' crops
+    assert handed[1].tolist() == y[tr].tolist() and not set(val) & set(tr)
 
 
 def _stub_training(monkeypatch, seen):
-    """main() up to the export, without torch: train() returns made-up validation scores on the
-    split it was asked for, and export() keeps what main() hands it."""
+    """main() up to the export, without torch: train() keeps the groups it was asked to split by,
+    and export() keeps what main() hands it."""
     def train(x, y, *, groups=None, **hparams):
         seen["groups"] = groups
-        val, _ = train_strikenet.split(len(y), hparams["val_frac"], hparams["seed"], groups)
-        return None, np.linspace(0.0, 1.0, len(val)), y[val]
+        return None
 
     def export(net, out, **kw):
         seen.update(kw)
