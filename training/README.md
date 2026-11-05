@@ -36,17 +36,41 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
 - **Thresholds are calibrated, not guessed.** `p_hi` is a split-conformal threshold on held-out
   struck-word probabilities (`--alpha` sets the recall floor, `1 - alpha`); `p_lo`
   mirrors it on the clean class. See `pdf_strikethrough.calibration`. The floor holds for new crops
-  exchangeable with the validation crops. The split is random over crops, not documents, so the
-  validation crops come from documents the model also trained on; on any document outside the
-  labeled set, recall can fall below the floor. Before it trains, the script stops if the
-  validation split holds fewer struck crops than `--alpha` needs (19 at the default 0.05) or no
-  clean ones, or leaves nothing to train on.
+  exchangeable with the validation crops. The validation crops come from groups the model did not
+  train on (next note), so for a dump, whose rows carry the page, the thresholds are set on pages
+  the model has not seen. Still, a new page's crops are generally not exchangeable with them,
+  because crops of one page tend to look alike. So struck crops from few held-out pages count for
+  less than their number suggests: with few such pages, recall on new pages can fall below the
+  floor, and on new documents more so. Before it trains, the script stops if the validation split
+  holds fewer struck crops than `--alpha` needs (19 at the default 0.05) or no clean ones, or if
+  the training split has no struck crop or no clean crop.
+- **The split holds out whole groups.** A row's group is its `group` field if set, else its
+  `page` within its crop's folder, else the row alone. A `group` can be any JSON value, such as a
+  document name or a writer's ID; null, NaN, blank text, `[]` and `{}` count as not set.
+  `dump_crops` rows carry the page, so a dump splits by page. The script holds out
+  `max(1, int(G * --val-frac))` of the G groups, drawn with `--seed`, and prints the split before
+  training. Since `--val-frac` is a share of groups, the share of crops held out varies with the
+  groups' sizes. A one-page dump is a single group, so holding it out leaves nothing to train on:
+  label crops from more pages, or give each row a `group` of its own, such as its line number, to
+  split by crop, which can put crops of one page on both sides. A page where some rows have a
+  `group` and others do not can land on both sides too; the script prints a note.
+- **Several dumps.** To train on several dumps, put each dump's crops in a folder of its own in
+  one directory, such as `a/crops/` and `b/crops/`, and concatenate their `crops.jsonl` rows into
+  one, with each `crop` path prefixed to match (`a/crops/p0003_00012.png`). A page is told apart
+  by its crop's folder, so page 3 of one dump and page 3 of another stay separate groups. If two
+  dumps cover the same pages, give each row a `group` naming its document and page, such as
+  `["scan.pdf", 3]`, so a page dumped twice stays on one side.
 - **The model records what it was trained on.** The exported meta carries a `training` block: the
   sha256 of the labeled set (one `"<crop sha256> <label>"` line per labeled row in `crops.jsonl`
   order, so it changes with any crop file, label or row order, but not with file names), the
-  struck/clean counts, the validation size, the hyperparameters (`--epochs`, `--val-frac`,
-  `--batch`, `--lr`, `--seed`, `--alpha`) and the package and torch versions.
-  `pdf_strikethrough.cnn.get_model_meta()` returns it with the rest.
+  struck/clean counts, the validation size, how the split grouped the rows, the hyperparameters
+  (`--epochs`, `--val-frac`, `--batch`, `--lr`, `--seed`, `--alpha`) and the package, numpy and
+  torch versions. The grouping is `split_by` (how many rows took their group from `group`, from
+  their page, or stood alone, as `row`), `n_groups`, `n_val_groups` (how many groups are held out)
+  and `groups_sha256` (the sha256 of one line per labeled row with its group's number, groups
+  numbered in order of first appearance). The numpy version is there because numpy draws the
+  split, and its random stream can change between versions. `pdf_strikethrough.cnn.get_model_meta()`
+  returns it with the rest.
 - **A failed export changes nothing.** The ONNX goes to a temporary file and replaces the output
   directory's model only once ONNX Runtime scores it like the trained net.
 - **Dev-only dependencies.** Training needs `torch`, and exporting needs `onnx`, which torch's ONNX
