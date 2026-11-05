@@ -94,9 +94,10 @@ the first release's code calls them guardrails, nothing more.
 **Training a replacement.** `training/train_strikenet.py` trains StrikeNet on a labeled crop set the
 detector exports, sets `p_hi` / `p_lo` from held-out data, and records in the meta, under
 `training`, what the model was trained on: a digest of the labeled crops and their labels, the class
-counts, the validation size, the hyperparameters (the seed that draws the split among them) and the
-package and torch versions. The digest identifies the labeled set but cannot restore it, so keep
-the labeled directory. The failing-page → better-model loop is one command per step:
+counts, the validation size, how the split grouped the crops, the hyperparameters (the seed that
+draws the split among them) and the package, numpy and torch versions. The digest identifies the
+labeled set but cannot restore it, so keep the labeled directory. The failing-page → better-model
+loop is one command per step:
 
 ```bash
 pdf-strikethrough detect scan.pdf --ocr rapidocr --dump-crops crops_out/   # export scored crops
