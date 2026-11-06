@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 
+from . import cnn
 from .detect import RENDER_DPI, detect_image_file, detect_pdf
 
 # Fields copied from each scored record into its manifest row (present-if-set).
@@ -28,11 +29,19 @@ _CROP_EVIDENCE = ("page", "text", "chars", "tier", "verdict", "final", "partial"
 
 def _save_crop_png(std, path):
     """Write a standardized crop (CROP_H x CROP_W float32, ink-positive in [0, 1]) as a normal
-    dark-ink-on-white PNG a human can read."""
+    dark-ink-on-white PNG a human can read, each pixel rounded to the nearest grey level, so a
+    crop :func:`cnn.std_crop` made comes back from the PNG exactly."""
     import numpy as np
     from PIL import Image
     arr = np.clip(1.0 - np.asarray(std, dtype="float32"), 0.0, 1.0)
-    Image.fromarray((arr * 255.0).astype("uint8")).save(path)
+    Image.fromarray(np.rint(arr * 255.0).astype("uint8")).save(path)
+
+
+def _std_crop_settings():
+    """The settings :func:`cnn.std_crop` makes a crop with now, as a dump row records them (a
+    numpy scalar setting as the number it holds, which JSON can write)."""
+    made = {"paper_white_from": cnn.PAPER_WHITE_FROM, "shade_white_frac": cnn.SHADE_WHITE_FRAC}
+    return {k: v.item() if hasattr(v, "item") else v for k, v in made.items()}
 
 
 def dump_crops(source, out_dir, *, ocr=None, scan_config=None, dpi=None, di_result=None,
@@ -41,14 +50,18 @@ def dump_crops(source, out_dir, *, ocr=None, scan_config=None, dpi=None, di_resu
 
     Writes ``out_dir/crops/*.png`` (one standardized CNN input per scored word) and
     ``out_dir/crops.jsonl`` (one row per crop: the crop filename, the model's verdict, the
-    geometry evidence, and a ``label`` field left null for you to fill). Returns a summary dict
-    ``{out_dir, manifest, n_crops, source}``.
+    geometry evidence, a ``label`` field left null for you to fill, and ``std_crop``, the
+    ``paper_white_from`` and ``shade_white_frac`` the crop was made with, so training takes it as
+    dumped). Returns a summary dict ``{out_dir, manifest, n_crops, source}``. A dump replaces the
+    ``crops.jsonl`` in `out_dir`, labels included, and writes over any crop PNG of the same name:
+    to keep a labeled dump, dump into a new directory.
 
     `image=True` treats `source` as a raster image file (routes through
     :func:`detect_image_file`); otherwise it is a PDF (:func:`detect_pdf`). `tiers` narrows which
     scored tiers are exported (default: the CNN-adjudicated 'auto' and 'review'; None = all scored).
     The remaining arguments mirror :func:`detect_pdf`.
     """
+    made = _std_crop_settings()
     sink: list = []
     if image:
         res = detect_image_file(source, ocr=ocr, words_by_page=words_by_page,
@@ -70,7 +83,7 @@ def dump_crops(source, out_dir, *, ocr=None, scan_config=None, dpi=None, di_resu
             fname = f"crops/p{int(rec.get('page', 0)):04d}_{i:05d}.png"
             _save_crop_png(std, os.path.join(out_dir, fname))
             row = {"crop": fname, "label": None,
-                   **{k: rec[k] for k in _CROP_EVIDENCE if k in rec}}
+                   **{k: rec[k] for k in _CROP_EVIDENCE if k in rec}, "std_crop": made}
             json.dump(row, f, default=list, ensure_ascii=False)
             f.write("\n")
             n += 1

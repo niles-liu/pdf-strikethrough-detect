@@ -97,8 +97,8 @@ the first release's code calls them guardrails, nothing more.
 detector exports, sets `p_hi` / `p_lo` from held-out data, and records in the meta, under
 `training`, what the model was trained on: a digest of the labeled crops and their labels, the class
 counts, the validation size, how the split grouped the crops, the hyperparameters (the seed that
-draws the split among them), the package, numpy and torch versions, and `std_crop`'s grey-paper
-settings when the script ran. The digest identifies the labeled set but cannot restore it, so
+draws the split among them), the package, numpy and torch versions, and the `std_crop` settings
+the labeled crops were made with. The digest identifies the labeled set but cannot restore it, so
 keep the labeled directory. The failing-page → better-model loop is one command per step:
 
 ```bash

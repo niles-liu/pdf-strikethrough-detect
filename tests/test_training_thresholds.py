@@ -663,7 +663,7 @@ def test_main_lists_every_source_with_strikes_and_only_those(tmp_path, monkeypat
     seen = _main(tmp_path, monkeypatch, CAUGHT, lambda n: ref)
     out = capsys.readouterr().out
     assert ("note: the rows without a source have struck crops only in the training split" in out
-            and "blank" not in out)
+            and "blank" not in out.replace(str(tmp_path), ""))   # the out dir is under it
     assert ('  source "hand": 2 struck validation crops from 1 group(s), 0 called struck by the '
             'reference: no bound\n') in out
     assert "  rows without a source: no struck validation crops, so no bound\n" in out

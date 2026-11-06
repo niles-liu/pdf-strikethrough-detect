@@ -3,8 +3,9 @@
 The shipped ``strike_verdict_cnn.onnx`` predates this script and was not trained by it (see
 ``training/MODEL_CARD.md#provenance-and-training``). A model this script trains records what it
 was trained on in its meta (``training``: a digest of the labeled crops, the class counts, the
-validation size, the hyperparameters, how the split grouped the crops and ``std_crop``'s grey-paper
-settings), and the loop from failing pages back to a better model is one command each step:
+validation size, the hyperparameters, how the split grouped the crops and the ``std_crop``
+settings the crops were made with), and the loop from failing pages back to a better model is one
+command each step:
 
     pdf-strikethrough detect scan.pdf --ocr rapidocr --dump-crops crops_out/   # 1. export crops
     # 2. label: edit crops_out/crops.jsonl, set each row's "label" to "struck" or "clean"
@@ -14,12 +15,16 @@ settings), and the loop from failing pages back to a better model is one command
 The dataset directory is a :func:`pdf_strikethrough.active.dump_crops` output: a ``crops.jsonl``
 whose rows carry a ``crop`` path (relative to the directory) and a filled-in ``label``, and may
 carry a ``group``, whose crops the split keeps on the same side (:func:`group_key`), and a
-``source``, the kind of crop p_hi is matched in (:func:`sources_of`). The crop PNGs are
-re-standardized here through the exact same ``std_crop`` the detector uses at inference, so
-training and inference crops share their geometry. A dump holds each crop as standardized by the
-release that dumped it, so dump scans again with the release you train with (releases after
-0.14.0 take paper at 240 to 254 to white). The new model's p_hi and p_lo are matched, on
-the validation crops, to the calls of the model the package loads (:func:`matched_pair`).
+``source``, the kind of crop p_hi is matched in (:func:`sources_of`). A crop whose row records the
+``std_crop`` settings it was made with, as dump_crops does in releases after 0.14.0, trains as
+dumped: as the detector scored it. Any other crop is standardized here through the same
+``std_crop`` the detector uses at inference, so training and inference crops share their geometry.
+A crop dumped by 0.14.0 or earlier can then differ from the crop the detector scores (0.14.0 left
+paper at 240 to 254 as a faint grey ground): dump such scans again, into a new directory, since a
+dump replaces the ``crops.jsonl`` it writes to, labels included. The meta records the settings the
+crops were made with, so crops made with different settings stop the script. The new model's p_hi
+and p_lo are matched, on the validation crops, to the calls of the model the package loads
+(:func:`matched_pair`).
 Requires ``torch`` and ``onnx``, which torch's ONNX exporter imports (dev only: the package runs
 on ONNX Runtime alone).
 
@@ -33,6 +38,7 @@ import importlib.util
 import inspect
 import io
 import json
+import math
 import pathlib
 import posixpath
 import sys
@@ -40,62 +46,169 @@ import sys
 import numpy as np
 
 import pdf_strikethrough
-from pdf_strikethrough import calibration, cnn
+from pdf_strikethrough import active, calibration, cnn
 from pdf_strikethrough.cnn import CROP_H, CROP_W, PAD_X, PAD_Y, std_crop
 
 LABELS = {"struck": 1.0, "clean": 0.0}
 
 
 def _rows(dataset_dir):
-    """Each row of a dump_crops directory's crops.jsonl with its label, lowercased and stripped
-    ("" when it has none), in manifest order."""
+    """Each row of a dump_crops directory's crops.jsonl with its line number and its label
+    (:func:`_label`), in manifest order. A line it cannot read stops the script, naming it."""
     dataset_dir = pathlib.Path(dataset_dir)
     manifest = dataset_dir / "crops.jsonl"
     if not manifest.exists():
         sys.exit(f"no crops.jsonl in {dataset_dir} (point at a `dump_crops` output directory)")
-    for line in manifest.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+    data = manifest.read_bytes()        # at once: a save during the load cannot mix two versions
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):      # UTF-16: PowerShell 5.1's > and Out-File
+        try:
+            data = data.decode("utf-16").encode("utf-8")
+        except UnicodeDecodeError as e:
+            sys.exit(f"{manifest}: not UTF-16 text after its byte-order mark ({e.reason}): save "
+                     f"the file as UTF-8")
+    # The file's own lines: bytes.splitlines() breaks at \n, \r\n and \r only, where
+    # str.splitlines() also breaks at a U+2028 that dump_crops leaves unescaped in OCR text
+    for n, raw in enumerate(data.splitlines(), 1):
+        try:    # utf-8-sig drops a byte-order mark (PowerShell 5.1's -Encoding UTF8 writes
+            line = raw.decode("utf-8-sig")      # one; a merged manifest has one per file)
+        except UnicodeDecodeError:
+            sys.exit(f"{manifest}:{n}: not UTF-8 text: save the file as UTF-8, as dump_crops "
+                     f"writes it (in PowerShell 5.1, Set-Content -Encoding UTF8)")
+        if not line.strip():
             continue
-        row = json.loads(line)
-        yield row, (row.get("label") or "").strip().lower()
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as e:
+            sys.exit(f"{manifest}:{n}: not a JSON row: {e.msg.removesuffix(' at')} at column "
+                     f"{e.colno}")
+        if not isinstance(row, dict):
+            sys.exit(f"{manifest}:{n}: a row is a JSON object, as dump_crops writes, not "
+                     f"{line.strip()[:40]}")
+        yield n, row, _label(row.get("label"))
+
+
+def _label(value):
+    """A row's label: "struck" or "clean" (any case, stripped), "" when it has none
+    (:func:`_given`), and any other value as ASCII JSON text, text stripped and lowercased."""
+    if not _given(value):
+        return ""
+    if isinstance(value, str):
+        value = value.strip().lower()
+        if value in LABELS:
+            return value
+    return json.dumps(value)
 
 
 def load_dataset(dataset_dir):
     """Read a dump_crops directory -> (X: (N, CROP_H, CROP_W) float32, y: (N,) float32, digest).
-    Rows with no/unknown ``label`` are skipped with a count (they still need labeling). `digest` is
-    the sha256 of one ``"<crop sha256> <label>"`` line per labeled row, in manifest order: it
-    changes with any crop file, label or row order, and not with file names or unlabeled rows."""
+    Rows labeled neither struck nor clean are skipped and counted, the unlabeled ones separately
+    (they still need labeling). `digest` is the sha256 of one ``"<crop sha256> <label>"`` line per
+    labeled row, with `` as dumped`` after the label when the crop trains as dumped, in manifest
+    order: it changes with any crop file, label or row order and with whether a crop trains as
+    dumped, and not with file names or unlabeled rows."""
     return _load(dataset_dir)[:3]
 
 
 def _load(dataset_dir):
-    """:func:`load_dataset`'s (X, y, digest), and the labeled rows they came from, in order."""
+    """:func:`load_dataset`'s (X, y, digest), and the labeled rows they came from, in order. A
+    crop whose row records the ``std_crop`` settings it was made with, as dump_crops writes, trains
+    as dumped: its PNG holds the crop the detector scored exactly, each pixel rounded to the
+    nearest grey level. Any other crop is standardized here, through the ``std_crop`` the detector
+    uses at inference, so it is made with this run's settings. Crops made with different settings
+    stop the script, since a model's meta records a single paper_white_from and shade_white_frac
+    (:func:`_made_with`)."""
     from PIL import Image
     dataset_dir = pathlib.Path(dataset_dir)
     manifest = dataset_dir / "crops.jsonl"
-    xs, ys, digest_lines, rows, skipped = [], [], [], [], 0
-    for row, label in _rows(dataset_dir):
+    run = active._std_crop_settings()
+    xs, ys, digest_lines, rows, other_labels, made_with = [], [], [], [], {}, {}
+    unlabeled = standardized = 0
+    for n, row, label in _rows(dataset_dir):
         if label not in LABELS:
-            skipped += 1
+            if label:
+                other_labels[label] = other_labels.get(label, 0) + 1
+            else:
+                unlabeled += 1
             continue
-        data = (dataset_dir / row["crop"]).read_bytes()
-        gray = np.asarray(Image.open(io.BytesIO(data)).convert("L"), dtype=np.uint8)
-        xs.append(std_crop(gray))                 # same preprocessing as inference
+        crop = row.get("crop")
+        if not isinstance(crop, str) or not crop.strip():
+            sys.exit(f"{manifest}:{n}: a labeled row needs a \"crop\": its PNG's path in "
+                     f"{dataset_dir}")
+        try:
+            data = (dataset_dir / crop).read_bytes()
+            gray = np.asarray(Image.open(io.BytesIO(data)).convert("L"), dtype=np.uint8)
+        except OSError as e:                    # missing, a folder, or not an image PIL reads
+            sys.exit(f"{manifest}:{n}: cannot read the crop {crop}: "
+                     f"{e.strerror or 'not an image PIL reads'}")
+        dumped = _given(row.get("std_crop"))
+        if dumped and not _is_settings(row["std_crop"], run):
+            sys.exit(f"{manifest}:{n}: \"std_crop\" is {json.dumps(row['std_crop'])[:60]}, not "
+                     f"the settings dump_crops writes, such as {json.dumps(run)}: restore it, or "
+                     f"remove the key so the script standardizes the crop")
+        if dumped and gray.shape != (CROP_H, CROP_W):
+            sys.exit(f"{manifest}:{n}: {crop} is {gray.shape[1]} x {gray.shape[0]} px, but its "
+                     f"row's \"std_crop\" marks it as a {CROP_W} x {CROP_H} crop dump_crops "
+                     f"wrote: remove the row's \"std_crop\" so the script standardizes the image")
+        if dumped:
+            xs.append(1.0 - gray.astype(np.float32) / 255.0)    # as std_crop makes it
+        else:
+            xs.append(std_crop(gray))             # same preprocessing as inference
+            standardized += 1
+        made = _made_with(row, run)
+        key = tuple(made[k] for k in run)
+        made_with[key] = made_with.get(key, 0) + 1
         ys.append(LABELS[label])
-        digest_lines.append(f"{hashlib.sha256(data).hexdigest()} {label}\n")
+        digest_lines.append(f"{hashlib.sha256(data).hexdigest()} {label}"
+                            f"{' as dumped' * dumped}\n")
         rows.append(row)
+    if unlabeled:
+        print(f"note: skipped {unlabeled} unlabeled row(s)")
+    if other_labels:
+        shown = [s if len(s) <= 40 else s[:37] + "..." for s in other_labels]
+        print(f"note: skipped {sum(other_labels.values())} row(s) labeled neither struck nor "
+              f"clean: {', '.join(shown[:5])}{', ...' * (len(shown) > 5)}")
     if not xs:
         sys.exit(f"no labeled rows in {manifest} (set each row's \"label\" to struck/clean first)")
-    if skipped:
-        print(f"note: skipped {skipped} unlabeled row(s)")
+    if standardized:
+        print(f"note: {standardized} row(s) carry no std_crop settings, so the script "
+              f"standardized their crops. A crop dumped by 0.14.0 or earlier can then differ from "
+              f"the crop the detector scores: dump such scans again, into a new directory "
+              f"(training/README.md)")
+    if len(made_with) > 1:
+        sys.exit(f"{manifest}: the labeled crops were made with different std_crop settings, and "
+                 f"a model's meta records a single paper_white_from and shade_white_frac: "
+                 + "; ".join(f"{c} row(s) with {json.dumps(dict(zip(run, k)))}"
+                             for k, c in made_with.items())
+                 + " (a row without settings counts as made with this run's). Dump the scans "
+                 "again, all with the same settings, into a new directory")
+    if next(iter(made_with)) != tuple(run.values()):
+        theirs = json.dumps(dict(zip(run, next(iter(made_with)))))
+        print(f"note: {len(rows)} row(s) were dumped with std_crop settings {theirs}, not this "
+              f"run's {json.dumps(run)}: they train as dumped, and the meta records theirs. "
+              f"Detect with them to score words as the model was trained (training/README.md)")
     digest = hashlib.sha256("".join(digest_lines).encode("utf-8")).hexdigest()
     return np.stack(xs).astype(np.float32), np.asarray(ys, dtype=np.float32), digest, rows
 
 
+def _is_settings(value, run):
+    """Whether a row's ``std_crop`` is the settings object dump_crops writes: a finite number for
+    each key of `run`, this run's settings, and no other key."""
+    return (isinstance(value, dict) and sorted(value) == sorted(run)
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                    and -math.inf < v < math.inf for v in value.values()))
+
+
+def _made_with(row, run):
+    """The ``std_crop`` settings a labeled row's crop was made with, which the meta records: those
+    the row records (the crop trains as dumped), else `run`, this run's (the crop is standardized
+    here)."""
+    return row["std_crop"] if _given(row.get("std_crop")) else run
+
+
 def _given(value):
-    """Whether a row's group, page or source holds a value: null, NaN, blank text, [] and {} count
-    as no value (an empty spreadsheet cell exports as one of them), while 0 and false are values."""
+    """Whether a row's value (its group, page, source, label or std_crop) is given: null, NaN,
+    blank text, [] and {} count as no value (an empty spreadsheet cell exports as one of them),
+    while 0 and false are values."""
     if value is None or (isinstance(value, float) and value != value):
         return False
     if isinstance(value, str):
@@ -475,6 +588,7 @@ def main(argv=None):
         sys.exit(f"training needs {' and '.join(missing)}: pip install {' '.join(missing)}")
 
     x, y, digest, rows = _load(args.dataset_dir)
+    made = _made_with(rows[0], active._std_crop_settings())    # the same for every row (_load)
     groups, split_by, mixed = groups_of(rows)
     sources = sources_of(rows)
     n_groups = len(set(groups.tolist()))
@@ -584,7 +698,8 @@ def main(argv=None):
                 "groups_sha256": groups_digest, **hparams,
                 "alpha": args.alpha, "package_version": pdf_strikethrough.__version__,
                 "numpy_version": np.__version__, "torch_version": torch.__version__,
-                "paper_white_from": cnn.PAPER_WHITE_FROM, "shade_white_frac": cnn.SHADE_WHITE_FRAC}
+                "paper_white_from": made["paper_white_from"],
+                "shade_white_frac": made["shade_white_frac"]}
     onnx_path, meta = export(net, args.out, thresholds=thresholds, version=args.version,
                              training=training)
     print(f"exported {onnx_path} + meta.json: {meta}")
