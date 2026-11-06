@@ -6,6 +6,88 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Detection output changes on scans in two cases, both under Changed: words on light grey paper
+(paper at 240 to 254 of 255), and colour images (image files other than greyscale, and RGB(A)
+arrays), even on white paper. Every other change is to `training/train_strikenet.py`, to the
+files `dump_crops` writes, or to docs.
+
+### Changed
+- **Scans on light grey paper:** StrikeNet's scores, and the scanned path's verdicts with them,
+  change for words on paper at 240 to 254 of 255: light grey or light-coloured paper, or paper
+  under a light highlighter. `cnn.std_crop` now takes such paper to white, as it already took a
+  shaded ground below 240; a PDF or greyscale image with no word on such paper gives the same
+  output. On the faint grey ground 0.14.0 left, the shipped model calls live words struck from
+  240 to about 245 and misses strikes from about 245. On 472 pages of printed text rendered with
+  their paper greyed to 240, 245 or 250, it now finds about as many struck words, and marks about
+  as many live ones, as on white paper; no scan of a printed page was measured. On 218 pages of
+  the training split and 103 of the validation split of BRESSAY (a public dataset of
+  handwriting), where most words sit on such paper, the shipped model now marks 7.4% and 4.6%
+  more live words and finds 3 and 1 more struck words with RapidOCR words. With Azure DI words it
+  marks 14 live words against 9 on 20 of the training pages and 31% more on 50 of the validation
+  pages, and finds no more struck words. `cnn.PAPER_WHITE_FROM = 240` restores 0.14.0. (#107)
+- **Colour images:** an image file other than greyscale (colour, palette, bilevel or with alpha),
+  or an RGB(A) array given to `detect_scanned_image`, `analyze_scanned_page` or `score_word`, has
+  its white paper read as 254, as before. Such paper is now taken to white too, so the output
+  comes closer to the same image's in greyscale: read as colour images, 431 of the 472 pages on
+  white paper give the same output as in greyscale, against 328 with 0.14.0. (#107)
+- **Retraining:** crops dumped with 0.14.0 keep the faint grey ground of paper at 240 to 254, so
+  dump scans again before training, into a new directory: a dump replaces the `crops.jsonl` it
+  writes to, labels included. A model you trained on 0.14.0 dumps saw that ground, and the loader
+  does not check the `std_crop` settings a meta records: use such a model with
+  `cnn.PAPER_WHITE_FROM = 240`, or train a new one on a new dump. (#107, #108)
+- `training/train_strikenet.py` matches a retrained model's thresholds to the model the package
+  loads (the shipped model, unless `PDF_STRIKETHROUGH_MODEL_DIR` or `cnn.set_model_dir` points
+  at another): `p_hi` is the highest threshold at which the new model calls at least as many
+  struck validation crops struck as that model does at its own `p_hi`, in each `source` that rows
+  name (a new, optional column); `p_lo` is the lowest at which it calls at least as many clean
+  ones clean, capped at `p_hi`. The split-conformal pair (`--alpha`) no longer sets the
+  thresholds: the meta's `training.calibration` reports it, with how the thresholds were set. The
+  script stops before training if that model does not load, gives a validation crop no finite
+  score or calls none of the struck validation crops struck, and the validation split needs at
+  least 19 struck crops at any `--alpha` (more below 0.05). (#106)
+- `export()` in `training/train_strikenet.py` takes a `thresholds` callback instead of `p_hi=`
+  and `p_lo=`, refuses thresholds the loader would refuse or that are not rounded to 3 decimals,
+  and keeps the old model when replacing it fails. (#105)
+
+### Fixed
+- `training/train_strikenet.py` held out random crops, so a page's crops fell on both sides of the
+  split and the thresholds came from pages the model had trained on. It now holds out whole pages,
+  or whole groups that rows name in a `group` column, so the same dump and seed hold out other
+  crops than 0.14.0 did; a dataset with neither splits as before. It stops before training when
+  the training split would lack a struck or a clean crop, or when no split by group can both train
+  and calibrate (a one-page dump, say). It prints the split and records in the meta how it
+  grouped the rows and the numpy version. (#104)
+- `training/train_strikenet.py` set `p_hi` on torch's validation probabilities and wrote it
+  rounded to 4 decimals, while the detector compares the exported model's score rounded to 3, so
+  a validation strike near `p_hi` could be dropped. Both thresholds are now set on the exported
+  model's scores as the detector reads them and written as they are. The split-conformal `p_lo`
+  the meta reports is the finite-sample-corrected mirror of its `p_hi`, and the script no longer
+  accepts a validation split whose split-conformal `p_hi` would be 0.0, as it did at an alpha
+  such as 1/161. (#105)
+- `dump_crops` wrote each crop PNG up to a grey level darker than the crop StrikeNet scored (it
+  truncated; it now rounds). Each `crops.jsonl` row now records the `std_crop` settings its crop
+  was made with, and `training/train_strikenet.py` trains on such a crop exactly as the detector
+  scored it, rather than standardizing it again. The meta's `paper_white_from` and
+  `shade_white_frac` record the settings the crops were made with (the script's own for a crop it
+  standardizes), and the script stops when the labeled crops were made with different settings.
+  A crop whose row records no settings is standardized as before, so a dump by 0.14.0 or earlier
+  still trains, with a note to dump its scans again. The dataset digest marks each crop that
+  trains as dumped. (#108)
+- `training/train_strikenet.py` crashed on a `crops.jsonl` that starts with a byte-order mark
+  (PowerShell 5.1 writes one with `-Encoding UTF8`), on a U+2028 in OCR text (`dump_crops` writes
+  it unescaped) and on a label such as `1`, `true` or NaN. It now reads them, and reads UTF-16 too
+  (as PowerShell 5.1's `>` and `Out-File` write it). A NaN label counts as none, and a label other
+  than struck or clean, such as `1`, is skipped and named in a note of its own, apart from the
+  unlabeled count. It stops, naming the line, on a row it cannot read, a crop PNG it cannot open
+  or other text that is not UTF-8. (#108)
+- The docstrings of `calibration` and `calibration.conformal_threshold` no longer call a
+  calibrated threshold's recall a guarantee: the conformal bound holds on average over calibration
+  sets, for struck words exchangeable with the calibration words, and words from another writer,
+  scanner or kind of document can fall short of it. `cnn.std_crop`'s docstring now says that a
+  crop more than about 5 times as wide as it is tall loses its ends, so a strike on only one end
+  of a long word can be cut off, and that an integer crop of a type wider than 8 bits is scaled
+  so that the type's maximum is white: pass 0 to 255 values as `uint8`. (#109)
+
 ## [0.14.0] - 2026-11-02
 
 Minor, not patch: it adds public API (`InvalidPdfError`, `LimitExceededError`, `page_words=` with
