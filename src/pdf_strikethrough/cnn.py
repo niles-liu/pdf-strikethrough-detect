@@ -215,9 +215,13 @@ def word_crop_px(gray, bbox_frac, pad_x=PAD_X, pad_y=PAD_Y):
 
 
 def std_crop(crop):
-    """Raw grey crop (0=black..255=white; [0,1] floats are rescaled, values clipped — no mod-256
-    wraparound) -> (CROP_H, CROP_W) float32, ink-positive, height-normalized isotropically;
-    width center-cropped/padded (a strike spans the word, so any window still shows it).
+    """Raw grey crop (0=black..255=white) -> (CROP_H, CROP_W) float32, ink-positive,
+    height-normalized isotropically; width center-cropped or padded. [0,1] floats are rescaled,
+    and values are clipped to 0-255, with no mod-256 wraparound. An integer crop of a type wider
+    than 8 bits is scaled so that the type's maximum is white and 0 is black, so pass 0-255
+    values as uint8: in a wider type they read as nearly solid ink. A crop more than about
+    CROP_W / CROP_H (5) times as wide as it is tall loses its ends, so a strike on only one end of
+    a long word can be cut off.
     The paper (the commonest pixel of 128 and up) is taken to white first when it is below
     PAPER_WHITE_FROM: below 240 with the white point at SHADE_WHITE_FRAC of the paper, from 240 up
     at the paper itself; paper at or above PAPER_WHITE_FROM is untouched. White read through

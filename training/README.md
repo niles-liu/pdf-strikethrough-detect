@@ -25,7 +25,7 @@ PDF_STRIKETHROUGH_MODEL_DIR=model_out/ pdf-strikethrough detect scan.pdf --ocr r
 #    or from a URL with digest verification: pdf_strikethrough.cnn.ensure_model(url, sha256, ...)
 ```
 
-Steps 1–2 are also how a "contribute a failing page" bug report becomes training data.
+Steps 1 and 2 are also how a "contribute a failing page" bug report becomes training data.
 
 ## Notes
 

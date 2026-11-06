@@ -1,4 +1,4 @@
-"""Issue #15 — a word on a shaded or highlighted block must not read as struck.
+"""Issue #15: a word on a shaded or highlighted block must not read as struck.
 
 Three separate causes, one per section below. `std_crop`'s `1 - gray/255` turned a shaded paper
 ground into a uniform ink pedestal across the net input, which the model reads as a wash over the
@@ -23,7 +23,7 @@ def _word_on(ground, h=40, w=120):
 
 
 def _bg_level(std):
-    """The ink-positive level the net sees where the paper is — the pedestal, if any."""
+    """The ink-positive level the net sees where the paper is: the pedestal, if any."""
     return float(np.median(std[:4]))
 
 
