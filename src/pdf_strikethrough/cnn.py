@@ -39,6 +39,13 @@ SHADE_WHITE_FRAC = 0.85           # shaded-crop white point, as a fraction of th
                                   # manufactured shading every value 1.0..0.75 clears the same
                                   # false positives and lower ones only cost recall, so 0.85 is
                                   # the edge of the safe range, not a measured optimum.
+PAPER_WHITE_FROM = 255            # std_crop takes a crop's paper (its commonest pixel of 128 and
+                                  # up) to white when it is below this level: below 240 with the
+                                  # white point at SHADE_WHITE_FRAC of the paper, from 240 up at the
+                                  # paper itself, so near-white paper reaches the net as white
+                                  # paper does. 240 restores 0.14.0, which left paper at 240-254 as
+                                  # a faint grey ground: on it the shipped model called clean words
+                                  # struck near 240 and missed strikes above about 245.
 
 _MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env var
 _META_RECORD = "strike_verdict_cnn.meta.verified.json"  # ensure_model's record: the sha256 of
@@ -208,11 +215,17 @@ def word_crop_px(gray, bbox_frac, pad_x=PAD_X, pad_y=PAD_Y):
 
 
 def std_crop(crop):
-    """Raw grey crop (0=black..255=white; [0,1] floats are rescaled, values clipped — no mod-256
-    wraparound) -> (CROP_H, CROP_W) float32, ink-positive, height-normalized isotropically;
-    width center-cropped/padded (a strike spans the word, so any window still shows it).
-    A shaded ground (a grey highlight block) is flattened back to white first; ordinary paper is
-    untouched."""
+    """Raw grey crop (0=black..255=white) -> (CROP_H, CROP_W) float32, ink-positive,
+    height-normalized isotropically; width center-cropped or padded. [0,1] floats are rescaled,
+    and values are clipped to 0-255, with no mod-256 wraparound. An integer crop of a type wider
+    than 8 bits is scaled so that the type's maximum is white and 0 is black, so pass 0-255
+    values as uint8: in a wider type they read as nearly solid ink. A crop more than about
+    CROP_W / CROP_H (5) times as wide as it is tall loses its ends, so a strike on only one end of
+    a long word can be cut off.
+    The paper (the commonest pixel of 128 and up) is taken to white first when it is below
+    PAPER_WHITE_FROM: below 240 with the white point at SHADE_WHITE_FRAC of the paper, from 240 up
+    at the paper itself; paper at or above PAPER_WHITE_FROM is untouched. White read through
+    lines.to_gray_u8's RGB(A) conversion is 254, so it is taken to 255 too."""
     crop = np.asarray(crop)
     if np.issubdtype(crop.dtype, np.floating):
         if crop.size and float(crop.max()) <= 1.0:
@@ -228,8 +241,8 @@ def std_crop(crop):
     light = crop[crop >= 128]
     if light.size:
         bg = float(np.bincount(light.astype(np.intp), minlength=256).argmax())
-        if 120 <= bg < 240:                     # else ordinary paper, or too dark to be a highlight
-            cut = SHADE_WHITE_FRAC * bg
+        if 120 <= bg < PAPER_WHITE_FROM:        # else paper at or above PAPER_WHITE_FROM
+            cut = SHADE_WHITE_FRAC * bg if bg < 240 else bg
             crop = np.where(crop >= cut, 255.0, crop * (255.0 / cut))
     ch, cw = crop.shape
     nw = max(12, int(round(cw * CROP_H / ch)))

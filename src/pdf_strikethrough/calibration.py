@@ -2,15 +2,18 @@
 
 StrikeNet emits a strike probability in [0, 1]; a deployment turns that into a struck/clean
 decision at a threshold. These helpers pick that threshold *from labeled data* instead of the
-shipped default, so an operating point can be stated as a guarantee ("catch >= 98% of deletions")
-rather than a magic number:
+shipped default, so an operating point can be stated as a measured target ("catch >= 98% of the
+deletions in this labeled set") rather than a magic number. A target met on a labeled set need
+not be met on new words: even words like the labeled ones can fall short of it, and words from
+another writer, scanner or kind of document can fall further short.
 
-  - :func:`threshold_for_recall` / :func:`threshold_for_precision` — the most extreme threshold on
+  - :func:`threshold_for_recall` / :func:`threshold_for_precision`: the most extreme threshold on
     a calibration set that still meets a target recall / precision.
-  - :func:`conformal_threshold` — a distribution-free (split-conformal) threshold: with the
-    finite-sample correction, a genuinely struck word scores at or above it with probability
-    >= 1 - alpha, so 1 - alpha is a *guaranteed* recall floor on exchangeable future data.
-  - :func:`pr_curve` — precision/recall across all thresholds, for plotting the tradeoff.
+  - :func:`conformal_threshold`: a split-conformal threshold. With the finite-sample correction,
+    a struck word exchangeable with the calibration words scores at or above it with probability
+    at least 1 - alpha, on average over calibration sets. A given calibration set can give recall
+    below 1 - alpha, and the bound promises nothing for words unlike the calibration words.
+  - :func:`pr_curve`: precision/recall across all thresholds, for plotting the tradeoff.
 
 Feed the labeled crops that :func:`pdf_strikethrough.active.dump_crops` produces (probabilities
 from each row's ``cnn_prob``, labels you filled into ``label``). Wire the chosen threshold in with
@@ -83,11 +86,15 @@ def threshold_for_precision(probs, labels, target_precision):
 
 def conformal_threshold(pos_probs, alpha=0.05):
     """Split-conformal threshold on the struck class. Given the CNN probabilities of a calibration
-    set of KNOWN-struck words, return the threshold ``t`` such that a future struck word scores
-    ``>= t`` with probability at least ``1 - alpha`` (exchangeability assumed). Uses the
-    finite-sample-corrected empirical quantile, so the recall floor holds distribution-free.
-    `alpha` is the tolerated miss rate (e.g. 0.05 -> a 95% recall guarantee). Returns 0.0 when the
-    calibration set is too small to exclude anything at this alpha (accept everything as struck)."""
+    set of KNOWN-struck words, return the threshold ``t`` such that a future struck word
+    exchangeable with them scores ``>= t`` with probability at least ``1 - alpha``, on average
+    over calibration sets. Uses the finite-sample-corrected empirical quantile, so this holds
+    whatever the distribution of scores. It promises nothing for words unlike the calibration
+    words (another writer, scanner or kind of document), and a given calibration set can give
+    recall below ``1 - alpha``, well below if it is small or comes from few pages. This is the
+    CNN's recall on the words it scores, not the detector's. `alpha` is the target miss rate
+    (e.g. 0.05 aims at 95% recall). Returns 0.0 when the calibration set is too small to exclude
+    anything at this alpha (accept everything as struck)."""
     p = np.asarray(pos_probs, dtype=float).reshape(-1)
     if p.size == 0:
         raise ValueError("need at least one struck-word probability")

@@ -27,17 +27,19 @@ vector strokes and annotations directly and never invokes this model.
 - **Input:** one standardized grey word crop, `32`×`160` (ink-positive,
   height-normalized). Produced by `pdf_strikethrough.cnn.std_crop`; the exact geometry is recorded
   in `strike_verdict_cnn.meta.json` and enforced at load time (`cnn._check_geometry`) so training
-  and inference preprocessing cannot drift.
+  and inference crops cannot differ in geometry.
 - **Output:** a single logit → sigmoid probability that the word is struck.
 - **Decision thresholds** (in the meta): `p_hi = 0.85`, `p_lo = 0.15`. A word scoring `≥ p_hi` is
   struck, `≤ p_lo` is clean, and between them it is "unsure". Of the two thresholds, only `p_hi`
   decides what is reported: a candidate the CNN does not confirm at `p_hi` is not reported (a
   geometry-confident one whose crop is too small to score is kept), and `p_lo` only labels the
   rest clean or unsure. How the shipped values were chosen is not recorded (see
-  [Provenance](#provenance-and-training)); the training script sets a retrained model's thresholds
-  from data: `p_hi` as a split-conformal threshold on held-out struck-word probabilities (a recall
-  floor of `1 − alpha` for crops like the validation set; see `training/README.md`), `p_lo`
-  mirrored on the clean class. Override per call with `ScanConfig.recall_first(cnn_p_hi=…)` /
+  [Provenance](#provenance-and-training)). The training script sets a retrained model's thresholds
+  from data, matched on held-out crops to the model the package loads. The retrained model calls
+  at least as many of the held-out struck crops struck as that model does at its own `p_hi`, in
+  each kind of crop they include, and at least as many of the held-out clean crops clean as that
+  model does at its own `p_lo`, unless that would put `p_lo` at or above `p_hi` (see
+  `training/README.md`). Override per call with `ScanConfig.recall_first(cnn_p_hi=…)` /
   `precision_first(cnn_p_hi=…)`.
 
 ## How it fits the pipeline
@@ -94,9 +96,10 @@ the first release's code calls them guardrails, nothing more.
 **Training a replacement.** `training/train_strikenet.py` trains StrikeNet on a labeled crop set the
 detector exports, sets `p_hi` / `p_lo` from held-out data, and records in the meta, under
 `training`, what the model was trained on: a digest of the labeled crops and their labels, the class
-counts, the validation size, the hyperparameters (the seed that draws the split among them) and the
-package and torch versions. The digest identifies the labeled set but cannot restore it, so keep
-the labeled directory. The failing-page → better-model loop is one command per step:
+counts, the validation size, how the split grouped the crops, the hyperparameters (the seed that
+draws the split among them), the package, numpy and torch versions, and the `std_crop` settings
+the labeled crops were made with. The digest identifies the labeled set but cannot restore it, so
+keep the labeled directory. The failing-page → better-model loop is one command per step:
 
 ```bash
 pdf-strikethrough detect scan.pdf --ocr rapidocr --dump-crops crops_out/   # export scored crops
