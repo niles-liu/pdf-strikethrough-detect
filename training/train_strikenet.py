@@ -694,7 +694,15 @@ def main(argv=None):
     struck = y[val_idx] > 0.5
     try:
         reference = cnn.get_model_meta()
-        ref = cnn.score_crops(x[val_idx])
+        # score_crops checks the reference's std_crop settings against cnn's constants, but these
+        # crops were made with `made`, which can differ from this run's: check against those
+        run = cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC
+        cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC = (made["paper_white_from"],
+                                                      made["shade_white_frac"])
+        try:
+            ref = cnn.score_crops(x[val_idx])
+        finally:
+            cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC = run
     except Exception as e:                          # whatever the loader raises: nothing to match
         sys.exit(f"The thresholds are matched to the model the package loads, but no model loads "
                  f"from {cnn._current_model_dir()}: {type(e).__name__}: {e}. Set "

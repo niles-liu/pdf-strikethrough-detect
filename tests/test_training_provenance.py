@@ -472,6 +472,28 @@ def test_main_records_the_settings_the_crops_were_made_with(tmp_path, monkeypatc
     json.dumps(seen["training"], allow_nan=False)                  # as export writes it
 
 
+def test_main_scores_the_reference_at_the_settings_its_crops_were_made_with(tmp_path,
+                                                                            monkeypatch):
+    """The reference scores the labeled crops, so the package's check of its recorded settings is
+    made against the crops' settings, not the run's, and the run's come back after."""
+    made = {"paper_white_from": 240, "shade_white_frac": 0.85}
+    rows = [{"crop": f"crops/c{i}.png", "label": "struck" if i % 2 else "clean", "page": i // 4,
+             "std_crop": made} for i in range(160)]
+    (tmp_path / "crops").mkdir()
+    for i, row in enumerate(rows):
+        arr = np.full((cnn.CROP_H, cnn.CROP_W), 255, np.uint8)
+        arr[10:22, i % 150:i % 150 + 6] = 0
+        Image.fromarray(arr).save(tmp_path / row["crop"])
+    _write(tmp_path, rows)
+    seen, at = {}, []
+    _stub_training(monkeypatch, seen)
+    monkeypatch.setattr(cnn, "score_crops", lambda crops, batch_size=512: (
+        at.append((cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC)), np.full(len(crops), 0.9))[1])
+    train_strikenet.main([str(tmp_path), "-o", str(tmp_path / "out"), "--val-frac", "0.25"])
+    assert at == [(240, 0.85)]
+    assert (cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC) == (255, 0.85)
+
+
 def test_main_stops_when_no_group_split_can_train_and_calibrate(tmp_path, monkeypatch, capsys):
     rows = [{"crop": f"crops/c{i}.png", "label": "struck" if i < 300 else "clean",
              "page": 0 if i < 300 else 1 + (i - 300) // 10} for i in range(600)]
