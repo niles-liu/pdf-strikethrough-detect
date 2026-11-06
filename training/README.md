@@ -37,7 +37,9 @@ Steps 1 and 2 are also how a "contribute a failing page" bug report becomes trai
   same `cnn.std_crop` the detector uses at inference, with the settings it runs with. The meta
   records the settings the crops were made with, so the script stops when the labeled crops were
   made with different settings. Detect with the recorded settings (`cnn.PAPER_WHITE_FROM` and
-  `cnn.SHADE_WHITE_FRAC`) to score words as the model was trained.
+  `cnn.SHADE_WHITE_FRAC`) to score words as the model was trained. A crop an image editor saved
+  again as a 16-bit PNG, or with transparent paper, reads as the 8-bit crop it holds, with
+  transparency laid over white; a transparent grey level in a 16-bit greyscale PNG is ignored.
 - **Dumps from 0.14.0 or earlier.** Their rows record no settings, and the script counts them in a
   note. Standardizing their crops again does not reliably give the crops the detector now scores:
   0.14.0 left paper at 240 to 254 as a faint grey ground, which later releases take to white. Dump
@@ -102,7 +104,9 @@ Steps 1 and 2 are also how a "contribute a failing page" bug report becomes trai
   capped at `p_hi`. Neither sets the thresholds.
 - **The split holds out whole groups.** A row's group is its `group` field if set, else its
   `page` within its crop's folder, else the row alone. A `group` can be any JSON value, such as a
-  document name or a writer's ID; null, NaN, blank text, `[]` and `{}` count as not set.
+  document name or a writer's ID; null, NaN, blank text, `[]` and `{}` count as not set. Pages 1,
+  1.0 and `"1"` are one page, and a group of 7.0 is group 7 (a spreadsheet round trip can write a
+  whole number either way), but a group's text stays text: `"7"` is a different group from 7.
   `dump_crops` rows carry the page, so a dump splits by page. The script holds out
   `max(1, int(G * --val-frac))` of the G groups, drawn with `--seed`, and prints the split before
   training. Since `--val-frac` is a share of groups, the share of crops held out varies with the

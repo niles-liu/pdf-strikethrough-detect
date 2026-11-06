@@ -38,7 +38,7 @@ def test_threshold_for_precision_meets_floor():
         calibration.threshold_for_precision(probs, labels, 1.0 + 1e-9)  # out of range
 
 
-def test_conformal_threshold_recall_guarantee():
+def test_conformal_threshold_keeps_1_minus_alpha_of_the_scores_it_is_set_on():
     # 100 struck-word probabilities; the alpha-quantile threshold should keep >= 1-alpha of them
     rng = np.random.default_rng(0)
     pos = np.clip(rng.beta(6, 2, size=100), 0, 1)

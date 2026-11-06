@@ -326,6 +326,53 @@ def test_line_numbers_count_every_line_end(tmp_path, trainer, newline):
         trainer.load_dataset(tmp_path)
 
 
+def _resaved(gray, mode):
+    """A crop's grey levels as an image editor can save them: 16-bit, or with its paper
+    transparent over black (grey+alpha, RGBA, or a palette with a transparent black entry)."""
+    paper = gray == 255
+    if mode == "I;16":
+        return Image.fromarray(gray.astype(np.uint16) * 257)
+    if mode == "I;16 0-255":                                   # 8-bit levels held in 16 bits
+        return Image.fromarray(gray.astype(np.uint16))
+    if mode == "LA":
+        return Image.fromarray(np.stack([np.where(paper, 0, gray), np.where(paper, 0, 255)], -1)
+                               .astype(np.uint8), "LA")
+    if mode == "RGBA":
+        ink = np.where(paper, 0, gray)
+        return Image.fromarray(np.stack([ink, ink, ink, np.where(paper, 0, 255)], -1)
+                               .astype(np.uint8), "RGBA")
+    levels = sorted(set(gray[~paper].tolist()))                 # index 0: transparent black
+    img = Image.fromarray(np.where(paper, 0, np.searchsorted(levels, gray) + 1).astype(np.uint8),
+                          "P")
+    img.putpalette([0, 0, 0] + [v for k in levels for v in (k, k, k)])
+    img.info["transparency"] = 0
+    return img
+
+
+@pytest.mark.parametrize("mode", ["I;16", "I;16 0-255", "LA", "RGBA", "P"])
+@pytest.mark.parametrize("marked", [True, False])
+def test_a_crop_saved_16_bit_or_transparent_reads_as_its_grey_levels(tmp_path, trainer, mode,
+                                                                    marked):
+    """A crop re-saved as 16-bit read as blank paper, and one with its paper transparent over
+    black read as solid ink: each now reads as the 8-bit crop it holds."""
+    std = _level(255)
+    std[8:24, 20:140:9] = _level(26)[0, 0]
+    std[12:20, 30:60] = _level(128)[0, 0]
+    std[12:20, 70:100] = _level(200)[0, 0]                     # 200 x 257 / 256 rounds to 201
+    rows = [{"crop": _dumped(tmp_path, std, "a.png"), "label": "struck"},
+            {"crop": "crops/b.png", "label": "struck"}]
+    gray = np.asarray(Image.open(tmp_path / rows[0]["crop"]))
+    _resaved(gray, mode).save(tmp_path / rows[1]["crop"])
+    with Image.open(tmp_path / rows[1]["crop"]) as img:     # Pillow 10.1 opens 16-bit grey as I
+        assert img.mode in ({"I;16", "I"} if mode.startswith("I;16") else {mode})
+    for row in rows:
+        if marked:
+            row["std_crop"] = _settings()
+    _manifest(tmp_path, rows)
+    x = trainer.load_dataset(tmp_path)[0]
+    assert np.array_equal(x[1], x[0]) and x[0].max() > 0.8
+
+
 @pytest.mark.parametrize("content", [None, b"not a png"])
 def test_a_labeled_row_whose_png_cannot_be_read_is_named_by_its_line(tmp_path, trainer, content):
     (tmp_path / "crops").mkdir()
