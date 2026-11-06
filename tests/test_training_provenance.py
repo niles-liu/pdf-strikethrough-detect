@@ -198,7 +198,9 @@ def test_the_rows_load_keeps_are_the_crops_it_returns(tmp_path, capsys):
     x, y, digest, kept = train_strikenet._load(tmp_path)
     assert [r["page"] for r in kept] == [1, 4] and y.tolist() == [1.0, 0.0] and len(x) == 2
     assert digest == train_strikenet.load_dataset(tmp_path)[2]
-    assert "note: skipped 2 unlabeled row(s)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "note: skipped 1 unlabeled row(s)" in out
+    assert 'note: skipped 1 row(s) labeled neither struck nor clean: "maybe"' in out
     with pytest.raises(SystemExit, match="no crops.jsonl"):
         train_strikenet.load_dataset(tmp_path / "missing")
     _write(tmp_path, [rows[2]])
@@ -332,6 +334,40 @@ def test_main_splits_by_group_and_records_the_split(tmp_path, monkeypatch, capsy
     assert t["groups_sha256"] == hashlib.sha256(lines.encode("utf-8")).hexdigest()
     assert t["numpy_version"] == np.__version__
     assert (t["paper_white_from"], t["shade_white_frac"]) == (250, 0.83)
+
+
+def test_main_records_the_settings_the_crops_were_made_with(tmp_path, monkeypatch, capsys):
+    """Crops dumped with std_crop settings other than the run's train as dumped, so the meta
+    records theirs; crops made with different settings stop the run before it trains; and
+    settings held as numpy scalars reach the meta as numbers."""
+    made = {"paper_white_from": 240, "shade_white_frac": 0.85}
+    rows = [{"crop": f"crops/c{i}.png", "label": "struck" if i % 2 else "clean", "page": i // 4,
+             "std_crop": made} for i in range(160)]
+    (tmp_path / "crops").mkdir()
+    for i, row in enumerate(rows):
+        arr = np.full((cnn.CROP_H, cnn.CROP_W), 246, np.uint8)     # 240 leaves this ground grey
+        arr[10:22, i % 150:i % 150 + 6] = 0
+        Image.fromarray(arr).save(tmp_path / row["crop"])
+    _write(tmp_path, rows)
+    seen = {}
+    _stub_training(monkeypatch, seen)
+    argv = [str(tmp_path), "-o", str(tmp_path / "out"), "--val-frac", "0.25"]
+    train_strikenet.main(argv)                                     # the run's settings: 255, 0.85
+    assert {k: seen["training"][k] for k in made} == made
+    assert "they train as dumped, and the meta records theirs" in capsys.readouterr().out
+    del rows[5]["std_crop"]                                        # standardized here, at 255
+    _write(tmp_path, rows)
+    seen.clear()
+    with pytest.raises(SystemExit, match=r"made with different std_crop settings.*: 159 row\(s\) "
+                                         r"with \{\"paper_white_from\": 240.*; 1 row\(s\) with "
+                                         r"\{\"paper_white_from\": 255"):
+        train_strikenet.main(argv)
+    assert not seen                                                # it stopped before training
+    _write(tmp_path, [{k: v for k, v in r.items() if k != "std_crop"} for r in rows])
+    monkeypatch.setattr(cnn, "PAPER_WHITE_FROM", np.int64(250))     # as a sweep over np.arange
+    train_strikenet.main(argv)                                     # sets it: all standardized here
+    assert seen["training"]["paper_white_from"] == 250
+    json.dumps(seen["training"], allow_nan=False)                  # as export writes it
 
 
 def test_main_stops_when_no_group_split_can_train_and_calibrate(tmp_path, monkeypatch, capsys):

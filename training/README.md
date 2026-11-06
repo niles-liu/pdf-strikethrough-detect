@@ -29,14 +29,25 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
 
 ## Notes
 
-- **Crop geometry can't drift.** Crops are re-standardized through the same `cnn.std_crop` the
-  detector uses at inference, and the export records the crop geometry (`crop_h/crop_w/pad_x/pad_y`)
-  into the meta, and `cnn._check_geometry` refuses to load a model whose geometry disagrees with the
-  code constants. A dump holds each crop as standardized by the release that dumped it, and
-  re-standardizing in training does not reliably undo that. Releases after 0.14.0 take paper at
-  240 to 254 to white, where 0.14.0 left a faint grey ground, so dump scans again with the release
-  you train with. A model trained on 0.14.0 dumps saw that ground, and the loader does not check
-  the settings: use it with `cnn.PAPER_WHITE_FROM = 240`, or train a new one on a new dump.
+- **Crops train as the detector scored them.** `dump_crops` writes each crop the detector scored
+  as a PNG, each pixel rounded to the nearest grey level so the PNG holds the crop exactly, and
+  records in its row the settings `std_crop` made it with
+  (`"std_crop": {"paper_white_from": ..., "shade_white_frac": ...}`). When a row records the
+  settings, the script trains on its crop as dumped. It standardizes any other crop through the
+  same `cnn.std_crop` the detector uses at inference, with the settings it runs with. The meta
+  records the settings the crops were made with, so the script stops when the labeled crops were
+  made with different settings. Detect with the recorded settings (`cnn.PAPER_WHITE_FROM` and
+  `cnn.SHADE_WHITE_FRAC`) to score words as the model was trained.
+- **Dumps from 0.14.0 or earlier.** Their rows record no settings, and the script counts them in a
+  note. Standardizing their crops again does not reliably give the crops the detector now scores:
+  0.14.0 left paper at 240 to 254 as a faint grey ground, which later releases take to white. Dump
+  such scans again with the release you train with, into a new directory: a dump replaces the
+  `crops.jsonl` it writes to, labels included. A model trained with 0.14.0 saw that ground, and
+  the loader does not check the settings: use it with `cnn.PAPER_WHITE_FROM = 240`, or train a
+  new one on a new dump.
+- **Crop geometry can't drift.** The export records the crop geometry (`crop_h/crop_w/pad_x/pad_y`)
+  into the meta, and `cnn._check_geometry` refuses to load a model whose geometry disagrees with
+  the code constants.
 - **Thresholds are matched to the model the package loads.** The script scores the validation crops
   with the new model and with a reference: the model the package loads, which is the packaged one
   unless `PDF_STRIKETHROUGH_MODEL_DIR` or `cnn.set_model_dir` points at another. `p_hi` is the
@@ -99,20 +110,23 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
   label crops from more pages, or give each row a `group` of its own, such as its line number, to
   split by crop, which can put crops of one page on both sides. A page where some rows have a
   `group` and others do not can land on both sides too; the script prints a note.
-- **Several dumps.** To train on several dumps, put each dump's crops in a folder of its own in
-  one directory, such as `a/crops/` and `b/crops/`, and concatenate their `crops.jsonl` rows into
-  one, with each `crop` path prefixed to match (`a/crops/p0003_00012.png`). A page is told apart
-  by its crop's folder, so page 3 of one dump and page 3 of another stay separate groups. If two
-  dumps cover the same pages, give each row a `group` naming its document and page, such as
+- **Several dumps.** To train on several dumps made with the same `std_crop` settings (the
+  script stops when they differ), put each dump's crops in a folder of its own in one directory,
+  such as `a/crops/` and `b/crops/`, and concatenate their `crops.jsonl` rows into one, with each
+  `crop` path prefixed to match (`a/crops/p0003_00012.png`). A page is told apart by its crop's
+  folder, so page 3 of one dump and page 3 of another stay separate groups. If two dumps cover
+  the same pages, give each row a `group` naming its document and page, such as
   `["scan.pdf", 3]`, so a page dumped twice stays on one side.
 - **The model records what it was trained on.** The exported meta carries a `training` block: the
   sha256 of the labeled set (one `"<crop sha256> <label>"` line per labeled row in `crops.jsonl`
-  order, so it changes with any crop file, label or row order, but not with file names), the
+  order, with ` as dumped` after the label for a crop that trains as dumped, so it changes with
+  any crop file, label or row order and with how a crop trains, but not with file names), the
   struck/clean counts, the validation size, how the split grouped the rows, the hyperparameters
   (`--epochs`, `--val-frac`, `--batch`, `--lr`, `--seed`, `--alpha`), the package, numpy and torch
-  versions, and `cnn.std_crop`'s grey-paper settings when the script ran (`paper_white_from` and
-  `shade_white_frac`, the values of `cnn.PAPER_WHITE_FROM` and `cnn.SHADE_WHITE_FRAC`; the loader
-  does not check them). The grouping is `split_by` (how many rows took their group from `group`,
+  versions, and the `std_crop` settings the crops were made with (`paper_white_from` and
+  `shade_white_frac`: those the rows record, or for crops the script standardized, the values of
+  `cnn.PAPER_WHITE_FROM` and `cnn.SHADE_WHITE_FRAC` when it ran; the loader does not check them).
+  The grouping is `split_by` (how many rows took their group from `group`,
   from their page, or stood alone, as `row`), `n_groups`, `n_val_groups` (how many groups are held
   out) and `groups_sha256` (the sha256 of one line per labeled row with its group's number, groups
   numbered in order of first appearance). The numpy version is there because numpy draws the
