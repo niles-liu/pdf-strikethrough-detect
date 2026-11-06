@@ -3,8 +3,8 @@
 The shipped ``strike_verdict_cnn.onnx`` predates this script and was not trained by it (see
 ``training/MODEL_CARD.md#provenance-and-training``). A model this script trains records what it
 was trained on in its meta (``training``: a digest of the labeled crops, the class counts, the
-validation size, the hyperparameters and how the split grouped the crops), and the loop from
-failing pages back to a better model is one command each step:
+validation size, the hyperparameters, how the split grouped the crops and ``std_crop``'s grey-paper
+settings), and the loop from failing pages back to a better model is one command each step:
 
     pdf-strikethrough detect scan.pdf --ocr rapidocr --dump-crops crops_out/   # 1. export crops
     # 2. label: edit crops_out/crops.jsonl, set each row's "label" to "struck" or "clean"
@@ -16,7 +16,9 @@ whose rows carry a ``crop`` path (relative to the directory) and a filled-in ``l
 carry a ``group``, whose crops the split keeps on the same side (:func:`group_key`), and a
 ``source``, the kind of crop p_hi is matched in (:func:`sources_of`). The crop PNGs are
 re-standardized here through the exact same ``std_crop`` the detector uses at inference, so
-training and inference preprocessing cannot drift. The new model's p_hi and p_lo are matched, on
+training and inference crops share their geometry. A dump holds each crop as standardized by the
+release that dumped it, so dump scans again with the release you train with (releases after
+0.14.0 take paper at 240 to 254 to white). The new model's p_hi and p_lo are matched, on
 the validation crops, to the calls of the model the package loads (:func:`matched_pair`).
 Requires ``torch`` and ``onnx``, which torch's ONNX exporter imports (dev only: the package runs
 on ONNX Runtime alone).
@@ -581,7 +583,8 @@ def main(argv=None):
                 "n_groups": n_groups, "n_val_groups": n_val_groups,
                 "groups_sha256": groups_digest, **hparams,
                 "alpha": args.alpha, "package_version": pdf_strikethrough.__version__,
-                "numpy_version": np.__version__, "torch_version": torch.__version__}
+                "numpy_version": np.__version__, "torch_version": torch.__version__,
+                "paper_white_from": cnn.PAPER_WHITE_FROM, "shade_white_frac": cnn.SHADE_WHITE_FRAC}
     onnx_path, meta = export(net, args.out, thresholds=thresholds, version=args.version,
                              training=training)
     print(f"exported {onnx_path} + meta.json: {meta}")

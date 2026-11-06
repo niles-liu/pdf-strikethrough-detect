@@ -313,6 +313,8 @@ def test_main_splits_by_group_and_records_the_split(tmp_path, monkeypatch, capsy
     _at(tmp_path, rows)
     seen = {}
     _stub_training(monkeypatch, seen)
+    monkeypatch.setattr(cnn, "PAPER_WHITE_FROM", 250)     # values no default, literal or
+    monkeypatch.setattr(cnn, "SHADE_WHITE_FRAC", 0.83)    # rounding gives: recorded as set
     train_strikenet.main([str(tmp_path), "-o", str(tmp_path / "out"), "--val-frac", "0.25"])
     groups = [0] + [1 + i // 4 for i in range(1, 160)]
     assert seen["groups"].tolist() == groups
@@ -329,6 +331,7 @@ def test_main_splits_by_group_and_records_the_split(tmp_path, monkeypatch, capsy
     lines = "".join(f"{g}\n" for g in groups)
     assert t["groups_sha256"] == hashlib.sha256(lines.encode("utf-8")).hexdigest()
     assert t["numpy_version"] == np.__version__
+    assert (t["paper_white_from"], t["shade_white_frac"]) == (250, 0.83)
 
 
 def test_main_stops_when_no_group_split_can_train_and_calibrate(tmp_path, monkeypatch, capsys):
