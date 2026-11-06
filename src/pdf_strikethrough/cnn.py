@@ -17,11 +17,12 @@ between -> 'unsure' (guardrailed 0.85 / 0.15).
 import json
 import os
 import threading
+import warnings
 
 import numpy as np
 from PIL import Image
 
-from .lines import to_gray_u8
+from .lines import _scale_to_255, to_gray_u8
 
 CROP_H, CROP_W = 32, 160          # net input: ink-positive [0,1], height-normalized isotropically
 PAD_X, PAD_Y = 5, 7               # crop margin around the word box, in PIXELS
@@ -216,26 +217,36 @@ def word_crop_px(gray, bbox_frac, pad_x=PAD_X, pad_y=PAD_Y):
 
 def std_crop(crop):
     """Raw grey crop (0=black..255=white) -> (CROP_H, CROP_W) float32, ink-positive,
-    height-normalized isotropically; width center-cropped or padded. [0,1] floats are rescaled,
-    and values are clipped to 0-255, with no mod-256 wraparound. An integer crop of a type wider
-    than 8 bits is scaled so that the type's maximum is white and 0 is black, so pass 0-255
-    values as uint8: in a wider type they read as nearly solid ink. A crop more than about
-    CROP_W / CROP_H (5) times as wide as it is tall loses its ends, so a strike on only one end of
-    a long word can be cut off.
+    height-normalized isotropically; width center-cropped or padded. A float crop whose finite
+    pixels are all at most 1.0 is read as [0, 1] and rescaled; NaN and +inf read as white and
+    -inf as black. An integer crop of a type wider than 8 bits is read by its data's range, as
+    lines.to_gray_u8 reads a page, except that 32767 is white in int16: values up to 255 as they
+    are, up to 65535 as 16-bit (65535 is white), wider data by the type's maximum. The range is
+    the whole crop's, so one pixel above 255 puts all of it on the 16-bit scale. Values are
+    clipped to 0-255, with no mod-256 wraparound. A crop that is not 2-D, or has no pixels, raises
+    ValueError. A crop more than about CROP_W / CROP_H (5) times as wide as it is tall loses its
+    ends, so a strike on only one end of a long word can be cut off.
     The paper (the commonest pixel of 128 and up) is taken to white first when it is below
     PAPER_WHITE_FROM: below 240 with the white point at SHADE_WHITE_FRAC of the paper, from 240 up
     at the paper itself; paper at or above PAPER_WHITE_FROM is untouched. White read through
     lines.to_gray_u8's RGB(A) conversion is 254, so it is taken to 255 too."""
     crop = np.asarray(crop)
+    if crop.ndim != 2 or 0 in crop.shape:
+        raise ValueError(f"std_crop needs a 2-D grey crop with pixels, got shape {crop.shape}")
     if np.issubdtype(crop.dtype, np.floating):
-        if crop.size and float(crop.max()) <= 1.0:
+        finite = np.isfinite(crop)
+        if not finite.all():                     # NaN and +inf as white (-inf clips to black)
+            top = float(crop[finite].max()) if finite.any() else 0.0
+            crop = np.where(np.isnan(crop) | (crop == np.inf), 255.0 if top > 1.0 else 1.0, crop)
+        if float(crop.max()) <= 1.0:
             crop = crop * 255.0
         crop = np.clip(crop, 0.0, 255.0)
     elif crop.dtype != np.uint8 and np.issubdtype(crop.dtype, np.integer):
-        # rescale wide integer crops (16-bit and up); a bare .astype(uint8) below would wrap mod-256
-        if np.iinfo(crop.dtype).max > 255:
-            crop = crop.astype(np.float64) * (255.0 / np.iinfo(crop.dtype).max)
-        crop = np.clip(crop, 0.0, 255.0)
+        # wide integer crops by their data's range; a bare .astype(uint8) below would wrap mod-256
+        k = _scale_to_255(crop)
+        if k == 1 / 257 and np.iinfo(crop.dtype).max < 65535:    # int16: 32767 is white
+            k = 255.0 / np.iinfo(crop.dtype).max
+        crop = np.clip(crop.astype(np.float64) * k, 0.0, 255.0)
 
     crop = np.asarray(crop, dtype=np.float32)
     light = crop[crop >= 128]
@@ -481,11 +492,60 @@ def _ensure_loaded():
     return model
 
 
+def _made_with(meta):
+    """The std_crop settings a model's meta says its training crops were made with,
+    ``{"paper_white_from": ..., "shade_white_frac": ...}`` (those it records), or None when it
+    does not say. The training script records them in the meta's ``training`` block; a block it
+    wrote before it did (one with ``dataset_sha256`` and neither setting) was made as 0.14.0 made
+    crops, at 240 and 0.85. Any other block, such as one another training loop wrote, says
+    nothing."""
+    training = meta.get("training")
+    if not isinstance(training, dict):
+        return None
+    keys = ("paper_white_from", "shade_white_frac")
+    made = {k: training[k] for k in keys if k in training}
+    if not made and "dataset_sha256" in training:
+        made = {"paper_white_from": 240, "shade_white_frac": 0.85}
+    return made or None
+
+
+def _check_made_with(meta):
+    """Warn, once per model and settings, when the loaded model's training crops were made with
+    std_crop settings other than the ones std_crop uses now: it then scores crops unlike the ones
+    it learned from. Checked at each score, since the settings can change after the load."""
+    made = _made_with(meta)
+    if made is None:
+        return
+    now = {"paper_white_from": PAPER_WHITE_FROM, "shade_white_frac": SHADE_WHITE_FRAC}
+    if all(made[k] == now[k] for k in made):
+        return
+    key = (meta.get("sha256"), json.dumps(made, default=str), json.dumps(now, default=str))
+    if key in _warned_settings:
+        return
+    off = [k for k in made if made[k] != now[k]]
+    how = ("" if any(k in meta["training"] for k in made) else
+           " (its meta records none, so they are taken as 0.14.0's)")
+    warnings.warn(
+        f"the model was trained on crops made with std_crop settings "
+        f"{', '.join(f'{k} {made[k]!r}' for k in off)}{how}, but std_crop now uses "
+        f"{', '.join(f'{k} {now[k]}' for k in off)}, so it scores crops unlike the ones it learned "
+        f"from: set {' and '.join(f'cnn.{k.upper()} = {made[k]!r}' for k in off)} to score words "
+        f"as it was trained", stacklevel=3)
+    _warned_settings.add(key)          # after the warning, which an error filter raises each time
+
+
+_warned_settings = set()          # the (model, settings) pairs _check_made_with has warned about
+
+
 def score_crops(std_crops, batch_size=512):
-    """Standardized crops (list/array of (CROP_H, CROP_W) float32) -> strike probabilities."""
+    """Standardized crops (list/array of (CROP_H, CROP_W) float32) -> strike probabilities. Warns
+    when the model's meta says its training crops were made with other std_crop settings than
+    PAPER_WHITE_FROM and SHADE_WHITE_FRAC now give (once per model and settings): it assumes
+    `std_crops` were made with the current settings."""
     if not len(std_crops):
         return np.zeros(0)
-    score, _ = _ensure_loaded()
+    score, meta = _ensure_loaded()
+    _check_made_with(meta)
     x = np.stack(std_crops).astype(np.float32)[:, None, :, :]
     return np.concatenate([score(x[i:i + batch_size]) for i in range(0, len(x), batch_size)])
 
@@ -505,7 +565,12 @@ def score_word(gray, bbox_frac):
 
 
 def verdict_of(p, meta=None):
-    """CNN probability -> 'struck' / 'clean' / 'unsure' using the checkpoint thresholds."""
+    """CNN probability -> 'struck' / 'clean' / 'unsure' using the checkpoint thresholds, the
+    probability read as the detector reads a word's score: rounded to 3 decimals (its
+    ``cnn_prob``)."""
     if meta is None:
         meta = _ensure_loaded()[1]
+    if isinstance(p, np.ndarray):               # a 1-element array, as score_crops([crop]) gives
+        p = p.item()
+    p = round(float(p), 3)
     return "struck" if p >= meta["p_hi"] else ("clean" if p <= meta["p_lo"] else "unsure")
