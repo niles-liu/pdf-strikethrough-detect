@@ -27,7 +27,7 @@ vector strokes and annotations directly and never invokes this model.
 - **Input:** one standardized grey word crop, `32`×`160` (ink-positive,
   height-normalized). Produced by `pdf_strikethrough.cnn.std_crop`; the exact geometry is recorded
   in `strike_verdict_cnn.meta.json` and enforced at load time (`cnn._check_geometry`) so training
-  and inference preprocessing cannot drift.
+  and inference crops cannot differ in geometry.
 - **Output:** a single logit → sigmoid probability that the word is struck.
 - **Decision thresholds** (in the meta): `p_hi = 0.85`, `p_lo = 0.15`. A word scoring `≥ p_hi` is
   struck, `≤ p_lo` is clean, and between them it is "unsure". Of the two thresholds, only `p_hi`
@@ -97,9 +97,9 @@ the first release's code calls them guardrails, nothing more.
 detector exports, sets `p_hi` / `p_lo` from held-out data, and records in the meta, under
 `training`, what the model was trained on: a digest of the labeled crops and their labels, the class
 counts, the validation size, how the split grouped the crops, the hyperparameters (the seed that
-draws the split among them) and the package, numpy and torch versions. The digest identifies the
-labeled set but cannot restore it, so keep the labeled directory. The failing-page → better-model
-loop is one command per step:
+draws the split among them), the package, numpy and torch versions, and `std_crop`'s grey-paper
+settings when the script ran. The digest identifies the labeled set but cannot restore it, so
+keep the labeled directory. The failing-page → better-model loop is one command per step:
 
 ```bash
 pdf-strikethrough detect scan.pdf --ocr rapidocr --dump-crops crops_out/   # export scored crops

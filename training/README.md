@@ -29,10 +29,14 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
 
 ## Notes
 
-- **Preprocessing can't drift.** Crops are re-standardized through the same `cnn.std_crop` the
+- **Crop geometry can't drift.** Crops are re-standardized through the same `cnn.std_crop` the
   detector uses at inference, and the export records the crop geometry (`crop_h/crop_w/pad_x/pad_y`)
   into the meta, and `cnn._check_geometry` refuses to load a model whose geometry disagrees with the
-  code constants.
+  code constants. A dump holds each crop as standardized by the release that dumped it, and
+  re-standardizing in training does not reliably undo that. Releases after 0.14.0 take paper at
+  240 to 254 to white, where 0.14.0 left a faint grey ground, so dump scans again with the release
+  you train with. A model trained on 0.14.0 dumps saw that ground, and the loader does not check
+  the settings: use it with `cnn.PAPER_WHITE_FROM = 240`, or train a new one on a new dump.
 - **Thresholds are matched to the model the package loads.** The script scores the validation crops
   with the new model and with a reference: the model the package loads, which is the packaged one
   unless `PDF_STRIKETHROUGH_MODEL_DIR` or `cnn.set_model_dir` points at another. `p_hi` is the
@@ -105,10 +109,12 @@ Steps 1–2 are also how a "contribute a failing page" bug report becomes traini
   sha256 of the labeled set (one `"<crop sha256> <label>"` line per labeled row in `crops.jsonl`
   order, so it changes with any crop file, label or row order, but not with file names), the
   struck/clean counts, the validation size, how the split grouped the rows, the hyperparameters
-  (`--epochs`, `--val-frac`, `--batch`, `--lr`, `--seed`, `--alpha`) and the package, numpy and
-  torch versions. The grouping is `split_by` (how many rows took their group from `group`, from
-  their page, or stood alone, as `row`), `n_groups`, `n_val_groups` (how many groups are held out)
-  and `groups_sha256` (the sha256 of one line per labeled row with its group's number, groups
+  (`--epochs`, `--val-frac`, `--batch`, `--lr`, `--seed`, `--alpha`), the package, numpy and torch
+  versions, and `cnn.std_crop`'s grey-paper settings when the script ran (`paper_white_from` and
+  `shade_white_frac`, the values of `cnn.PAPER_WHITE_FROM` and `cnn.SHADE_WHITE_FRAC`; the loader
+  does not check them). The grouping is `split_by` (how many rows took their group from `group`,
+  from their page, or stood alone, as `row`), `n_groups`, `n_val_groups` (how many groups are held
+  out) and `groups_sha256` (the sha256 of one line per labeled row with its group's number, groups
   numbered in order of first appearance). The numpy version is there because numpy draws the
   split, and its random stream can change between versions. `calibration` records how the
   thresholds were set. `rule` states the rule. `reference` holds the reference's `version`,
