@@ -1,7 +1,7 @@
-"""RAG provenance quick start — keep deleted text visible-as-deleted, don't silently drop it.
+"""RAG provenance quick start: keep deleted text visible-as-deleted, don't silently drop it.
 
 Struck text that flows into a vector index is a real failure mode: the retriever surfaces a
-sentence the document explicitly *deleted*. This package's ``clean_text`` removes it — but for an
+sentence the document explicitly *deleted*. This package's ``clean_text`` removes it, but for an
 audit-preserving index you often want the deletion recorded, not erased. ``provenance_text`` keeps
 each struck span as a ``[deleted: ...]`` marker so a downstream chunk still shows that something
 was struck.

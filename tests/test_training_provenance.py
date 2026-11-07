@@ -187,6 +187,35 @@ def test_groups_are_the_group_else_the_page_in_its_folder_else_the_row():
     assert mixed == 1                                                 # a's page 2, c4 and c13
 
 
+def test_a_whole_number_is_one_page_or_group_however_it_is_written():
+    # A spreadsheet can save page 1 as 1.0 or "1"; a group's number can come back as 7.0
+    rows = [{"crop": "crops/c0.png", "page": 1},
+            {"crop": "crops/c1.png", "page": 1.0},
+            {"crop": "crops/c2.png", "page": "1"},
+            {"crop": "crops/c3.png", "page": " 1.0 "},
+            {"crop": "crops/c4.png", "page": "p1"},                   # text that is not a number
+            {"crop": "crops/c5.png", "page": 1.5},
+            {"crop": "crops/c6.png", "group": 7},
+            {"crop": "crops/c7.png", "group": 7.0},
+            {"crop": "crops/c8.png", "group": "7"},                   # a group's text stays text
+            {"crop": "crops/c9.png", "group": ["scan.pdf", 3]},
+            {"crop": "crops/c10.png", "group": ["scan.pdf", 3.0]},
+            {"crop": "crops/c11.png", "group": {"doc": "x", "page": 2.0}},
+            {"crop": "crops/c12.png", "group": {"page": 2, "doc": "x"}},
+            {"crop": "crops/c13.png", "group": True},                 # true is not 1
+            {"crop": "crops/c14.png", "group": 1}]
+    groups, split_by, mixed = train_strikenet.groups_of(rows)
+    assert groups.tolist() == [0, 0, 0, 0, 1, 2, 3, 3, 4, 5, 5, 6, 6, 7, 8]
+    assert split_by == {"group": 9, "page": 6, "row": 0} and mixed == 0
+
+
+def test_page_text_past_2_53_is_the_page_it_spells():
+    rows = [{"crop": "crops/c0.png", "page": 9007199254740993},
+            {"crop": "crops/c1.png", "page": "9007199254740993"},
+            {"crop": "crops/c2.png", "page": "9007199254740992"}]          # a float reads both
+    assert train_strikenet.groups_of(rows)[0].tolist() == [0, 0, 1]   # as 9007199254740992
+
+
 def test_the_rows_load_keeps_are_the_crops_it_returns(tmp_path, capsys):
     rows = [{"crop": "crops/c0.png", "label": "struck", "page": 1},
             {"crop": "crops/c1.png", "label": "maybe", "page": 2},    # not a label: skipped
@@ -260,6 +289,79 @@ def test_split_shortfall_says_when_no_seed_can_help():
     got = train_strikenet.split_shortfall(even, 1.0, 0, 0.05, [i // 40 for i in range(400)])
     assert got.endswith("--val-frac 1.0 holds out all 10 groups, leaving none to train on: use a "
                         "--val-frac below 1")
+
+
+def _pages(counts):
+    """Labels and page numbers for pages of (struck, clean) crops."""
+    y = [lab for s, c in counts for lab in [1.0] * s + [0.0] * c]
+    return np.array(y, dtype=np.float32), [p for p, (s, c) in enumerate(counts)
+                                           for _ in range(s + c)]
+
+
+def test_split_shortfall_counts_the_clean_crops_each_side_needs():
+    # The one page held out needs 19 strikes and a clean crop: the page of 25 has no clean crop
+    y, pages = _pages([(25, 0), (10, 30), (5, 40), (0, 30), (0, 20)])
+    for seed in range(20):
+        got = train_strikenet.split_shortfall(y, 0.2, seed, 0.05, pages)
+        assert "keeps at most 10 struck crops" in got
+        assert got.endswith("no seed can help: label crops from more pages or raise --val-frac")
+    # Holding out 3 of 4 pages trains on one, and no page holds both kinds of crop
+    y, pages = _pages([(20, 0), (20, 0), (0, 10), (0, 10)])
+    for seed in range(20):
+        got = train_strikenet.split_shortfall(y, 0.8, seed, 0.05, pages)
+        assert got.endswith("Holding out 3 of the 4 groups leaves one to train on, and no group "
+                            "holds both struck and clean crops, so no seed can help: lower "
+                            "--val-frac or label crops from more pages")
+    # Holding out 2 of 3 trains on the page of 19, which must stay: holding out 1 can pass
+    y, pages = _pages([(0, 1), (1, 0), (19, 1)])
+    got = train_strikenet.split_shortfall(y, 0.75, 0, 0.05, pages)
+    assert got.endswith("no seed can help: label crops from more pages or lower --val-frac")
+    # Holding out fewer of these pages holds out at most 10 strikes: only more pages can help
+    y, pages = _pages([(10, 0), (5, 0), (0, 1), (0, 1)])
+    got = train_strikenet.split_shortfall(y, 0.75, 0, 0.05, pages)
+    assert got.endswith("no seed can help: label crops from more pages")
+
+
+def _can_split(counts, held, need=19):
+    """Whether some `held` of the pages hold `need` strikes and a clean crop, leaving a struck and
+    a clean crop to train on: every choice of pages, tried."""
+    import itertools
+    for val in itertools.combinations(range(len(counts)), held):
+        rest = [counts[p] for p in range(len(counts)) if p not in val]
+        if (sum(counts[p][0] for p in val) >= need and any(counts[p][1] for p in val)
+                and any(s for s, _ in rest) and any(c for _, c in rest)):
+            return True
+    return False
+
+
+def test_split_shortfall_says_no_seed_can_help_exactly_when_no_split_passes():
+    rng = np.random.default_rng(7)
+    seen, lowered = set(), set()
+    for _ in range(400):
+        n = int(rng.integers(3, 8))
+        counts = [(int(rng.choice([0, 0, 3, 8, 15, 25])), int(rng.choice([0, 0, 1, 10])))
+                  for _ in range(n)]
+        counts = [(s, c) if s or c else (0, 1) for s, c in counts]   # no empty page
+        val_frac = float(rng.choice([0.2, 0.34, 0.5, 0.7]))
+        y, pages = _pages(counts)
+        held = max(1, int(n * val_frac))
+        for seed in range(6):
+            got = train_strikenet.split_shortfall(y, val_frac, seed, 0.05, pages)
+            if got is None or "no split can both" in got or "holds out all" in got:
+                continue
+            can = _can_split(counts, held)
+            seen.add((can, "or raise --val-frac" in got))
+            assert ("another --seed holds out others and may pass" in got) == can, (counts, got)
+            assert ("no seed can help" in got) == (not can), (counts, got)
+            if not can and "keeps at most" in got:
+                more = any(_can_split(counts, h) for h in range(held + 1, n))
+                assert got.endswith("or raise --val-frac") == more, (counts, got)
+            if not can:
+                fewer = any(_can_split(counts, h) for h in range(1, held))
+                lowered.add(fewer)
+                assert ("lower --val-frac" in got) == fewer, (counts, got)
+    assert lowered == {True, False}
+    assert seen == {(True, False), (False, False), (False, True)}     # every case was reached
 
 
 def test_train_holds_out_the_groups_it_is_given(monkeypatch):
@@ -368,6 +470,28 @@ def test_main_records_the_settings_the_crops_were_made_with(tmp_path, monkeypatc
     train_strikenet.main(argv)                                     # sets it: all standardized here
     assert seen["training"]["paper_white_from"] == 250
     json.dumps(seen["training"], allow_nan=False)                  # as export writes it
+
+
+def test_main_scores_the_reference_at_the_settings_its_crops_were_made_with(tmp_path,
+                                                                            monkeypatch):
+    """The reference scores the labeled crops, so the package's check of its recorded settings is
+    made against the crops' settings, not the run's, and the run's come back after."""
+    made = {"paper_white_from": 240, "shade_white_frac": 0.85}
+    rows = [{"crop": f"crops/c{i}.png", "label": "struck" if i % 2 else "clean", "page": i // 4,
+             "std_crop": made} for i in range(160)]
+    (tmp_path / "crops").mkdir()
+    for i, row in enumerate(rows):
+        arr = np.full((cnn.CROP_H, cnn.CROP_W), 255, np.uint8)
+        arr[10:22, i % 150:i % 150 + 6] = 0
+        Image.fromarray(arr).save(tmp_path / row["crop"])
+    _write(tmp_path, rows)
+    seen, at = {}, []
+    _stub_training(monkeypatch, seen)
+    monkeypatch.setattr(cnn, "score_crops", lambda crops, batch_size=512: (
+        at.append((cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC)), np.full(len(crops), 0.9))[1])
+    train_strikenet.main([str(tmp_path), "-o", str(tmp_path / "out"), "--val-frac", "0.25"])
+    assert at == [(240, 0.85)]
+    assert (cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC) == (255, 0.85)
 
 
 def test_main_stops_when_no_group_split_can_train_and_calibrate(tmp_path, monkeypatch, capsys):

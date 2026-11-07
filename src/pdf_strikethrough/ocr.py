@@ -2,7 +2,7 @@
 
 The scanned classifier needs, per word: a box, the recognized text, and (ideally) an OCR
 confidence. Different engines report these differently, so everything funnels through one small
-type — ``Word`` — with adapters that convert each engine's native output into a list of them.
+type, ``Word``, with adapters that convert each engine's native output into a list of them.
 
     Word.bbox is (x0, y0, x1, y1) in PAGE FRACTIONS (0..1), origin top-left.
     Word.confidence is 0..1 or None.
@@ -38,14 +38,14 @@ class Word:
     confidence: float | None = None
 
     def __post_init__(self):
-        # bboxes are used as dict keys downstream — coerce lists/ndarrays to a hashable tuple
+        # bboxes are used as dict keys downstream; coerce lists/ndarrays to a hashable tuple
         object.__setattr__(self, "bbox", tuple(float(v) for v in self.bbox))
         if len(self.bbox) != 4:
             raise ValueError(f"Word.bbox must be (x0, y0, x1, y1); got {self.bbox!r}")
         if not all(math.isfinite(v) for v in self.bbox):
             raise ValueError(f"Word.bbox must be finite page fractions, got {self.bbox!r}")
         # a box in pixel coordinates would sail through the whole scanned pipeline and quietly
-        # report every word clean — reject it at construction (mirrors cnn.word_crop_px's >1.5 gate)
+        # report every word clean; reject it at construction (mirrors cnn.word_crop_px's >1.5 gate)
         if max(abs(v) for v in self.bbox) > 1.5:
             raise ValueError(
                 f"Word.bbox must be normalized page fractions in [0,1], got {self.bbox!r} "
@@ -192,7 +192,7 @@ def words_from_textract(result) -> "dict[int, list[Word]]":
 # --------------------------------------------------------------------------- Google Document AI
 
 def _docai_key(d, *names):
-    """First present of the given keys — DocAI is camelCase over REST/JSON but snake_case once a
+    """First present of the given keys. DocAI is camelCase over REST/JSON but snake_case once a
     proto goes through the Python SDK's ``Document.to_dict()``."""
     for n in names:
         if n in d:
@@ -219,7 +219,7 @@ def _docai_bbox(layout, pw, ph):
         ys = [float(v.get("y", 0.0)) for v in norm]
         return (min(xs), min(ys), max(xs), max(ys))
     verts = poly.get("vertices")
-    if verts:                                    # pixel vertices — normalize by page dimension
+    if verts:                                    # pixel vertices: normalize by page dimension
         if not pw or not ph:
             raise ValueError(
                 "Document AI token has pixel vertices but its page has no 'dimension' "
@@ -239,7 +239,7 @@ def words_from_docai(document) -> "dict[int, list[Word]]":
     A box that runs past the edge of the page is clamped to it, and a page where most boxes lie
     past 1.5 raises ValueError, as in ``words_from_azure_di()``.
 
-    Like Textract, DocAI does not flag strikethrough — feed the result to ``detect_pdf(pdf,
+    Like Textract, DocAI does not flag strikethrough; feed the result to ``detect_pdf(pdf,
     words_by_page=...)`` and run confidence-free (its ``layout.confidence`` isn't calibrated to
     the scanned classifier)."""
     document = _as_dict(document)
@@ -283,8 +283,28 @@ def _is_shape_error(error):
     """RapidOCR's ResizeImgError: it scales a long side over max_side_len down to it and raises
     when the short side rounds to 0, on an image too long for its width. detect_pdf and
     detect_image_file skip such a page with a warning. RapidOCR defines two, in two modules, so it
-    is known by its name."""
-    return type(error).__name__ == "ResizeImgError"
+    is known by its name. Also _TooTall, for a page they skip before RapidOCR sees it."""
+    return isinstance(error, _TooTall) or type(error).__name__ == "ResizeImgError"
+
+
+# RapidOCR's time on a thin image grows with how many times taller than wide it is: a strip 40 px
+# wide takes about as long as a letter page at 32 times, and one 10 x 1,300 px more than three
+# times as long, while one 40 px tall takes a few seconds at every length tried, up to 2,560 px.
+# Detection skips a page more than this many times as tall as it is wide rather than hand it to
+# rapidocr_backend(); a letter page is 1.29 times.
+_RAPIDOCR_MAX_TALL = 32
+
+
+class _TooTall(Exception):
+    """A page _check_tall skips, raised by detection, not by RapidOCR."""
+
+
+def _check_tall(ocr, image):
+    """Raise _TooTall when `ocr` is a rapidocr_backend() and `image` is more than
+    _RAPIDOCR_MAX_TALL times as tall as it is wide."""
+    h, w = image.shape[:2]
+    if getattr(ocr, "_rapidocr", False) is True and h > _RAPIDOCR_MAX_TALL * w:
+        raise _TooTall()
 
 
 def _require_rapidocr_3_2(version):
@@ -388,7 +408,11 @@ def rapidocr_backend(engine=None, *, drop_lone_cjk=True, **engine_kwargs):
     A word box that runs past the edge of the page is clamped to it; a word placed wholly off the
     page keeps its text, on a zero-width box at the edge. RapidOCR detection is phrase/line-grained,
     so its word boxes run coarser than a true word-level engine: good for locating struck regions,
-    weaker for per-word char spans."""
+    weaker for per-word char spans.
+
+    detect_pdf and detect_image_file skip a page more than 32 times as tall as it is wide, with a
+    warning, rather than hand it to this backend: RapidOCR reads such a strip slowly or not at all.
+    Called directly, the backend does not skip it."""
     if engine is None:
         engine_kwargs["params"] = {**_RAPIDOCR_DEFAULT_PARAMS,
                                    **(engine_kwargs.get("params") or {})}
@@ -430,6 +454,7 @@ def rapidocr_backend(engine=None, *, drop_lone_cjk=True, **engine_kwargs):
                                     float(score) if score is not None else None))
         return _drop_lone_cjk(out) if drop_lone_cjk else out
 
+    backend._rapidocr = True                      # detection skips a page too tall for it
     return backend
 
 
@@ -438,7 +463,7 @@ def rapidocr_backend(engine=None, *, drop_lone_cjk=True, **engine_kwargs):
 def tesseract_backend(lang="eng", config="", min_conf=0.0):
     """Return an OCR backend using Tesseract via pytesseract (needs the tesseract binary too;
     `pip install "pdf-strikethrough-detect[tesseract]"`, then install tesseract). Gives genuine
-    word-level boxes and per-word confidence (0..1) — closest to Azure DI granularity."""
+    word-level boxes and per-word confidence (0..1), closest to Azure DI granularity."""
     def backend(image) -> list[Word]:
         import pytesseract
         from pytesseract import Output

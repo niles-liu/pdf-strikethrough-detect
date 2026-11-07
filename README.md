@@ -84,8 +84,10 @@ geometry, OCR word boxes and StrikeNet (the bundled model), and `markdown`, `cle
 `passages` cover both. A scanned page with no OCR raises `OcrRequiredError` (`on_missing_ocr="skip"`
 skips it). A password-protected PDF raises `EncryptedPdfError`, and a file that is not a readable
 PDF (an image, say, or one whose page tree MuPDF cannot walk) raises `InvalidPdfError` before any
-page is detected. An image's dpi comes from its metadata (else 200), and a photo's EXIF rotation
-is applied.
+page is detected. A damaged file whose page count changes as MuPDF repairs it while reading the
+pages raises it too, possibly after some pages are detected. A page tree holding pages MuPDF does
+not read (a `/Count` in it too low) gives a warning with the count. An image's dpi comes from its
+metadata (else 200), and a photo's EXIF rotation is applied.
 
 Every record has a `verdict`: `"struck"`, `"clean"` or `"unsure"`, and `final` is true exactly when
 it is `"struck"`. Born-digital records are always `"struck"`. On a scan, `"clean"` means StrikeNet
@@ -128,7 +130,9 @@ process, set by the engine built last). The default model can read a small mark 
 (`(a)` as `(斗)`), so on a page with no run of CJK text it removes lone CJK characters, real ones
 included (`100 円` loses the unit); `drop_lone_cjk=False` keeps them, and the CLI always removes
 them. Word boxes past the page edge are clamped to it. A page RapidOCR cannot resize, one too long
-for its width, is skipped with a warning.
+for its width, is skipped with a warning. So is one more than 32 times as tall as it is wide, which
+RapidOCR reads slowly or not at all (a strip 10 x 1,300 px takes it more than three times as long
+as a letter page); an OCR backend of your own is handed every page.
 
 **Operating points.** `ScanConfig.recall_first()` catches more deletions at the cost of more review;
 `ScanConfig.precision_first()` avoids dropping live text (RAG, indexing). Fit a threshold to your
@@ -230,7 +234,7 @@ middle. Reading order is column-aware.
 | Two-column pages, struck table rows, strikes across hyphenated line breaks | handled |
 | CJK text-layer PDFs | handled: a strike is horizontal whatever the script |
 | CJK scans | many false strikes: 13 to 29% of unstruck Korean, Chinese and Japanese words on synthetic 200 dpi sans-serif scans (a serif Chinese font more than doubled it), from horizontal strokes inside characters; check `markdown` before trusting `clean_text` |
-| Handwritten strikes | mostly missed: under 5% of struck words found on BRESSAY's pages (a public dataset of handwriting) |
+| Handwritten strikes | mostly missed: under 5% of struck words found on BRESSAY's pages (a public dataset of handwriting); on such pages `st.cnn.PAPER_WHITE_FROM = 240` marks fewer live words, for as many struck ones with Azure DI words and fewer with RapidOCR words (CHANGELOG, 0.14.2) |
 | Dashed strikes | often found only in part |
 | Strikes steeper than 12° (PDF) or 25° (scan) | not found |
 | Thin or light-colored strokes on scans | may be missed |

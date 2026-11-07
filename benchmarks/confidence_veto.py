@@ -1,4 +1,4 @@
-"""Confidence-veto precision benchmark — scanned ruled-table over-flagging (issues #4, #7).
+"""Confidence-veto precision benchmark: scanned ruled-table over-flagging (issues #4, #7).
 
 Runs the scanned Azure-DI path over a directory of scanned, tightly-ruled table/form PDFs.
 
@@ -9,15 +9,15 @@ residual left to a CNN retrain.
 ``--ab`` mode measures the **printed-rule veto** (issue #7): it runs
 each document twice, with ``ScanConfig()`` and with ``ScanConfig.ruled_forms()``, and reports the
 change. When the corpus ships a `ground-truth.json` it scores TP / FP / FN against it instead of
-quoting raw counts — a raw struck-final count is NOT a false-positive count, because it includes the
+quoting raw counts: a raw struck-final count is NOT a false-positive count, because it includes the
 real strikes. Quote the number this prints; do not quote a remembered one.
 
 ``--switches`` scores all four combinations of the two provisional precision switches
 (``veto_printed_rules`` and ``rescue_clean_chains``), since they are independent and opted into
-separately — it reports what each buys alone and how much they overlap.
+separately; it reports what each buys alone and how much they overlap.
 
 The corpus is private and is NOT committed (see `.gitignore: /benchmarks/private/`). Point the
-harness at a local copy — one subfolder per document, each holding a `*.pdf` and a
+harness at a local copy: one subfolder per document, each holding a `*.pdf` and a
 `di-result.json` (an Azure DI `prebuilt-layout` analyze result, so no cloud call is made), plus
 an optional `ground-truth.json` at the corpus root (schema documented in its own `_schema` key):
 

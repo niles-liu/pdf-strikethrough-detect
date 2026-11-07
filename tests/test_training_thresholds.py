@@ -383,9 +383,25 @@ def test_an_interrupted_export_never_pairs_the_old_meta_with_the_new_graph(tmp_p
     assert (tmp_path / "strike_verdict_cnn.onnx").read_bytes() == SHIPPED.read_bytes()
 
 
-def _labeled(tmp_path, labels, source=None):
+def _word(i, struck):
+    """A printed word rendered in grey at 150 dpi, with a strike through it when `struck`: the
+    packaged StrikeNet scores such crops near 1 and the clean ones near 0."""
+    import pymupdf
+    doc = pymupdf.open()
+    page = doc.new_page(width=120, height=40)
+    page.insert_text((8, 27), f"word{i:03d}", fontsize=16)
+    r = pymupdf.Rect(page.get_text("words")[0][:4])
+    if struck:
+        y = (r.y0 + r.y1) / 2 + 1
+        page.draw_line(pymupdf.Point(r.x0, y), pymupdf.Point(r.x1, y), width=1.5)
+    pix = page.get_pixmap(dpi=150, colorspace=pymupdf.csGRAY, clip=r + (-3, -3, 3, 3))
+    doc.close()
+    return np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width)
+
+
+def _labeled(tmp_path, labels, source=None, words=False):
     """A dataset of 4-crop pages labeled as given, one crop per label; with `source`, each row's
-    ``source`` is source(page)."""
+    ``source`` is source(page); with `words`, each crop is a printed word, struck as labeled."""
     rows = [{"crop": f"crops/c{i}.png", "label": lab, "page": i // 4}
             for i, lab in enumerate(labels)]
     if source is not None:
@@ -395,6 +411,8 @@ def _labeled(tmp_path, labels, source=None):
     for i, row in enumerate(rows):
         arr = np.full((24, 96), 255, np.uint8)
         arr[8:16, i % 90:i % 90 + 6] = i % 200
+        if words:
+            arr = _word(i, row["label"] == "struck")
         Image.fromarray(arr).save(tmp_path / row["crop"])
     (tmp_path / "crops.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
                                           encoding="utf-8")
@@ -726,7 +744,7 @@ def test_main_reports_too_few_clean_crops_for_the_conformal_p_lo(tmp_path, monke
 def test_main_writes_how_it_set_the_thresholds_into_the_meta(tmp_path, monkeypatch):
     data = tmp_path / "data"
     data.mkdir()
-    pages = _labeled(data, ["clean", "struck"] * 120)
+    pages = _labeled(data, ["clean", "struck"] * 120, words=True)
     net = _fake_torch(monkeypatch)
     _reference(monkeypatch, CAUGHT, {})
     find_spec = importlib.util.find_spec
@@ -741,8 +759,10 @@ def test_main_writes_how_it_set_the_thresholds_into_the_meta(tmp_path, monkeypat
     x = train_strikenet.load_dataset(data)[0]
     p = train_strikenet.as_called(train_strikenet.score_graph(SHIPPED.read_bytes(), x[val]))
     assert meta["p_hi"] == p[struck].min()                            # every strike was caught
-    assert meta["p_lo"] == min(p[~struck].max(), meta["p_hi"])        # and every clean crop
+    assert meta["p_lo"] == p[~struck].max() < meta["p_hi"] - 0.5      # and every clean crop
     calibration = meta["training"]["calibration"]
+    assert calibration["called_struck"] == {"struck": {"reference": 24, "new": 24},
+                                            "clean": {"reference": 0, "new": 0}}
     assert calibration["reference"]["sha256"] == REFERENCE["sha256"]
     assert calibration["p_hi"]["by_source"] == [{"source": None, "struck": 24, "groups": 12,
                                                  "reference_calls": 24, "matched": meta["p_hi"]}]

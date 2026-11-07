@@ -54,7 +54,7 @@ from .types import DetectResult, GarbledWord, PageWords, Passage, StruckWord, Te
 # ``warnings`` stays reserved for caller-facing hazards (silent-[] on scans, scanned-fallback, ...).
 _logging.getLogger("pdf_strikethrough").addHandler(_logging.NullHandler())
 
-__version__ = "0.14.0"
+__version__ = "0.14.2"
 
 __all__ = [
     # high-level
@@ -91,8 +91,9 @@ def open_pdf(source):
     fitz document.
     Raises EncryptedPdfError for password-protected PDFs (routes through the same gate as
     ``detect_pdf``; an already-authenticated document passes), and InvalidPdfError for a file that
-    is not a readable PDF or whose page tree MuPDF cannot walk. Loads every page once to check;
-    to read a few pages of an untrusted file, pass it to ``detect_pdf`` with ``pages=``."""
+    is not a readable PDF, whose page tree MuPDF cannot walk, or whose page count changes as MuPDF
+    repairs it while loading the pages. Loads every page once to check; to read a few pages of an
+    untrusted file, pass it to ``detect_pdf`` with ``pages=``."""
     return detect._open_doc(source)[0]
 
 
@@ -103,21 +104,23 @@ def render_page_gray(page, dpi=lines.RENDER_DPI):
 
 def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
     """Struck-word records for a born-digital PDF (path/bytes/binary file/fitz doc), all pages, page
-    by page and each page top to bottom. Exact — driven by the PDF's own strike drawings. `method`:
+    by page and each page top to bottom. Exact, driven by the PDF's own strike drawings. `method`:
     'vector' (stroke geometry, precise partial-char spans; default), 'flag' (MuPDF's strikeout span
     flag), 'annot' (/StrikeOut annotations, with author/date forensics), or 'both' (union of all
     three, maximum recall).
 
-    Scanned PDFs have no vector strikes, so this returns [] for them — and emits a
+    Scanned PDFs have no vector strikes, so this returns [] for them, and emits a
     ``UserWarning`` naming the scanned pages, because a silent [] on a scan (the package's own
     README opens with one) is the most dangerous confusion it can produce. Route scans through
     ``detect_pdf(..., ocr=...)`` instead."""
     doc = open_pdf(source)
     try:
-        if note := detect._page_tree_note(doc):
+        for note in detect._page_tree_notes(doc):
             _warnings.warn(note, stacklevel=2)
-        scanned_pages = [p for p in range(doc.page_count)
-                         if detect.classify_page_source(doc[p]) == "scanned"]
+        count = doc.page_count  # a damaged file's page count can change as its pages are read
+        scanned_pages = [p for p in range(count)
+                         if detect.classify_page_source(detect._page(doc, p, count)) == "scanned"]
+        detect._check_page_count(doc, count)
         if scanned_pages:
             shown = ", ".join(str(p) for p in scanned_pages[:10])
             more = "" if len(scanned_pages) <= 10 else f" (+{len(scanned_pages) - 10} more)"
@@ -152,11 +155,22 @@ def clean_markdown(source) -> str:
     such as a paragraph set entirely in a monospaced font, since it writes no ``~~`` there."""
     doc = open_pdf(source)
     try:
-        if note := detect._page_tree_note(doc):
+        for note in detect._page_tree_notes(doc):
             _warnings.warn(note, stacklevel=2)
-        if doc.page_count == 0:
+        count = doc.page_count  # a damaged file's page count can change as its pages are read
+        if count == 0:
             return ""
-        return native.strip_struck_markdown(native.native_markdown(doc))
+        try:
+            md = native.native_markdown(doc)
+        except Exception as e:
+            try:
+                detect._check_page_count(doc, count)  # pymupdf4llm's error, after a repair
+            except detect.InvalidPdfError:
+                detect._drop_frames(e, None)
+                raise
+            raise
+        detect._check_page_count(doc, count)
+        return native.strip_struck_markdown(md)
     finally:
         if not hasattr(source, "page_count"):
             doc.close()
@@ -165,7 +179,7 @@ def clean_markdown(source) -> str:
 def provenance_text(result, template="[deleted: {}]") -> str:
     """Audit-preserving text from a ``detect_pdf``/``detect_image_file`` result: struck spans are
     replaced with ``[deleted: …]`` markers instead of removed (contrast ``clean_text``, which drops
-    them). For RAG / indexing where a silent deletion is the hazard — the deleted text stays
+    them). For RAG / indexing where a silent deletion is the hazard: the deleted text stays
     visible-as-deleted so a downstream index records that something *was* struck.
 
     `result` must carry ``markdown`` (i.e. ``include_markdown=True``, the default; ValueError

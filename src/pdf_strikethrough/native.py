@@ -1,8 +1,8 @@
-"""Native-PDF strikethrough extraction — for born-digital PDFs, vector geometry is exact
+"""Native-PDF strikethrough extraction: for born-digital PDFs, vector geometry is exact
 ground truth (no OCR, no model, no guessing).
 
 In born-digital documents a strikethrough is a DRAWING: a thin horizontal vector line ("l"
-item), a thin filled bar ("re"/"qu" item, or a thin fill-only path), or — dashed or curve-drawn — a
+item), a thin filled bar ("re"/"qu" item, or a thin fill-only path), or (dashed or curve-drawn) a
 run of short segments / a flat cubic bezier ("c" item), all painted over the text. A word is struck
 where a stroke runs through its STRIKE BAND, fully or in part ('semi-' of 'semi-monthly', '19' of
 '192012'); where its character boxes are estimated, or the stroke enters it from outside, the
@@ -31,7 +31,7 @@ All output bbox_frac values are fractions of the ROTATED (as-rendered) page, so 
 directly onto ``page.get_pixmap()`` output; detection itself runs in MuPDF's unrotated text
 space, where strikes over upright text stay horizontal regardless of /Rotate.
 
-Scope — HORIZONTAL (left-to-right) text only. The vector path (``horiz_strokes``) matches only
+Scope: HORIZONTAL (left-to-right) text only. The vector path (``horiz_strokes``) matches only
 near-horizontal strokes, so it skips words that run vertically in text space (vertical writing, or
 content rotated by /Rotate); the flag and annotation paths read those. Vertical writing modes and
 non-Latin scripts whose strikes run along a different axis are otherwise out of scope. Horizontal
@@ -133,7 +133,7 @@ def _bbox_frac(page, x0, y0, x1, y1):
 
 
 def _paint_invisible(color, opacity):
-    """A stroke/fill leaves no ink — and so cannot strike anything — when it is fully transparent
+    """A stroke/fill leaves no ink, and so cannot strike anything, when it is fully transparent
     or painted in ~the page background (near-white). An unset (None) stroke color is PDF-default
     black, i.e. visible."""
     if opacity is not None and opacity <= 0.05:
@@ -193,9 +193,9 @@ def horiz_strokes(page):
     """All horizontal stroke intervals on the page: ``[(x0, x1, y, color, width), ...]`` in pt
     (unrotated space). ``color`` is the paint that makes the mark (the stroke color for a line,
     the fill color for a filled bar) as an RGB 3-tuple in [0, 1]; ``width`` is the stroke line
-    width for a line, or the bar height for a filled rect — the visual thickness of the strike.
+    width for a line, or the bar height for a filled rect: the visual thickness of the strike.
     Invisible strokes (transparent, or drawn in the page background color) leave no ink and are
-    skipped — geometry alone would otherwise confirm a white / opacity-0 line as a strike. A
+    skipped: geometry alone would otherwise confirm a white / opacity-0 line as a strike. A
     fill-only path paints its interior, not its outline, so each of its subpaths counts as a bar
     when it is thin enough.
 
@@ -281,7 +281,7 @@ def _strokes(page, drawn=None):
                     dx, dy = abs(pts[3].x - pts[0].x), abs(pts[3].y - pts[0].y)
                     flat, lean = dy <= MAX_STROKE_SLOPE * dx, dy > LEVEL_SLOPE * dx
             elif it[0] in ("re", "qu"):
-                # a strike drawn as a thin bar is a FILLED rect — judge it by its fill paint,
+                # a strike drawn as a thin bar is a FILLED rect; judge it by its fill paint,
                 # falling back to the stroke paint when it is only stroked
                 if d.get("fill") is not None:
                     col, op = d.get("fill"), d.get("fill_opacity", 1.0)
@@ -1124,7 +1124,7 @@ def native_page_strikes(page, page_index, words=None, _chars=None, _garbled=None
     Each record: {page, text, chars, char_span, partial, bbox_frac, coverage, stroke_color,
     stroke_width, tier='vector', verdict='struck', final=True}. Vector geometry is exact, so there
     is no unsure tier. ``stroke_color`` (RGB 3-tuple in [0, 1]) and ``stroke_width`` (pt) come from
-    the dominant contributing stroke — pen-color conventions (red = opposing counsel) are evidence
+    the dominant contributing stroke; pen-color conventions (red = opposing counsel) are evidence
     in legal review.
 
     Characters followed by U+0336 overlays are struck too, and ``text`` leaves out the overlays on
@@ -1288,16 +1288,16 @@ def _snap_rects_to_words(page, page_index, page_words, rects, tier, extra=None, 
 
 
 def native_flag_strikes(page, page_index, words=None, _chars=None, _garbled=None):
-    """Struck words from MuPDF's own strikeout detection — the FZ_STEXT_STRIKEOUT char flag,
+    """Struck words from MuPDF's own strikeout detection: the FZ_STEXT_STRIKEOUT char flag,
     enabled by extracting with COLLECT_STYLES|COLLECT_VECTORS (base PyMuPDF >= 1.26.6, no
     pymupdf4llm needed; this is the same signal pymupdf4llm renders as ``~~``).
 
-    Raises ``RuntimeError`` on PyMuPDF 1.26.3–1.26.5, which segfault on that extraction rather
+    Raises ``RuntimeError`` on PyMuPDF 1.26.3 to 1.26.5, which segfault on that extraction rather
     than raising (see :data:`FLAG_MIN_PYMUPDF`). The ``'vector'`` and ``'annot'`` detectors never
     pass the flag and are unaffected.
 
     Struck spans are snapped onto the page's ``get_text("words")`` boxes, so records carry the
-    SAME exact word boxes and text as the vector detector — a span covering only part of a word
+    SAME exact word boxes and text as the vector detector: a span covering only part of a word
     ('Policy' of 'PolicyTo') becomes a partial strike over exactly the flagged characters. All
     four axis directions are read. The character set is MuPDF's own and can include the character
     a strike ends against ('DecemberM'), more often under PyMuPDF 2.0 (MuPDF 1.28.5), which also
@@ -1349,13 +1349,13 @@ def native_flag_strikes(page, page_index, words=None, _chars=None, _garbled=None
 
 
 def native_annot_strikes(page, page_index, words=None, _chars=None, _garbled=None):
-    """Struck words from explicit ``/StrikeOut`` markup annotations — the redlines Acrobat, Preview,
+    """Struck words from explicit ``/StrikeOut`` markup annotations: the redlines Acrobat, Preview,
     and other editors write as annotation objects (QuadPoints over the struck text), distinct from
     the vector drawings the geometry path reads and from the font-attribute flag path.
 
     Each annotation's QuadPoints are snapped onto the page words (same word boxes/text as the other
-    detectors; partial spans supported). Records carry tier='annot' plus forensic keys — the value
-    no extractor exposes — when the annotation supplies them:
+    detectors; partial spans supported). Records carry tier='annot' plus forensic keys (the value
+    no extractor exposes) when the annotation supplies them:
       ``annot_author`` (/T), ``annot_created`` (/CreationDate), ``annot_modified`` (/M),
       ``annot_color`` (RGB 3-tuple), ``annot_id`` (/NM). "Who struck this, and when."
 
@@ -1454,18 +1454,18 @@ def _displaces(rec, cov):
 
 def page_strikes(page, page_index, method="vector", words=None, _garbled=None, _chars=None):
     """Struck-word records for one native page by `method`:
-      'vector' — this module's stroke-geometry detector (precise partial-char spans; default),
+      'vector':  this module's stroke-geometry detector (precise partial-char spans; default),
                  which also reads U+0336 overlay characters; the others don't
-      'flag'   — MuPDF's own FZ_STEXT_STRIKEOUT span flag (also catches font-attribute
+      'flag':    MuPDF's own FZ_STEXT_STRIKEOUT span flag (also catches font-attribute
                  strikethroughs the vector path can miss)
-      'annot'  — explicit /StrikeOut markup annotations (Acrobat/Preview redlines), with
+      'annot':   explicit /StrikeOut markup annotations (Acrobat/Preview redlines), with
                  author/date/color forensics (see :func:`native_annot_strikes`)
-      'both'   — union of all three: vector records, plus flag/annot records for words no
+      'both':    union of all three: vector records, plus flag/annot records for words no
                  earlier record covers, or that replace a record struck by overlays alone
                  (maximum recall)
     In validation on 10 public redline PDFs (55.7k struck words), 99.8% of vector detections
     are independently confirmed by the flag signal (99.6-100% per document); the flag signal
-    typically marks additional words on top — 'both' captures them. Reproduce with
+    typically marks additional words on top; 'both' captures them. Reproduce with
     ``benchmarks/confirmation_rate.py``.
 
     A record whose word comes from a broken character map carries ``garbled: True``: its ``text``
@@ -1516,11 +1516,15 @@ def page_strikes(page, page_index, method="vector", words=None, _garbled=None, _
 
 def native_doc_strikes(doc, method="vector"):
     """Struck-word records across every page of an open fitz document, page by page, each page
-    top to bottom then left to right. See :func:`page_strikes` for the `method` options."""
-    out = []
-    for pno in range(doc.page_count):
-        page = doc[pno]
+    top to bottom then left to right. See :func:`page_strikes` for the `method` options. Raises
+    InvalidPdfError when MuPDF repairs the damaged file as it reads the pages and the page count
+    changes."""
+    from .detect import _check_page_count, _page      # detect imports this module
+    out, count = [], doc.page_count
+    for pno in range(count):
+        page = _page(doc, pno, count)
         out.extend(page_strikes(page, pno, method, words=page.get_text("words")))
+    _check_page_count(doc, count)
     return out
 
 
@@ -1555,7 +1559,7 @@ def _stdout_to_stderr():
 
 
 def native_markdown(doc):
-    """pymupdf4llm markdown for the whole document — struck spans arrive as ~~text~~. Requires
+    """pymupdf4llm markdown for the whole document: struck spans arrive as ~~text~~. Requires
     the ``[markdown]`` extra; used only for its richer layout (headings, tables, columns). The
     strikeout signal itself is base-PyMuPDF (see :func:`native_flag_strikes`). Anything
     pymupdf4llm prints goes to stderr, and calls from several threads run one at a time."""

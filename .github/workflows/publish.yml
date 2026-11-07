@@ -3,7 +3,7 @@ name: Publish to PyPI
 # On a GitHub Release tagged vX.Y.Z: build, test the built wheel, and publish to PyPI. A release
 # whose tag does not start with v or V (a benchmark pre-registration, say) runs no job.
 # On a manual run (workflow_dispatch): the build job alone, a dry run that publishes nothing.
-# Uses PyPI Trusted Publishing (OIDC) — no API token is stored.
+# Uses PyPI Trusted Publishing (OIDC); no API token is stored.
 on:
   release:
     types: [published]
@@ -52,7 +52,7 @@ jobs:
           name: dist
           path: dist/
 
-  # Real publish — only on a GitHub Release.
+  # Real publish: only on a GitHub Release.
   publish-pypi:
     needs: build
     if: github.event_name == 'release'

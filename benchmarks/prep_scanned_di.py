@@ -24,7 +24,7 @@ import urllib.request
 from _corpus import MANIFEST, _sha256, corpus_dir, load_manifest
 from _scanned import build_scanned_pdf, struck_pages
 
-# (manifest `file`, number of most-struck pages to rasterize) — kept small; DI bills per page.
+# (manifest `file`, number of most-struck pages to rasterize), kept small; DI bills per page.
 CONFIG = [
     ("copyright-201-10-redline.pdf", 4),
     ("gretna-udo-edits.pdf", 8),

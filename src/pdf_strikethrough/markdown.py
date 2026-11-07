@@ -6,7 +6,7 @@ Reading-order words (each optionally carrying a struck record) become:
   - ``clean_text`` = the surviving text with those spans removed.
 
 This reflects THIS package's own strike decisions (from vector geometry on native pages, or
-geometry+OCR+CNN on scanned pages) — it does not depend on any external markdown engine, so the
+geometry+OCR+CNN on scanned pages); it does not depend on any external markdown engine, so the
 text and the per-word records always agree.
 """
 from __future__ import annotations
@@ -32,15 +32,15 @@ def mark_word(text, rec):
 COL_MIN_GUTTER = 0.045   # min interior x-gap (page fraction) to read as a column boundary
 COL_MIN_WORDS  = 8       # below this many words a page carries too little signal to split
 COL_MIN_SIDE   = 3       # each resulting column must hold at least this many words
-COL_MIN_WIDTH  = 0.15    # each column must span >= this frac of the page width — narrow gutters
+COL_MIN_WIDTH  = 0.15    # each column must span >= this frac of the page width; narrow gutters
                          # between narrow cells are a TABLE (read across rows), not prose columns
 
 
 def _column_partition(items):
     """Split [(text, bbox_frac, rec), ...] into columns at full-height vertical whitespace
     corridors, returning a list of item-lists ordered left→right (a single list when there is no
-    clear split). A corridor is an interior x-range (page fractions) that no word box crosses — the
-    gutter between newspaper-style columns — so a two-column page reads DOWN each column instead of
+    clear split). A corridor is an interior x-range (page fractions) that no word box crosses (the
+    gutter between newspaper-style columns), so a two-column page reads DOWN each column instead of
     across both. Deliberately conservative: it needs enough words and a wide gutter with enough text
     on each side, so ordinary single-column prose (whose word boxes tile the width) never splits."""
     if len(items) < COL_MIN_WORDS:
@@ -62,7 +62,7 @@ def _column_partition(items):
         if col:
             cols.append(col)
     if len(cols) < 2 or any(len(c) < COL_MIN_SIDE for c in cols):
-        return [items]                             # not a real multi-column layout — keep as one
+        return [items]                             # not a real multi-column layout: keep as one
     for c in cols:
         if max(b[2] for _, b, _ in c) - min(b[0] for _, b, _ in c) < COL_MIN_WIDTH:
             return [items]                         # a narrow column => a table, not prose columns
@@ -147,12 +147,12 @@ def strip_struck(md):
 
 def mark_provenance(md, template="[deleted: {}]"):
     """Rewrite ``~~struck~~`` spans as audit markers (default ``[deleted: X]``) instead of removing
-    them — audit-preserving text for RAG / indexing, where silently dropping deleted text loses the
+    them: audit-preserving text for RAG / indexing, where silently dropping deleted text loses the
     fact that something *was* deleted (a documented LlamaIndex failure mode). `template` is a
     ``str.format`` pattern receiving the struck text.
 
     Consecutive struck words separated only by spaces (a deletion passage) collapse into one
-    marker — ``~~the~~ ~~old~~ ~~rate~~`` -> ``[deleted: the old rate]`` — rather than one marker
+    marker (``~~the~~ ~~old~~ ~~rate~~`` -> ``[deleted: the old rate]``) rather than one marker
     per word. Shares :func:`strip_struck`'s caveat: text with a literal ``~~`` is ambiguous in
     markdown form (prefer building this from ``detect_pdf(...)['markdown']``, which the package
     emits)."""

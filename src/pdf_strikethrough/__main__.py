@@ -1,7 +1,7 @@
 """CLI: `pdf-strikethrough detect FILE [--ocr rapidocr] [--json out.json]`.
 
 FILE may be a PDF, a raster image (``.png/.jpg/.tiff``, incl. multi-page TIFF), or a Word
-``.docx`` — the input kind is inferred from the extension. Native PDFs need nothing extra;
+``.docx``; the input kind is inferred from the extension. Native PDFs need nothing extra;
 scanned PDFs and image files need an OCR backend (``--ocr rapidocr`` / ``--ocr tesseract``) or a
 pre-fetched cloud result (``--di-result`` Azure DI, ``--textract-result`` AWS Textract,
 ``--docai-result`` Google DocAI); without any, scanned pages are skipped with a warning while
@@ -164,7 +164,7 @@ def _is_glob(arg):
 def _expand_inputs(patterns):
     """Expand the FILE args into a sorted, de-duplicated list of input paths. Each arg may be a
     literal file, a directory (its top-level PDFs / images / .docx), or a glob (``*.pdf``, and
-    ``**`` recurses — expanded here too, so it works on shells that don't glob, e.g. Windows); a
+    ``**`` recurses), expanded here too so it works on shells that don't glob (e.g. Windows); a
     glob keeps only the files of those kinds, like a directory. '-' (stdin) passes through, alone.
     Returns None after printing an error when an arg matches nothing."""
     import glob as _glob
@@ -328,9 +328,9 @@ def _cmd_detect_single(args, path):
                 print(f"warning: {flag} does not apply to an image file; ignored",
                       file=sys.stderr)
         try:
-            res = st.detect_image_file(path, ocr=ocr, words_by_page=words_by_page,
-                                       scan_config=scan_config, dpi=args.dpi,
-                                       telemetry=bool(args.telemetry))
+            res = _shown_once(lambda: st.detect_image_file(
+                path, ocr=ocr, words_by_page=words_by_page, scan_config=scan_config,
+                dpi=args.dpi, telemetry=bool(args.telemetry)))
         except st.OcrRequiredError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
@@ -376,14 +376,13 @@ def _cmd_detect_single(args, path):
     have_words = di_result is not None or words_by_page is not None
     on_missing_ocr = "skip" if (args.ocr == "none" and not have_words) else "raise"
     try:
-        with warnings.catch_warnings():      # its pages are in res["warnings"], printed below
-            warnings.simplefilter("ignore", st.GarbledTextWarning)
-            res = st.detect_pdf(doc, ocr=ocr, scan_config=scan_config,
-                                dpi=args.dpi if args.dpi is not None else st.detect.RENDER_DPI,
-                                method=args.method, di_result=di_result,
-                                words_by_page=words_by_page, pages=page_subset,
-                                progress=progress, on_missing_ocr=on_missing_ocr,
-                                on_garbled=args.on_garbled, telemetry=bool(args.telemetry))
+        res = _shown_once(lambda: st.detect_pdf(
+            doc, ocr=ocr, scan_config=scan_config,
+            dpi=args.dpi if args.dpi is not None else st.detect.RENDER_DPI,
+            method=args.method, di_result=di_result, words_by_page=words_by_page,
+            pages=page_subset, progress=progress, on_missing_ocr=on_missing_ocr,
+            on_garbled=args.on_garbled, telemetry=bool(args.telemetry)),
+            ignore=st.GarbledTextWarning)    # its pages are in res["warnings"] too
     except st.OcrRequiredError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -398,6 +397,36 @@ def _cmd_detect_single(args, path):
     # open_pdf handed detect_pdf a doc, so re-attach a human-facing source label.
     res["source"] = "<stdin>" if path == "-" else path
     return _emit_result(args, res, overlay_source=pdf_source)
+
+
+def _shown_once(call, ignore=None):
+    """`call()`, a detect call, with each of its warnings shown once: it lists its own in the
+    result's "warnings", which _emit_result prints (each listed one was shown twice, as a warning
+    and as a "warning:" line). It gives its own at its caller, `call`, in this module: those are
+    held, and the ones it does not list are shown as Python shows a warning when it returns or
+    raises; any other warning is shown as it is given. `ignore` is a warning class left out
+    altogether."""
+    res, held, show = None, [], warnings.showwarning
+    here = call.__code__.co_filename           # the file warnings.warn(stacklevel=2) names
+
+    def hold(message, category, filename, lineno, file=None, line=None):
+        w = (message, category, filename, lineno, file, line)
+        if filename == here:
+            held.append(w)
+        else:
+            show(*w)
+    try:
+        with warnings.catch_warnings():
+            if ignore is not None:
+                warnings.simplefilter("ignore", ignore)
+            warnings.showwarning = hold
+            res = call()
+    finally:
+        listed = set(res.get("warnings", [])) if res is not None else set()
+        for w in held:
+            if str(w[0]) not in listed:
+                show(*w)
+    return res
 
 
 def _emit_result(args, res, overlay_source):
@@ -451,6 +480,9 @@ def _emit_result(args, res, overlay_source):
                 try:
                     written = _ov.save_overlays(doc, args.overlay, result=res,
                                                 dpi=args.overlay_dpi)
+                except st.InvalidPdfError as e:   # rendering repaired the damaged file
+                    print(f"error: cannot render the overlay: {e}", file=sys.stderr)
+                    return 1
                 finally:
                     doc.close()
                 print(f"wrote {len(written)} overlay image(s)" +
@@ -709,7 +741,7 @@ def _cmd_detect_batch(args, inputs):
 
 def main(argv=None):
     # Console output can carry non-cp1252 chars (struck ﬁ, é, → ...). Never let a
-    # print(...!r) crash on a narrow console encoding — replace unencodable chars instead.
+    # print(...!r) crash on a narrow console encoding; replace unencodable chars instead.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(errors="replace")

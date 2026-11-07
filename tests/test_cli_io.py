@@ -59,6 +59,89 @@ def test_human_output_numbers_pages_like_pages_flag(tmp_path, capsys):
     assert "  p1 " in capsys.readouterr().out                       # --pages is 1-based too
 
 
+# ----------------------------------------------------------------------- warnings
+
+def _stderr(*argv):
+    """The CLI's stderr, run as a user runs it: Python's warnings are shown, not captured."""
+    return subprocess.run([sys.executable, "-m", "pdf_strikethrough", *argv], capture_output=True,
+                          text=True, encoding="utf-8", check=True).stderr
+
+
+def test_a_pdf_warning_is_printed_once(tmp_path):
+    src = _struck_pdf(tmp_path / "a.pdf")
+    data = src.read_bytes()
+    src.write_bytes(data[:data.rindex(b"startxref")] + b"startxref\n999999\n%%EOF\n")
+    err = _stderr("detect", str(src))
+    assert err.count("MuPDF repaired it to open it") == 1, err
+    assert "warning: the PDF is damaged" in err
+
+
+def test_an_image_warning_is_printed_once(tmp_path):
+    from PIL import Image
+    img = tmp_path / "s.png"
+    Image.new("L", (400, 200), 255).save(img, dpi=(72, 72))          # a placeholder dpi
+    tj = tmp_path / "t.json"
+    tj.write_text(json.dumps({"Blocks": [
+        {"BlockType": "WORD", "Text": "word", "Confidence": 99.0, "Page": 1,
+         "Geometry": {"BoundingBox": {"Left": 0.1, "Top": 0.4, "Width": 0.2, "Height": 0.1}}}]}),
+        encoding="utf-8")
+    err = _stderr("detect", str(img), "--textract-result", str(tj))
+    assert err.count("a placeholder value") == 1, err
+    assert "warning: frame 0: the image metadata says 72 dpi" in err
+
+
+def test_a_warning_is_still_shown_when_detection_fails(tmp_path):
+    from PIL import Image
+    img = tmp_path / "s.png"
+    Image.new("L", (400, 200), 255).save(img, dpi=(72, 72))          # a placeholder dpi
+    r = subprocess.run([sys.executable, "-m", "pdf_strikethrough", "detect", str(img)],
+                       capture_output=True, text=True, encoding="utf-8")
+    assert r.returncode == 2 and "has no OCR words" in r.stderr       # no --ocr: no words
+    assert r.stderr.count("a placeholder value") == 1, r.stderr
+
+
+def test_a_warning_the_result_does_not_list_is_still_shown(tmp_path, monkeypatch, capsys):
+    import warnings
+
+    import pdf_strikethrough as st
+    detect_pdf = st.detect_pdf
+
+    def noisy(*a, **kw):
+        warnings.warn("a library's own warning")
+        print("the call goes on", file=sys.stderr)
+        return detect_pdf(*a, **kw)
+    monkeypatch.setattr(st, "detect_pdf", noisy)
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        monkeypatch.setattr(warnings, "showwarning", lambda m, c, f, n, *a, **k: print(
+            f"shown: {m} ({c.__name__}, {os.path.basename(f)}:{n})", file=sys.stderr))
+        assert cli.main(["detect", str(_struck_pdf(tmp_path / "a.pdf"))]) == 0
+    err = capsys.readouterr().err
+    shown = (f"shown: a library's own warning (UserWarning, test_cli_io.py:"
+             f"{noisy.__code__.co_firstlineno + 1})")          # its own file and line
+    assert err.count(shown) == 1, err
+    # shown as it is given, not held to the end of the call (a crash would lose it)
+    assert err.index(shown) < err.index("the call goes on")
+
+
+def test_a_library_warning_is_shown_as_python_shows_it(tmp_path):
+    # as a user runs the CLI, with Python's own showwarning: printed once, before the call ends
+    code = ("import sys, warnings\n"
+            "import pdf_strikethrough as st\n"
+            "from pdf_strikethrough import __main__ as cli\n"
+            "detect_pdf = st.detect_pdf\n"
+            "def noisy(*a, **kw):\n"
+            "    warnings.warn(\"a library's own warning\")\n"
+            "    print('the call goes on', file=sys.stderr)\n"
+            "    return detect_pdf(*a, **kw)\n"
+            "st.detect_pdf = noisy\n"
+            "sys.exit(cli.main(['detect', sys.argv[1]]))\n")
+    err = subprocess.run([sys.executable, "-c", code, str(_struck_pdf(tmp_path / "a.pdf"))],
+                         capture_output=True, text=True, encoding="utf-8", check=True).stderr
+    assert err.count("<string>:6: UserWarning: a library's own warning") == 1, err
+    assert err.index("a library's own warning") < err.index("the call goes on")
+
+
 # ----------------------------------------------------------------------- batch mode
 
 def test_jsonl_is_honored_for_a_folder_with_one_file(tmp_path):

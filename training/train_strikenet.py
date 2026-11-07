@@ -46,7 +46,7 @@ import sys
 import numpy as np
 
 import pdf_strikethrough
-from pdf_strikethrough import active, calibration, cnn
+from pdf_strikethrough import active, calibration, cnn, lines
 from pdf_strikethrough.cnn import CROP_H, CROP_W, PAD_X, PAD_Y, std_crop
 
 LABELS = {"struck": 1.0, "clean": 0.0}
@@ -136,7 +136,7 @@ def _load(dataset_dir):
                      f"{dataset_dir}")
         try:
             data = (dataset_dir / crop).read_bytes()
-            gray = np.asarray(Image.open(io.BytesIO(data)).convert("L"), dtype=np.uint8)
+            gray = _gray(Image.open(io.BytesIO(data)))
         except OSError as e:                    # missing, a folder, or not an image PIL reads
             sys.exit(f"{manifest}:{n}: cannot read the crop {crop}: "
                      f"{e.strerror or 'not an image PIL reads'}")
@@ -190,6 +190,22 @@ def _load(dataset_dir):
     return np.stack(xs).astype(np.float32), np.asarray(ys, dtype=np.float32), digest, rows
 
 
+def _gray(img):
+    """A crop image's grey levels, 0 to 255, so a crop an image editor saved again reads as the
+    8-bit crop it holds: a 16-bit image scaled as the detector scales it (65535 is 255, and 8-bit
+    levels held in 16 bits pass through; a transparent grey level is ignored), and one with
+    transparency composited over white paper (PIL's ``convert("L")`` alone reads transparent
+    paper over black as solid ink). Any other image goes through ``convert("L")``."""
+    from PIL import Image
+    if img.mode in ("I", "I;16", "I;16B", "I;16L", "I;16N"):
+        return lines.to_gray_u8(np.asarray(img))
+    if img.has_transparency_data:
+        rgba = img.convert("RGBA")
+        white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return np.asarray(Image.alpha_composite(white, rgba).convert("L"), dtype=np.uint8)
+    return np.asarray(img.convert("L"), dtype=np.uint8)
+
+
 def _is_settings(value, run):
     """Whether a row's ``std_crop`` is the settings object dump_crops writes: a finite number for
     each key of `run`, this run's settings, and no other key."""
@@ -216,22 +232,46 @@ def _given(value):
     return not isinstance(value, (list, dict)) or bool(value)
 
 
+def _whole(value):
+    """`value` with each float that holds a whole number made that number (7.0 is 7), in lists
+    and objects too, as a spreadsheet can save a number either way."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_whole(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _whole(v) for k, v in value.items()}
+    return value
+
+
 def _page(row):
-    """A row's page within its crop's folder, as JSON text, or None when it names no page."""
+    """A row's page within its crop's folder, as JSON text, or None when it names no page. A
+    whole number is one page however it is written: 1, 1.0 and "1" are page 1."""
     if not _given(row.get("page")):
         return None
+    page = row["page"]
+    if isinstance(page, str):
+        try:
+            page = int(page)
+        except ValueError:
+            try:
+                number = float(page)
+            except ValueError:
+                number = math.nan
+            page = number if number.is_integer() else page
     folder = posixpath.dirname(posixpath.normpath(str(row["crop"]).replace("\\", "/")))
-    return json.dumps([folder, row["page"]], sort_keys=True)
+    return json.dumps([folder, _whole(page)], sort_keys=True)
 
 
 def group_key(row, i):
     """What keeps labeled row `i`'s crop on the same side of the split as the rest of its group:
-    the row's ``group`` if it has one (any JSON value, compared as JSON text, such as a document
-    name or a writer's ID), else its ``page`` within its crop's folder (dump_crops rows carry the
-    page, and the folder keeps apart dumps merged into one directory, each in a folder of its
-    own), else the row alone (:func:`_given` says what counts as a value)."""
+    the row's ``group`` if it has one (any JSON value, such as a document name or a writer's ID,
+    compared as JSON text with 7.0 read as 7: :func:`_whole`), else its ``page`` within its crop's
+    folder (dump_crops rows carry the page, and the folder keeps apart dumps merged into one
+    directory, each in a folder of its own), else the row alone (:func:`_given` says what counts
+    as a value)."""
     if _given(row.get("group")):
-        return "group", json.dumps(row["group"], sort_keys=True)
+        return "group", json.dumps(_whole(row["group"]), sort_keys=True)
     page = _page(row)
     return ("page", page) if page is not None else ("row", str(i))
 
@@ -304,7 +344,7 @@ def split_shortfall(y, val_frac, seed, alpha, groups=None):
     training split a struck and a clean crop. With fewer struck validation crops the matched p_hi
     rests on a few, and below `alpha`'s count conformal_threshold returns 0.0; a training split
     without both classes trains a net that cannot learn to tell struck from clean. With groups (not
-    one per crop), it names three cases where no seed can help."""
+    one per crop), it says when no seed can help, counting what each side needs."""
     val_idx, tr_idx = split(len(y), val_frac, seed, groups)
     n_struck = int(y[val_idx].sum())
     n_clean = len(val_idx) - n_struck
@@ -325,12 +365,13 @@ def split_shortfall(y, val_frac, seed, alpha, groups=None):
     by_group = {}
     for g, label in zip(groups, y):
         by_group.setdefault(g, []).append(float(label))
-    struck = sorted((int(sum(v)) for v in by_group.values() if any(v)), reverse=True)
-    with_clean = sum(0.0 in v for v in by_group.values())
+    counts = [(int(sum(v)), len(v) - int(sum(v))) for v in by_group.values()]
+    struck = sum(s > 0 for s, _ in counts)
+    with_clean = sum(c > 0 for _, c in counts)
     held = len({groups[i] for i in val_idx})
-    if len(struck) < 2 or with_clean < 2:                       # each class needs both sides
+    if struck < 2 or with_clean < 2:                            # each class needs both sides
         return (f"{problem}. The split keeps groups whole, so each class must be in 2 or more "
-                f"groups, but struck crops are in {len(struck)} of the {len(by_group)} group(s) "
+                f"groups, but struck crops are in {struck} of the {len(by_group)} group(s) "
                 f"and clean crops in {with_clean}, so no split can both train and calibrate: "
                 f"label crops from more pages or groups, or give each row a \"group\" of its own, "
                 f"such as its line number, to split by crop (crops of one page can then land on "
@@ -338,14 +379,54 @@ def split_shortfall(y, val_frac, seed, alpha, groups=None):
     if held == len(by_group):
         return (f"{problem}. --val-frac {val_frac} holds out all {held} groups, leaving none to "
                 f"train on: use a --val-frac below 1")
-    best = sum(struck[:min(held, len(struck) - 1)])    # leaving a struck group to train on
+    best = _most_struck(counts, held)
+    fewer = 1 < held == len(counts) - 1 and (_most_struck(counts, held - 1) or 0) >= need
+    if best is None:
+        return (f"{problem}. Holding out {held} of the {len(by_group)} groups leaves one to train "
+                f"on, and no group holds both struck and clean crops, so no seed can help: "
+                f"{'lower --val-frac or ' * fewer}label crops from more pages")
     if best < need:
-        more = " or raise --val-frac" if sum(struck) - struck[-1] >= need else ""
-        return (f"{problem}. Holding out {held} of the {len(by_group)} groups and leaving struck "
-                f"crops to train on keeps at most {best} struck crops for validation, so no seed "
-                f"can help: label crops from more pages{more}")
+        more = any((_most_struck(counts, h) or 0) >= need
+                   for h in (len(counts) - 2, len(counts) - 1) if h > held)
+        return (f"{problem}. Holding out {held} of the {len(by_group)} groups, with a clean crop "
+                f"among them and struck and clean crops left to train on, keeps at most {best} "
+                f"struck crop{'s' * (best != 1)} for validation, so no seed can help: label "
+                f"crops from more pages{' or raise --val-frac' * more}"
+                f"{' or lower --val-frac' * fewer}")
     return (f"{problem} ({held} of {len(by_group)} groups held out: another --seed holds out "
             f"others and may pass; or label crops from more pages or adjust --val-frac)")
+
+
+def _most_struck(counts, held):
+    """The most struck crops `held` of the groups can hold out with a clean crop among them while
+    the rest keep a struck and a clean crop to train on, or None when no `held` groups can.
+    ``counts[g]`` is group g's (struck, clean), and 2 or more groups hold each class (checked by
+    :func:`split_shortfall` first). Training keeps either the group holding both with
+    the fewest struck crops, or the struck-only group with the fewest and a clean-only group (any
+    such group serves as well as another), and the most struck of the other groups are held out,
+    one swapped for the clean group with the most struck crops if none of them has a clean one.
+    Up to len(counts) - 2 groups held out, the count never falls as `held` grows; at
+    len(counts) - 1, training keeps one group, which must hold both classes, so it can fall."""
+    both = [g for g, (s, c) in enumerate(counts) if s and c]
+    only_struck = [g for g, (s, c) in enumerate(counts) if s and not c]
+    only_clean = [g for g, (s, c) in enumerate(counts) if c and not s]
+    trains = []
+    if both:
+        trains.append({min(both, key=lambda g: counts[g][0])})
+    if only_struck and only_clean:
+        trains.append({min(only_struck, key=lambda g: counts[g][0]), only_clean[0]})
+    best = None
+    for train in trains:
+        rest = sorted((g for g in range(len(counts)) if g not in train),
+                      key=lambda g: -counts[g][0])
+        if len(rest) < held:
+            continue
+        val = rest[:held]
+        if not any(counts[g][1] for g in val):
+            val[-1] = next(g for g in rest[held:] if counts[g][1])   # 2+ groups have clean crops
+        total = sum(counts[g][0] for g in val)
+        best = total if best is None else max(best, total)
+    return best
 
 
 def as_called(p):
@@ -613,7 +694,15 @@ def main(argv=None):
     struck = y[val_idx] > 0.5
     try:
         reference = cnn.get_model_meta()
-        ref = cnn.score_crops(x[val_idx])
+        # score_crops checks the reference's std_crop settings against cnn's constants, but these
+        # crops were made with `made`, which can differ from this run's: check against those
+        run = cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC
+        cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC = (made["paper_white_from"],
+                                                      made["shade_white_frac"])
+        try:
+            ref = cnn.score_crops(x[val_idx])
+        finally:
+            cnn.PAPER_WHITE_FROM, cnn.SHADE_WHITE_FRAC = run
     except Exception as e:                          # whatever the loader raises: nothing to match
         sys.exit(f"The thresholds are matched to the model the package loads, but no model loads "
                  f"from {cnn._current_model_dir()}: {type(e).__name__}: {e}. Set "

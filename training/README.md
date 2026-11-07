@@ -37,14 +37,21 @@ Steps 1 and 2 are also how a "contribute a failing page" bug report becomes trai
   same `cnn.std_crop` the detector uses at inference, with the settings it runs with. The meta
   records the settings the crops were made with, so the script stops when the labeled crops were
   made with different settings. Detect with the recorded settings (`cnn.PAPER_WHITE_FROM` and
-  `cnn.SHADE_WHITE_FRAC`) to score words as the model was trained.
+  `cnn.SHADE_WHITE_FRAC`) to score words as the model was trained. A crop an image editor saved
+  again as a 16-bit PNG, or with transparent paper, reads as the 8-bit crop it holds, with
+  transparency laid over white; a transparent grey level in a 16-bit greyscale PNG is ignored.
 - **Dumps from 0.14.0 or earlier.** Their rows record no settings, and the script counts them in a
   note. Standardizing their crops again does not reliably give the crops the detector now scores:
   0.14.0 left paper at 240 to 254 as a faint grey ground, which later releases take to white. Dump
   such scans again with the release you train with, into a new directory: a dump replaces the
-  `crops.jsonl` it writes to, labels included. A model trained with 0.14.0 saw that ground, and
-  the loader does not check the settings: use it with `cnn.PAPER_WHITE_FROM = 240`, or train a
-  new one on a new dump.
+  `crops.jsonl` it writes to, labels included. A model trained with 0.14.0 saw that ground: use
+  it with `cnn.PAPER_WHITE_FROM = 240`, or train a new one on a new dump.
+- **The package warns when a model's crops were made otherwise.** When the meta's `training`
+  block records `std_crop` settings other than those `std_crop` uses when the model scores, the
+  package warns, once per model and settings. A block this script wrote before it recorded them
+  (0.14.0 and earlier: it has `dataset_sha256` and neither setting) is taken as made at 240 and
+  0.85. A meta with no such block, such as the packaged model's, or a block another training loop
+  wrote, says nothing, so nothing is checked.
 - **Crop geometry can't drift.** The export records the crop geometry (`crop_h/crop_w/pad_x/pad_y`)
   into the meta, and `cnn._check_geometry` refuses to load a model whose geometry disagrees with
   the code constants.
@@ -102,7 +109,9 @@ Steps 1 and 2 are also how a "contribute a failing page" bug report becomes trai
   capped at `p_hi`. Neither sets the thresholds.
 - **The split holds out whole groups.** A row's group is its `group` field if set, else its
   `page` within its crop's folder, else the row alone. A `group` can be any JSON value, such as a
-  document name or a writer's ID; null, NaN, blank text, `[]` and `{}` count as not set.
+  document name or a writer's ID; null, NaN, blank text, `[]` and `{}` count as not set. Pages 1,
+  1.0 and `"1"` are one page, and a group of 7.0 is group 7 (a spreadsheet round trip can write a
+  whole number either way), but a group's text stays text: `"7"` is a different group from 7.
   `dump_crops` rows carry the page, so a dump splits by page. The script holds out
   `max(1, int(G * --val-frac))` of the G groups, drawn with `--seed`, and prints the split before
   training. Since `--val-frac` is a share of groups, the share of crops held out varies with the
@@ -125,7 +134,8 @@ Steps 1 and 2 are also how a "contribute a failing page" bug report becomes trai
   (`--epochs`, `--val-frac`, `--batch`, `--lr`, `--seed`, `--alpha`), the package, numpy and torch
   versions, and the `std_crop` settings the crops were made with (`paper_white_from` and
   `shade_white_frac`: those the rows record, or for crops the script standardized, the values of
-  `cnn.PAPER_WHITE_FROM` and `cnn.SHADE_WHITE_FRAC` when it ran; the loader does not check them).
+  `cnn.PAPER_WHITE_FROM` and `cnn.SHADE_WHITE_FRAC` when it ran; the package warns when they
+  differ from the settings it scores with).
   The grouping is `split_by` (how many rows took their group from `group`,
   from their page, or stood alone, as `row`), `n_groups`, `n_val_groups` (how many groups are held
   out) and `groups_sha256` (the sha256 of one line per labeled row with its group's number, groups

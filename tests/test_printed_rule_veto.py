@@ -1,10 +1,10 @@
-"""issue #7 / v0.10.0 — the printed-rule veto for degraded ruled-form scans.
+"""issue #7 / v0.10.0: the printed-rule veto for degraded ruled-form scans.
 
 A faint table/form rule crossing text on a degraded scan mimics a pen strike (in-band, two-sided
 ink, shattered fill) and the CNN over-fires on it. ``ScanConfig.ruled_forms()`` drops a detected
 line that is SOLID (fill high) and/or DEAD-STRAIGHT (low perpendicular wobble) as a drawn rule.
 
-It is OFF by default because on a CLEAN scan a real strike is also solid and straight — these tests
+It is OFF by default because on a CLEAN scan a real strike is also solid and straight; these tests
 pin both that default-off keeps such a strike and that the opt-in drops the rule while sparing a
 genuinely degraded (shattered + wobbly) strike.
 """
@@ -54,7 +54,7 @@ def test_veto_off_by_default_keeps_solid_straight_strike():
 
 
 def test_ruled_forms_drops_the_rule():
-    """The SAME solid/straight line is dropped under ruled_forms() — it reads as a drawn rule."""
+    """The SAME solid/straight line is dropped under ruled_forms(): it reads as a drawn rule."""
     gray = np.full((400, 800), 255, np.uint8)
     line, words = _line(fill=0.95, straightness=0.4), _words()
     _tagged, struck = classify_lines([line], words, gray, config=ScanConfig.ruled_forms())
@@ -92,7 +92,7 @@ def test_missing_metrics_are_never_a_rule():
 
 
 def test_none_metrics_are_never_a_rule():
-    """None means "not measurable", not "straight" — strike_lines emits None for an unmeasurable
+    """None means "not measurable", not "straight": strike_lines emits None for an unmeasurable
     wobble, and that must not read as a drawn rule."""
     assert not _is_printed_rule({"fill": 0.70, "straightness": None})
     assert not _is_printed_rule({"fill": None, "straightness": 3.0})
@@ -120,7 +120,7 @@ def test_ruled_forms_accepts_an_explicit_flag():
 
 def test_vetoed_lines_keep_tagged_index_aligned_with_lines():
     """score_struck() resolves a hit's line as ``tagged[line_idx]``, so `tagged` must stay
-    index-aligned with the input `lines` — a vetoed line still has to occupy its slot. If the veto
+    index-aligned with the input `lines`: a vetoed line still has to occupy its slot. If the veto
     ever skipped the append, every later word on the page would silently score off the wrong line.
     """
     gray = np.full((400, 800), 255, np.uint8)

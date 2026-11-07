@@ -1,4 +1,4 @@
-"""Gradio demo for pdf-strikethrough-detect — drag in a PDF or scan, see what's struck.
+"""Gradio demo for pdf-strikethrough-detect: drag in a PDF or scan, see what's struck.
 
 Renders the first page(s) with detected strikes boxed (red = full, orange = partial) and shows the
 struck-aware markdown and the surviving clean text. Native (born-digital) PDFs need nothing;

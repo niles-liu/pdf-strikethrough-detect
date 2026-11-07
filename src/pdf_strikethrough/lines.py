@@ -1,6 +1,6 @@
 """OCR-free geometric strike-line detection on rasterized (scanned) pages.
 
-This is the engine that finds the physical strokes — it needs no OCR and no PDF; give it a
+This is the engine that finds the physical strokes: it needs no OCR and no PDF; give it a
 grayscale image and it returns the near-horizontal straight-ish lines (strikes, underlines,
 rules) with per-line geometry (fill, stroke run-thickness, angle, length).
 
@@ -74,17 +74,22 @@ def otsu_threshold(gray):
 
 def _scale_to_255(a):
     """Multiplier that puts array `a` on the 0..255 scale, decided over the whole array: floats in
-    [0, 1] scale up; integers wider than 8 bits scale by their DATA range — 8-bit values held in a
-    wider type pass through, 16-bit data divides by 257, anything wider by the dtype maximum."""
+    [0, 1] scale up; integers wider than 8 bits scale by their DATA range: 8-bit values held in a
+    wider type pass through, 16-bit data divides by 257 (int16 data by 32767 / 255, so 32767 is
+    white), anything wider by the dtype maximum."""
     if np.issubdtype(a.dtype, np.floating):
         return 255.0 if a.size and float(a.max()) <= 1.0 else 1.0
     if np.issubdtype(a.dtype, np.integer) and np.iinfo(a.dtype).max > 255:
         top = float(a.max()) if a.size else 0.0
-        if top > 65535:
+        if top > 65535 or (top > 255 and np.iinfo(a.dtype).max < 65535):    # wider, or int16
             return 255.0 / np.iinfo(a.dtype).max
         if top > 255:
             return 1.0 / 257.0
     return 1.0
+
+
+_ROUND = True      # to_gray_u8 rounds to the nearest level; False truncates, as 0.14.0 did. The
+                   # tests use it to show 0.14.0's reading; dump_crops does not record it.
 
 
 def to_gray_u8(image):
@@ -92,8 +97,10 @@ def to_gray_u8(image):
     grayscale, (H, W, 2) grayscale+alpha, or (H, W, 3|4) RGB(A) arrays. Transparency is composited
     over white paper; float images in [0, 1] are rescaled to 0..255; wide integer scans are
     rescaled by their data range (see :func:`_scale_to_255`); out-of-range values are clipped (no
-    mod-256 wraparound)."""
+    mod-256 wraparound). Each pixel is rounded to the nearest level, so an opaque grey stored as
+    RGB(A) or as grey and alpha reads as the level it holds, as in a greyscale image."""
     a = np.asarray(image)
+    half = 0.5 if _ROUND else 0.0
     if a.ndim == 3 and a.shape[2] in (2, 3, 4):
         has_alpha = a.shape[2] in (2, 4)
         color = a[..., :-1] if has_alpha else a
@@ -114,13 +121,13 @@ def to_gray_u8(image):
                 c = np.where(y <= 0.0031308, y * 12.92, 1.055 * y ** (1 / 2.4) - 0.055) * 255.0
             else:
                 c = c[..., 0]
-            out[r0:r0 + 256] = np.clip(c, 0, 255).astype(np.uint8)
+            out[r0:r0 + 256] = np.clip(c + half, 0, 255).astype(np.uint8)
         return out
     if a.ndim != 2:
         raise ValueError("expected a (H, W) grayscale, (H, W, 2) grayscale+alpha or (H, W, 3|4) "
                          f"RGB(A) image, got shape {a.shape}")
     if a.dtype != np.uint8:
-        a = np.clip(a.astype(np.float64) * _scale_to_255(a), 0, 255).astype(np.uint8)
+        a = np.clip(a.astype(np.float64) * _scale_to_255(a) + half, 0, 255).astype(np.uint8)
     return a
 
 
@@ -312,7 +319,7 @@ def _spine_straightness(ink, center, u, length, run_px):
     """RMS perpendicular wobble (px) of the local ink centroid about the straight spine, sampled
     along the major axis. A printed rule rides a dead-straight path (~0-1 px); a pen or typed
     strike crossing raised glyphs on a degraded scan wanders more. Returned in raw px at the
-    caller's dpi — normalize to RENDER_DPI outside so a threshold is resolution-independent.
+    caller's dpi. Normalize to RENDER_DPI outside so a threshold is resolution-independent.
 
     Returns ``inf`` when the wobble is not measurable (non-finite `run_px`, or fewer than
     ``STRAIGHTNESS_MIN_SAMPLES`` ink-bearing samples). ``inf`` is the fail-SAFE direction: the
@@ -334,7 +341,7 @@ def _spine_straightness(ink, center, u, length, run_px):
     win = max(3, int(round(run_px * 2)))
     offs = np.arange(-win, win + 1)
     # Sample the whole (n x 2*win+1) perpendicular neighbourhood in one shot. This runs on the
-    # DEFAULT path for every detected line — a per-sample Python loop cost ~37% of strike_lines.
+    # DEFAULT path for every detected line; a per-sample Python loop cost ~37% of strike_lines.
     cx = center[0] + ts * u[0]
     cy = center[1] + ts * u[1]
     xs = np.clip(np.round(cx[:, None] + offs[None, :] * v[0]), 0, W - 1).astype(np.intp)
@@ -500,8 +507,8 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     page raster (uint8 HxW ndarray). Returns dicts:
         {bbox_px, ends_px, len_in, angle_deg, fill, run_px, straightness}
     `straightness` is perpendicular ink wobble in px normalized to RENDER_DPI, or **None** when it
-    is not measurable — treat None as "unknown", never as "straight" (see `_spine_straightness`).
-    `dpi` is the raster's px-per-inch — pass the DPI the image was rendered at; both the length
+    is not measurable; treat None as "unknown", never as "straight" (see `_spine_straightness`).
+    `dpi` is the raster's px-per-inch: pass the DPI the image was rendered at; both the length
     tunables and the pixel-space tunables (calibrated at 200 dpi) rescale from it. Pass `ink`
     (a bool mask) to reuse a precomputed binarization.
 

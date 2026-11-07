@@ -21,6 +21,7 @@ import logging
 import numbers
 import operator
 import os
+import re
 import sys
 import time
 import traceback
@@ -30,7 +31,7 @@ import pymupdf
 
 from . import cnn, markdown as _md, native
 from .lines import RENDER_DPI
-from .ocr import _is_shape_error, words_from_azure_di
+from .ocr import _RAPIDOCR_MAX_TALL, _check_tall, _is_shape_error, _TooTall, words_from_azure_di
 from .scanned import ScanConfig, _glyph_ink, _own_stroke, analyze_scanned_page
 from .types import SCHEMA_VERSION
 
@@ -72,9 +73,12 @@ class EncryptedPdfError(ValueError):
 class InvalidPdfError(ValueError, pymupdf.FileDataError):
     """The source is not a PDF the package can read: MuPDF cannot open it, it opens as another
     format (an image, say), or its page tree cannot be walked (a cycle, a malformed node, a /Count
-    above the file's object count). Raised before any page is detected. A ValueError like the
-    package's other input errors, and a ``pymupdf.FileDataError`` (so a RuntimeError), the error
-    opening a broken file raised before."""
+    above the file's object count). Raised before any page is detected, except when MuPDF repairs
+    a damaged file as it reads the pages and the page count changes: then it is raised as soon as
+    the change shows, before any page is detected if loading or classifying the pages shows it,
+    otherwise at the next page or after the last.
+    A ValueError like the package's other input errors, and a ``pymupdf.FileDataError`` (so a
+    RuntimeError), the error opening a broken file raised before."""
 
 
 class LimitExceededError(ValueError):
@@ -140,15 +144,148 @@ def _drop_frames(error, outer):
         error = error.__cause__ or error.__context__
 
 
+def _ref(text):
+    """The object number an indirect reference's text (``"12 0 R"``) names, or None."""
+    m = re.fullmatch(r"\s*(\d+)\s+\d+\s+R\s*", text)
+    return int(m.group(1)) if m else None
+
+
 def _claimed_pages(doc):
-    """The page count a PDF's page tree claims (the root /Count), or None."""
+    """The page count a PDF's page tree claims (the root /Count, read through a reference to an
+    object holding it), or None."""
     if not doc.is_pdf:
         return None
     try:
         kind, value = doc.xref_get_key(-1, "Root/Pages/Count")
-    except (RuntimeError, ValueError):
+        if kind == "xref" and _ref(value) is not None:
+            value = doc.xref_object(_ref(value)).strip()
+            kind = "int" if re.fullmatch(r"-?\d+", value) else kind
+    except pymupdf.mupdf.FzErrorSystem:     # MuPDF ran out of memory: not the file's fault
+        raise
+    except _TREE_ERRORS:
         return None
     return int(value) if kind == "int" else None
+
+
+_WALK_PAST, _WALK_MOST = 1000, 10_000     # kids _tree_pages reads past MuPDF's count, and in all
+
+
+def _page_map_loaded(doc):
+    """Whether MuPDF built its page map when it loaded the first page. It builds it by reading the
+    whole page tree, every node a /Pages and every page a /Page, and counts the pages it found, so
+    the tree then holds no page MuPDF does not read. Anything else (a node or page of another
+    /Type, a kid that names no object, more pages than the root's /Count) makes it look each page
+    up along the tree's /Count entries instead. Read from MuPDF's document struct: False when this
+    PyMuPDF does not show it."""
+    try:
+        return pymupdf._as_pdf_document(doc).m_internal.fwd_page_map is not None
+    except Exception:            # noqa: BLE001  a PyMuPDF without the field: walk
+        return False
+
+
+def _tree_pages(doc, found):
+    """Walk a page tree MuPDF did not map (:func:`_page_map_loaded`), from the root /Pages along
+    each node's /Kids, for what MuPDF, reading `found` pages, misses. A kid whose /Type is /Pages,
+    or that has /Kids and is not a /Page, is a node; any other kid is a page, one that names no
+    object too (MuPDF reads it as a blank page). MuPDF reads a node of another /Type, or an
+    untyped one with a /MediaBox, as one blank page instead, so the walk counts its pages as a
+    lower bound.
+
+    Returns ``(lost, exact, blank, named)``: the pages the walk reaches at index `found` or past,
+    which MuPDF does not read, and whether that count is exact (not when the walk stopped early or
+    met such a node); the indices below `found` of kids that name no object, and whether MuPDF
+    reads the first ten of them at those indices. None for a tree MuPDF mapped, or one the walk
+    does not compare: an object reached twice (MuPDF reads a page listed twice twice), a /Kids
+    that is not a list of references, a root that is not a node, or an entry it cannot read.
+
+    It reads the kids one at a time through MuPDF's array calls and stops after _WALK_PAST kids
+    past `found`, or _WALK_MOST in all, so a long /Kids or a deep tree costs no more. MuPDF stops
+    reading a tree it cannot map at the first entry it cannot take, then reads only the path to
+    each page it looks up, so the walk reads objects MuPDF has not and can set off a repair:
+    :func:`_settle_page_count` checks the page count after it."""
+    if not doc.is_pdf or _page_map_loaded(doc):
+        return None
+    mu = pymupdf.mupdf
+    errors = (AttributeError, TypeError, *_TREE_ERRORS)     # also a PyMuPDF whose calls differ
+    try:
+        TYPE, KIDS, PAGE, PAGES, BOX = (mu.PdfObj(getattr(mu, f"PDF_ENUM_NAME_{n}"))
+                                        for n in ("Type", "Kids", "Page", "Pages", "MediaBox"))
+        pdf = pymupdf._as_pdf_document(doc)
+        root = mu.pdf_dict_getp(mu.pdf_trailer(pdf), "Root/Pages")
+        if not mu.pdf_is_indirect(root) or mu.pdf_name_eq(mu.pdf_dict_get(root, TYPE), PAGE):
+            return None
+        kids = mu.pdf_dict_get(root, KIDS)
+        if not mu.pdf_is_array(kids):
+            return None
+        size, seen = mu.pdf_xref_len(pdf), {mu.pdf_to_num(root)}
+        budget = min(found + _WALK_PAST, _WALK_MOST)
+        stack, pages, lost, exact, blank = [[kids, 0, mu.pdf_array_len(kids)]], 0, 0, True, []
+        while stack:
+            frame = stack[-1]
+            if frame[1] == frame[2]:
+                stack.pop()
+                continue
+            kid = mu.pdf_array_get(frame[0], frame[1])
+            frame[1] += 1
+            x = mu.pdf_to_num(kid)
+            if not mu.pdf_is_indirect(kid) or x in seen:
+                return None
+            if len(seen) > budget:
+                exact = False
+                break
+            seen.add(x)
+            typ = mu.pdf_dict_get(kid, TYPE) if 0 < x < size else None
+            if typ is None or (not mu.pdf_name_eq(typ, PAGE)
+                               and mu.pdf_is_null(mu.pdf_resolve_indirect(kid))):
+                if pages < found:               # no such object: read as a blank page
+                    blank.append((pages, x))
+                pages += 1
+                continue
+            node = not mu.pdf_name_eq(typ, PAGE)
+            sub = mu.pdf_dict_get(kid, KIDS) if node else None
+            if not node or (not mu.pdf_name_eq(typ, PAGES) and mu.pdf_is_null(sub)):
+                lost += pages >= found
+                pages += 1
+                continue
+            if not mu.pdf_is_array(sub):
+                return None
+            if not mu.pdf_name_eq(typ, PAGES) and not (mu.pdf_is_null(typ)
+                                                     and mu.pdf_is_null(mu.pdf_dict_get(kid, BOX))):
+                exact = False                   # MuPDF reads this node as one blank page
+            stack.append([sub, 0, mu.pdf_array_len(sub)])
+    except errors:
+        return None
+    try:
+        named = bool(blank) and all(mu.pdf_to_num(mu.pdf_lookup_page_obj(pdf, i)) == x
+                                    for i, x in blank[:10])
+    except errors:
+        named = False
+    return lost, exact, [i for i, _ in blank], named
+
+
+def _check_page_count(doc, count, repaired=False):
+    """Raise InvalidPdfError when MuPDF repaired `doc` after it held `count` pages and it no longer
+    holds them, or when it can no longer count them: MuPDF rebuilds a damaged file's
+    cross-reference table when it reads an object it cannot find, and the page tree it then reads
+    can hold other pages. A count that changed with no repair since is the caller's (a page added
+    from a progress callback), as before. `repaired` is whether MuPDF had repaired `doc` when it
+    held `count` pages: it repairs a file once, so it is needed only where the caller can change
+    the count."""
+    outer = sys.exc_info()[1]
+    try:
+        now = doc.page_count
+    except _TREE_ERRORS as e:
+        _drop_frames(e, outer)
+        raise InvalidPdfError(f"not a readable PDF: its page tree is broken ({e})") from e
+    if now != count and not repaired and getattr(doc, "is_repaired", False):
+        raise InvalidPdfError(f"not a readable PDF: its page tree changed from {count} to {now} "
+                              "pages when MuPDF repaired the damaged file while reading it")
+
+
+def _page(doc, pno, count, repaired=False):
+    """``doc[pno]``, after :func:`_check_page_count`."""
+    _check_page_count(doc, count, repaired)
+    return doc[pno]
 
 
 _TREE_ERRORS = (RuntimeError, ValueError, IndexError, pymupdf.mupdf.FzErrorBase)
@@ -161,11 +298,14 @@ def _settle_page_count(doc):
     itself raise (InvalidPdfError here).
 
     MuPDF also rewrites the /Count in memory then, so the first call on a document reads the claim
-    beforehand and keeps detect_pdf's warning on the document when fewer pages are found (a
-    document its caller loaded a page of first has lost the claim, and gets none), with the count
-    found, so the warning is dropped once the caller adds or deletes pages. A first page that does
-    not load is left to _walk_page_tree, an error only where page 0 is processed, unless the
-    failed load leaves MuPDF counting no page."""
+    beforehand and keeps detect_pdf's warnings on the document when fewer pages are found (a
+    document its caller loaded a page of first has lost the claim and gets no such warning), with
+    the count found, so the warnings are dropped once the caller adds or deletes pages. On a tree
+    MuPDF did not map it also walks the tree itself (:func:`_tree_pages`) and warns when it holds
+    pages MuPDF does not read (a /Count in it too low) or names objects that are not in the file;
+    a walk that sets off a repair raises InvalidPdfError when the count changes, and otherwise
+    walks the repaired file again. A first page that does not load is left to _walk_page_tree, an
+    error only where page 0 is processed, unless the failed load leaves MuPDF counting no page."""
     outer = sys.exc_info()[1]
     first = not hasattr(doc, _PAGE_TREE_NOTE)
     claimed = _claimed_pages(doc) if first else None
@@ -181,41 +321,68 @@ def _settle_page_count(doc):
         _drop_frames(e, outer)
         raise InvalidPdfError(f"not a readable PDF: its page tree is broken ({e})") from e
     if first:
-        note = None
-        if claimed is not None and claimed > found:
+        repaired = getattr(doc, "is_repaired", False)
+        held = _tree_pages(doc, found)
+        if getattr(doc, "is_repaired", False) != repaired:     # the walk set off a repair:
+            _check_page_count(doc, found)   # an error if the count changed, else walk the
+            held = _tree_pages(doc, found)  # repaired file (MuPDF repairs a file once)
+        lost, exact, blank, named = held or (0, True, [], False)
+        notes, least, more = [], "" if exact else "at least ", "" if exact else " or more"
+        if lost:
+            reads = "none" if found == 0 else f"only {found}"
+            notes.append(f"the PDF's page tree holds {least}{found + lost} "
+                         f"page{'s' * (found + lost != 1)}, but MuPDF reads {reads}; strikes on "
+                         f"the {lost}{more} page{'s' * (lost != 1 or bool(more))} it does not "
+                         f"read are not reported")
+        elif claimed is not None and claimed > found:
             read = ("no page was read" if found == 0 else
                     "only that page was read" if found == 1 else "only those pages were read")
-            note = (f"the PDF says it has {claimed} pages but its page tree holds {found}; "
-                    f"{read}, so strikes on the missing pages are not reported")
-        setattr(doc, _PAGE_TREE_NOTE, (found, note))
+            notes.append(f"the PDF says it has {claimed} pages but its page tree holds {found}; "
+                         f"{read}, so strikes on the missing pages are not reported")
+        if named:
+            shown = ", ".join(str(p) for p in blank[:10]) + (f" (+{len(blank) - 10} more)"
+                                                              if len(blank) > 10 else "")
+            notes.append(f"page {shown} of the PDF's page tree names no object in the file and "
+                         f"is read as a blank page" if len(blank) == 1 else
+                         f"pages {shown} of the PDF's page tree name no object in the file and "
+                         f"are read as blank pages")
+        elif blank:
+            notes.append("an entry of the PDF's page tree names no object in the file; MuPDF "
+                         "reads it as a blank page" if len(blank) == 1 else
+                         f"{len(blank)} entries of the PDF's page tree name no object in the "
+                         f"file; MuPDF reads each as a blank page")
+        setattr(doc, _PAGE_TREE_NOTE, (found, tuple(notes)))
 
 
-def _page_tree_note(doc):
-    """The warning _settle_page_count kept on `doc` for a page tree holding fewer pages than it
-    claims, or None (also once the caller has added or deleted pages)."""
-    found, note = getattr(doc, _PAGE_TREE_NOTE, (None, None))
-    return note if note and doc.page_count == found else None
+def _page_tree_notes(doc):
+    """The warnings _settle_page_count kept on `doc` for its page tree, or () (also once the caller
+    has added or deleted pages)."""
+    found, notes = getattr(doc, _PAGE_TREE_NOTE, (None, ()))
+    return notes if doc.page_count == found else ()
 
 
 def _walk_page_tree(doc, page_indices=None):
     """Load each page of `page_indices` (default: every page) once, so a page tree MuPDF cannot
     walk raises InvalidPdfError here, before any page is detected, instead of a bare IndexError
-    or MuPDF error partway through. Call _settle_page_count first."""
+    or MuPDF error partway through, as it does when the page count changes as they load
+    (:func:`_check_page_count`). Call _settle_page_count first."""
     outer = sys.exc_info()[1]
+    count = doc.page_count
     try:
-        for pno in range(doc.page_count) if page_indices is None else page_indices:
+        for pno in range(count) if page_indices is None else page_indices:
             if 0 <= pno < doc.page_count:      # one out of range is the caller's IndexError
                 doc.load_page(pno)
     except _TREE_ERRORS as e:
         _drop_frames(e, outer)
         raise InvalidPdfError(f"not a readable PDF: its page tree is broken ({e})") from e
+    _check_page_count(doc, count)
 
 
 def _open_doc(source, walk=True):
     """Open `source` (path, bytes, an open binary file, or an already-open fitz document) as a
     fitz document, applying the encryption gate, settling the page count and, with `walk`, loading
     every page (detect_pdf loads only the pages it will process). Returns ``(doc,
-    owned)`` — `owned` is True when we opened it and the caller must close it. A source we open
+    owned)``: `owned` is True when we opened it and the caller must close it. A source we open
     must be a PDF (InvalidPdfError otherwise); a document the caller opened is used as it is. On
     EncryptedPdfError or InvalidPdfError a doc WE opened is closed before raising, so no handle
     leaks (which would lock the file on Windows)."""
@@ -254,7 +421,7 @@ def _open_doc(source, walk=True):
 
 def _image_coverage(page, grid=64):
     """Fraction of the page covered by raster images, UNIONED on a coarse boolean grid. Summing
-    per-image bbox areas over-counts overlaps and repeats — the same 30%-of-page image placed
+    per-image bbox areas over-counts overlaps and repeats: the same 30%-of-page image placed
     three times would read as 90% coverage and misroute a born-digital page to 'scanned'. Image
     boxes arrive in unrotated space and are turned into the page's rotated frame first."""
     import numpy as np
@@ -279,7 +446,7 @@ def _image_coverage(page, grid=64):
 
 def _text_visibility(page):
     """(has_visible_text, has_invisible_text) from the text render modes reported by
-    get_texttrace(). Render mode 3 (and zero opacity) is invisible — the hallmark of a scanned
+    get_texttrace(). Render mode 3 (and zero opacity) is invisible, the hallmark of a scanned
     page's OCR text overlay; modes 0/1/2/4/5/6 actually paint ink and mean born-digital text."""
     visible = invisible = False
     for span in page.get_texttrace():
@@ -300,9 +467,9 @@ def classify_page_source(page, words=None):
     Heavy raster-image coverage alone is not a scan: a born-digital page can carry a full-bleed
     background image behind real, visible text. It is routed 'scanned' only when that coverage
     coincides with an invisible OCR text overlay (render mode 3) or with no visible text over
-    real vector drawings. Away from heavy image coverage, real text means 'native' — sparse
-    pages (signatures, cover sheets) stay native — unless all of it is an invisible OCR layer over
-    a raster (a scan filling only part of the page is still a scan).
+    real vector drawings. Away from heavy image coverage, real text means 'native' (so sparse
+    pages, such as signatures and cover sheets, stay native) unless all of it is an invisible OCR
+    layer over a raster (a scan filling only part of the page is still a scan).
 
     ``words`` optionally supplies this page's ``get_text("words")`` output so a caller that also
     detects on the page extracts it once (default None = extract here, only on the light-image
@@ -327,7 +494,7 @@ def classify_page_source(page, words=None):
 def _working_dpi(width_in, height_in, requested_dpi):
     """Effective raster DPI for one page, honoring both resolution guards. Returns
     ``(dpi, note_or_None)``: `note` is a caller-facing warning string set only when the pixel
-    budget forced a resolution below what was requested (the perf normalization is silent — it is
+    budget forced a resolution below what was requested (the perf normalization is silent: it is
     accuracy-neutral). See HIGH_DPI_CAP / MAX_RENDER_MPIX."""
     dpi = float(requested_dpi)
     if dpi > HIGH_DPI_CAP:                          # accuracy-neutral, so no warning
@@ -671,7 +838,7 @@ def _image_frames(source, max_pages=None, max_mpix=None):
     its frames are decoded."""
     import io
 
-    from PIL import Image, ImageOps, ImageSequence
+    from PIL import Image
 
     limited = max_pages is not None or max_mpix is not None
     if limited and not isinstance(source, Image.Image):
@@ -692,23 +859,7 @@ def _image_frames(source, max_pages=None, max_mpix=None):
                          else source)
         owned = True
     try:
-        frames = []
-        for frame in ImageSequence.Iterator(img):
-            frame.load()                       # a TIFF's orientation is applied (and dropped) here
-            upright = None
-            try:
-                if frame.getexif().get(0x0112, 1) not in (0, 1):      # EXIF Orientation
-                    upright = _frame_gray(ImageOps.exif_transpose(frame))
-            except Exception:                  # malformed EXIF: read the frame as stored
-                upright = None
-            dpi = frame.info.get("dpi") or img.info.get("dpi")
-            xdpi = None
-            if dpi:
-                try:
-                    xdpi = int(round(float(dpi[0]))) or None
-                except (TypeError, ValueError, IndexError):
-                    xdpi = None
-            frames.append((_frame_gray(frame), upright, xdpi))
+        frames = list(_decoded_frames(img))
         if limited:
             _enforce_limits(len(frames), sum(gray.size for gray, _u, _d in frames) / 1e6,
                             max_pages, max_mpix)
@@ -716,6 +867,177 @@ def _image_frames(source, max_pages=None, max_mpix=None):
     finally:
         if owned:
             img.close()
+
+
+_PIL_DECODE_ERRORS = (KeyError, SyntaxError, TypeError, ValueError)   # Pillow's on a damaged
+                                  # frame, besides OSError (seek reads its tags, load its pixels)
+
+
+def _decoded_frames(img):
+    """Each frame of the open PIL image `img`, decoded as iteration reaches it, as
+    :func:`_image_frames` lists them. A _PIL_DECODE_ERRORS error Pillow raises for a frame
+    becomes an OSError naming the frame, unless ``img.fp`` is None or closed (a closed image or
+    file, not a damaged one), and a frame with no pixels, which is not decoded, raises one too.
+    Pillow's other errors, its OSError and DecompressionBombError among them, are raised as is."""
+    from PIL import ImageOps, ImageSequence
+
+    frames, n = ImageSequence.Iterator(img), 0
+    while True:
+        try:
+            frame = next(frames)
+            if 0 not in frame.size:            # a frame with no pixels is not decoded
+                frame.load()                   # a TIFF's orientation is applied (and dropped) here
+        except StopIteration:
+            return
+        except _PIL_DECODE_ERRORS as e:
+            fp = getattr(img, "fp", None)
+            if fp is None or getattr(fp, "closed", False):
+                raise                          # a closed image or file, not a damaged one
+            raise OSError(f"frame {n} cannot be decoded ({type(e).__name__}: {e})") from e
+        if 0 in frame.size:    # its size is left out: Pillow 10.1 gives a turned TIFF frame's
+            raise OSError(f"frame {n} has no pixels")    # as stored, 12.3 and 13 as turned
+        n += 1
+        upright = None
+        try:
+            if frame.getexif().get(0x0112, 1) not in (0, 1):          # EXIF Orientation
+                upright = _frame_gray(ImageOps.exif_transpose(frame))
+        except Exception:                      # malformed EXIF: read the frame as stored
+            upright = None
+        dpi = frame.info.get("dpi") or img.info.get("dpi")
+        xdpi = None
+        if dpi:
+            try:
+                xdpi = int(round(float(dpi[0]))) or None
+            except (TypeError, ValueError, IndexError):
+                xdpi = None
+        yield _frame_gray(frame), upright, xdpi
+
+
+_TIFF_MAGIC = (b"II*\0", b"MM\0*", b"II+\0", b"MM\0+")     # TIFF and BigTIFF, either byte order
+
+
+class _KeptOpen:
+    """The caller's open binary file `f`, which Pillow reads through this as it reads `f` itself,
+    except that ``close()`` leaves it open: ``Image.close()`` closes the file an image was read
+    from, and one file serves the header walk and then the decode."""
+
+    def __init__(self, f):
+        self._f = f
+
+    def __getattr__(self, name):
+        return getattr(self._f, name)
+
+    def close(self):
+        pass
+
+
+class _TiffFrames:
+    """The frames of a multi-page TIFF file, decoded one at a time as iteration reaches them
+    (:func:`_frames`), so its memory grows with its largest frame, not its frame count. ``len()``
+    is the frame count read from their headers; each frame is what :func:`_image_frames` gives for
+    it. The image is opened when iteration starts and closed when it ends or by ``close()``, which
+    also closes `fp`, the caller's open file it is read from, as decoding any other image closes
+    it."""
+
+    def __init__(self, open_image, count, fp=None):
+        self._open, self.count, self._fp, self._img = open_image, count, fp, None
+
+    def __len__(self):
+        return self.count
+
+    def __iter__(self):
+        self._close_image()
+        self._img = self._open()
+        try:
+            yield from _decoded_frames(self._img)
+        finally:
+            self._close_image()
+
+    def _close_image(self):
+        if self._img is not None:
+            self._img.close()
+            self._img = None
+
+    def close(self):
+        self._close_image()
+        if self._fp is not None:
+            with contextlib.suppress(Exception):    # as Pillow closes an image's file: if it can
+                self._fp.close()                    # (a caller's stream may have no close())
+
+
+def _frames(source, max_pages=None, max_mpix=None):
+    """The frames of the raster image `source` for :func:`detect_image_file`. A TIFF file of more
+    than one frame (a path, bytes, or an open binary file that can seek, read in place) is
+    :class:`_TiffFrames`: its frame headers are read first, on an image of their own, to count the
+    frames and to check `max_pages` and `max_mpix` as :func:`_check_frame_sizes` checks them.
+    Anything else is listed by :func:`_image_frames`, decoded whole: a PIL image, which keeps the
+    frames it holds; a GIF or APNG (Pillow decodes each frame to reach the next); a single-frame
+    file; a TIFF whose frame headers Pillow cannot walk, which raises what it raises decoded
+    whole; and a TIFF with a frame over Pillow's decompression-bomb limit
+    (``PIL.Image.MAX_IMAGE_PIXELS``), so Pillow warns or raises before any frame is detected. An
+    open file refused over a limit is left open at its start, as :func:`_image_frames` leaves
+    one."""
+    import io
+
+    from PIL import Image, ImageSequence
+
+    if isinstance(source, Image.Image):
+        return _image_frames(source, max_pages, max_mpix)
+    fp = None
+    if isinstance(source, (bytes, bytearray)):
+        data = bytes(source)
+
+        def open_image():
+            return Image.open(io.BytesIO(data))
+    elif isinstance(source, (str, os.PathLike)):
+        def open_image():
+            return Image.open(source)
+    else:                                      # an open file: only a TIFF is walked, in place
+        tiff = False
+        try:
+            at = source.tell()
+            source.seek(0)
+            tiff = source.read(4) in _TIFF_MAGIC
+            source.seek(at)
+        except (AttributeError, OSError, ValueError):
+            tiff = False
+        if not tiff:
+            return _image_frames(source, max_pages, max_mpix)
+        fp = source
+
+        def open_image():
+            return Image.open(_KeptOpen(fp))
+    img = None
+    try:
+        img = open_image()
+    except Exception:                          # left to the decode, which raises what it raises
+        pass
+    if img is None:
+        return _image_frames(source, max_pages, max_mpix)
+    n = px = 0
+    bomb = Image.MAX_IMAGE_PIXELS
+    try:
+        if img.format == "TIFF":
+            for frame in ImageSequence.Iterator(img):
+                n += 1
+                w, h = frame.size
+                px += w * h
+                _enforce_limits(n, px / 1e6, max_pages, max_mpix, at_least=True)
+                if bomb is not None and max(w, 1) * max(h, 1) > bomb:
+                    n = 0                      # Pillow's decompression-bomb check: decoded
+                    break                      # whole, so it warns or raises before detection
+    except LimitExceededError:
+        raise
+    except Exception:                          # a damaged file: decoded whole, as before
+        n = 0
+    finally:
+        img.close()
+        if fp is not None:
+            with contextlib.suppress(OSError, ValueError):
+                fp.seek(0)                     # where _image_frames leaves a file it refuses
+    if n < 2:
+        return _image_frames(source, max_pages, max_mpix)
+    return _TiffFrames(open_image, n, fp)
 
 
 def _check_dpi(dpi, name="dpi"):
@@ -728,11 +1050,11 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
                       dpi=None, meta=None, include_markdown=True, telemetry=False,
                       page_words=False, max_pages=None, max_mpix=None, _crop_sink=None):
     """Detect strikethroughs in a standalone raster image (``.png/.jpg/.tiff``, incl. multi-page
-    TIFF) — a photo/scan/fax that never was a PDF.
+    TIFF): a photo/scan/fax that never was a PDF.
 
     `source` is a path, bytes, an open binary file, or a PIL image. Every frame is a scanned page,
     so it needs OCR words: pass an `ocr` backend (run per frame), a `words` list (a single-frame
-    image), or `words_by_page` (``{0-based frame: list[Word]}`` — e.g.
+    image), or `words_by_page` (``{0-based frame: list[Word]}``, e.g.
     ``words_from_textract(resp)``). DPI drives the geometry tunables: an explicit `dpi=` wins;
     otherwise it's read from the image metadata, falling back to 200, also when the metadata says
     less than MIN_META_DPI (the 72/96 placeholder cameras and screenshot tools write; a warning
@@ -749,8 +1071,23 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
 
     `max_pages` and `max_mpix` refuse an image with more frames, or more megapixels in all (each
     frame as stored), with ``LimitExceededError``. An image file's frames are read only up to the
-    first one over a limit, before any is decoded for detection; a PIL image is checked once
-    decoded. Default None: no limit.
+    first one over a limit, before any is decoded for detection (with `max_mpix` alone, a file of
+    many small frames is read to its last header); a PIL image is checked once decoded. Default
+    None: no limit.
+
+    A multi-page TIFF file (a path, bytes, or an open file that can seek) is decoded one frame at
+    a time, as detection reaches it, so its memory grows with its largest frame, not its frame
+    count. The file, an open one you pass included, is closed once detection ends. If a frame
+    cannot be decoded, its decode error is raised even when detection failed on an earlier frame,
+    but the frames before it are detected first, so `ocr` is called on them and their warnings are
+    given. Any other image is decoded whole first, as are a PIL image you pass and a TIFF with a
+    frame over Pillow's decompression-bomb limit (``PIL.Image.MAX_IMAGE_PIXELS``).
+
+    A frame Pillow cannot decode raises OSError: Pillow's own, or, for a TypeError, KeyError,
+    SyntaxError or ValueError Pillow raises on a damaged file, one naming the frame, such as
+    "frame 1 cannot be decoded (KeyError: 9)", with Pillow's error as its cause. A frame with no
+    pixels raises OSError "frame 1 has no pixels". A PIL image or file you closed first raises
+    Pillow's ValueError, as before.
     """
     import numpy as np
 
@@ -759,16 +1096,11 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         _check_dpi(dpi)
     _check_limits(max_pages, max_mpix)
     wbp = _normalize_words_by_page(words_by_page)
-    frames = _image_frames(source, max_pages, max_mpix)
-    if words is not None and len(frames) > 1 and wbp is None:
-        raise ValueError("words= covers a single-frame image; for a multi-page TIFF pass an ocr "
-                         "backend or words_by_page={frame: [...]}")
-    if wbp is not None:
-        _check_words_by_page(wbp, len(frames), "frame")
+    frames = _frames(source, max_pages, max_mpix)       # a TIFF file: one frame at a time
     if scan_config is None:
         # An image has no Azure-DI calibration source; every realistic word source here (rapidocr/
         # tesseract via ocr=, Textract/DocAI via words_by_page, a raw words= list) carries
-        # confidences the classifier isn't calibrated to — so default to confidence-free.
+        # confidences the classifier isn't calibrated to, so default to confidence-free.
         scan_config = ScanConfig.confidence_free()
     if isinstance(source, (bytes, bytearray)):
         src_name = None
@@ -779,88 +1111,115 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         src_name = str(name) if name else None
 
     all_words, warns, page_md, page_clean, passages, pw = [], [], [], [], [], []
-    for pno, (gray, upright, meta_dpi) in enumerate(frames):
-        if dpi is not None:
-            use_dpi = dpi
-        elif meta_dpi is not None and meta_dpi < MIN_META_DPI:
-            use_dpi = RENDER_DPI
-            note = (f"frame {pno}: the image metadata says {meta_dpi} dpi, a placeholder value "
-                    f"rather than a scan resolution; read as {RENDER_DPI} dpi (pass dpi= if the "
-                    f"image really is {meta_dpi} dpi)")
-            _warnings.warn(note, stacklevel=2)
-            warns.append(note)
-        else:
-            use_dpi = meta_dpi or RENDER_DPI
-        if wbp is not None and pno in wbp:
-            frame_words = wbp[pno]
-        elif words is not None and len(frames) == 1:
-            frame_words = words
-        elif ocr is not None:
-            frame_words = None
-            if upright is not None:
-                gray = upright                             # OCR and detection on the shown image
-        else:
-            raise OcrRequiredError(
-                f"image frame {pno} has no OCR words; pass ocr=rapidocr_backend(), a words= list "
-                f"(single-frame), or words_by_page={{{pno}: [...]}}")
-        if frame_words is not None and upright is not None:
-            note = (f"frame {pno} carries an EXIF rotation; the supplied word boxes are read "
-                    f"against the frame as stored, not as displayed")
-            _warnings.warn(note, stacklevel=2)
-            warns.append(note)
-        gray, use_dpi, note = _downsample_gray(gray, use_dpi)
-        if note:
-            _warnings.warn(note, stacklevel=2)
-            warns.append(note)
-        pt = tel.page(pno, "scanned") if tel else None
-        if frame_words is None:
-            t0 = time.perf_counter()
-            try:
-                with _clock(pt, "ocr"):
-                    frame_words = ocr(np.stack([gray] * 3, axis=-1))
-            except Exception as e:
-                if not _is_shape_error(e):
-                    raise
-                note = (f"frame {pno}: RapidOCR cannot read an image this long for its width "
-                        f"({gray.shape[1]} x {gray.shape[0]} px); it was skipped, so no text or "
-                        f"strikes are reported for it")
+    unread, failed = iter(frames), None
+    try:
+        if words is not None and len(frames) > 1 and wbp is None:
+            raise ValueError("words= covers a single-frame image; for a multi-page TIFF pass an "
+                             "ocr backend or words_by_page={frame: [...]}")
+        if wbp is not None:
+            _check_words_by_page(wbp, len(frames), "frame")
+        for pno, (gray, upright, meta_dpi) in enumerate(unread):
+            if dpi is not None:
+                use_dpi = dpi
+            elif meta_dpi is not None and meta_dpi < MIN_META_DPI:
+                use_dpi = RENDER_DPI
+                note = (f"frame {pno}: the image metadata says {meta_dpi} dpi, a placeholder value "
+                        f"rather than a scan resolution; read as {RENDER_DPI} dpi (pass dpi= if "
+                        f"the image really is {meta_dpi} dpi)")
                 _warnings.warn(note, stacklevel=2)
                 warns.append(note)
-                if tel is not None:
-                    pt["skipped"] = True
-                    tel.end_page(pt, [])
-                if page_words:
-                    pw.append(_page_words_entry(pno, [], [], len(all_words), False))
-                if include_markdown:
-                    page_md.append("")
-                    page_clean.append("")
-                continue
-            log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
-                      pno, len(frame_words), (time.perf_counter() - t0) * 1e3)
-        if meta is None:
-            meta = cnn.get_model_meta()
-        with _clock(pt, "detect"), _layer1_tiers(pt):
-            recs = detect_scanned_image(gray, frame_words, config=scan_config, meta=meta,
-                                        dpi=use_dpi, crop_sink=_crop_sink)
-        if tel is not None:
-            tel.scanned_page(pt, use_dpi, frame_words)
-            tel.end_page(pt, recs)
-        for r in recs:
-            r["page"] = pno
-        base = len(all_words)
-        all_words.extend(recs)
-        if include_markdown or page_words:
-            by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
-            seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
-                   for w in frame_words if (w.text or "").strip()]
-        if page_words:
-            pw.append(_page_words_entry(pno, seq, recs, base, False))
-        if include_markdown:
-            page_md.append(_md.page_markdown(seq))
-            page_clean.append(_md.page_clean_text(seq))
-            for ps in _md.group_passages(seq):
-                ps["page"] = pno
-                passages.append(ps)
+            else:
+                use_dpi = meta_dpi or RENDER_DPI
+            if wbp is not None and pno in wbp:
+                frame_words = wbp[pno]
+            elif words is not None and len(frames) == 1:
+                frame_words = words
+            elif ocr is not None:
+                frame_words = None
+                if upright is not None:
+                    gray = upright                         # OCR and detection on the shown image
+            else:
+                raise OcrRequiredError(
+                    f"image frame {pno} has no OCR words; pass ocr=rapidocr_backend(), a words= "
+                    f"list (single-frame), or words_by_page={{{pno}: [...]}}")
+            if frame_words is not None and upright is not None:
+                note = (f"frame {pno} carries an EXIF rotation; the supplied word boxes are read "
+                        f"against the frame as stored, not as displayed")
+                _warnings.warn(note, stacklevel=2)
+                warns.append(note)
+            gray, use_dpi, note = _downsample_gray(gray, use_dpi)
+            if note:
+                _warnings.warn(note, stacklevel=2)
+                warns.append(note)
+            pt = tel.page(pno, "scanned") if tel else None
+            if frame_words is None:
+                t0 = time.perf_counter()
+                try:
+                    with _clock(pt, "ocr"):
+                        _check_tall(ocr, gray)
+                        frame_words = ocr(np.stack([gray] * 3, axis=-1))
+                except Exception as e:
+                    if not _is_shape_error(e):
+                        raise
+                    size = f"{gray.shape[1]} x {gray.shape[0]} px"
+                    why = (f"an image more than {_RAPIDOCR_MAX_TALL} times as tall as it is wide "
+                           f"({size}) is not sent to RapidOCR, which reads it slowly or not at all"
+                           if isinstance(e, _TooTall) else
+                           f"RapidOCR cannot read an image this long for its width ({size})")
+                    note = (f"frame {pno}: {why}; it was skipped, so no text or strikes are "
+                            f"reported for it")
+                    _warnings.warn(note, stacklevel=2)
+                    warns.append(note)
+                    if tel is not None:
+                        pt["skipped"] = True
+                        tel.end_page(pt, [])
+                    if page_words:
+                        pw.append(_page_words_entry(pno, [], [], len(all_words), False))
+                    if include_markdown:
+                        page_md.append("")
+                        page_clean.append("")
+                    continue
+                log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
+                          pno, len(frame_words), (time.perf_counter() - t0) * 1e3)
+            if meta is None:
+                meta = cnn.get_model_meta()
+            with _clock(pt, "detect"), _layer1_tiers(pt):
+                recs = detect_scanned_image(gray, frame_words, config=scan_config, meta=meta,
+                                            dpi=use_dpi, crop_sink=_crop_sink)
+            if tel is not None:
+                tel.scanned_page(pt, use_dpi, frame_words)
+                tel.end_page(pt, recs)
+            for r in recs:
+                r["page"] = pno
+            base = len(all_words)
+            all_words.extend(recs)
+            if include_markdown or page_words:
+                by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
+                seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
+                       for w in frame_words if (w.text or "").strip()]
+            if page_words:
+                pw.append(_page_words_entry(pno, seq, recs, base, False))
+            if include_markdown:
+                page_md.append(_md.page_markdown(seq))
+                page_clean.append(_md.page_clean_text(seq))
+                for ps in _md.group_passages(seq):
+                    ps["page"] = pno
+                    passages.append(ps)
+    except Exception as e:
+        if not isinstance(frames, _TiffFrames):
+            raise
+        failed = e                      # raised below, out of this handler, so nothing chains
+    finally:
+        if failed is None and isinstance(frames, _TiffFrames):
+            frames.close()
+    if failed is not None:
+        try:
+            for _frame in unread:       # decode the frames not yet reached: a damaged frame's
+                pass                    # decode error wins, as when every frame is decoded first
+            raise failed
+        finally:
+            failed = None
+            frames.close()
 
     result = {
         "schema_version": SCHEMA_VERSION,
@@ -1085,7 +1444,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         source: path, bytes, an open binary file (read once, from its current position), or an
             open fitz document. Encrypted PDFs raise EncryptedPdfError; a file that is not a
             readable PDF, or whose page tree MuPDF cannot walk, raises InvalidPdfError before any
-            page is detected.
+            page is detected, and one whose page count changes as MuPDF repairs it raises it too,
+            possibly after some pages are detected.
         ocr: an OCR backend ``(image_ndarray) -> list[Word]`` (see ``pdf_strikethrough.ocr``).
             Required only if the document has scanned pages and `di_result` is not given.
         scan_config: ``ScanConfig`` for the scanned classifier. Default: Azure-DI calibration
@@ -1094,19 +1454,19 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             classifier (as in ``detect_image_file`` and the CLI).
         dpi: raster resolution for scanned pages (detector tunables rescale automatically;
             calibrated/validated at 200). Must be positive.
-        di_result: a pre-fetched Azure Document Intelligence analyze result as a DICT — the REST
+        di_result: a pre-fetched Azure Document Intelligence analyze result as a DICT: the REST
             JSON, an {'analyzeResult': ...} envelope, or ``sdk_result.as_dict()``. When given,
             its per-page words are used instead of running `ocr` (and `scan_config` defaults to
             Azure-DI calibration on those pages). Pages are matched by their ``pageNumber``, so a
             result for a page range lines up with the PDF.
         words_by_page: pre-fetched OCR words as ``{0-based page: list[Word]}`` (or a sequence
-            indexed by page) — the provider-neutral counterpart to `di_result` for any cloud/OCR
+            indexed by page), the provider-neutral counterpart to `di_result` for any cloud/OCR
             engine, e.g. ``words_from_textract(resp)`` / ``words_from_docai(doc)``. Used for the
             scanned pages it covers, in preference to running `ocr`. Keys outside the document
             raise ValueError; pass at most one of `di_result` / `words_by_page`.
         include_markdown: also assemble struck-aware ``markdown``, surviving ``clean_text``, and
             grouped deletion ``passages`` (cheap; reuses the words already extracted).
-        method: native-page detector — 'vector' (default), 'flag', 'annot', or 'both' — see
+        method: native-page detector: 'vector' (default), 'flag', 'annot', or 'both'; see
             :func:`pdf_strikethrough.native.page_strikes`.
         native_method: DEPRECATED alias for ``method``, kept for 0.5.x compatibility; emits a
             ``DeprecationWarning``. Passing both with different values raises ``ValueError``.
@@ -1114,7 +1474,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             `words_by_page` entry for it:
             'raise' (default) raises OcrRequiredError; 'skip' skips the page, records a warning
             in the result, and still returns everything from the other pages.
-        pages: restrict work to a subset — an iterable of 0-based page indices (negatives index
+        pages: restrict work to a subset, an iterable of 0-based page indices (negatives index
             from the end). Only those pages are classified and processed; a 300-page scan need
             not OCR every page. Out-of-range indices raise IndexError. When given, the result
             gains a ``pages`` key (the processed indices) and ``page_sources`` is aligned to it;
@@ -1156,8 +1516,10 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
     records (not by stripping the markdown), so the two always agree. A PDF that MuPDF had to
-    repair to open carries a warning: its text or drawings may be incomplete. So does one whose
-    page tree holds fewer pages than it says: ``page_count`` is the pages read.
+    repair, to open it or as it read the pages, carries a warning: its text or drawings may be
+    incomplete. So does one whose page tree holds fewer pages than it says, or pages MuPDF does
+    not read (a /Count in the tree too low): ``page_count`` is the pages read. A page the tree
+    names that is not in the file is read as a blank page, with a warning.
     """
     tel = _Telemetry() if telemetry else None
     method = _resolve_native_method(method, native_method)
@@ -1179,9 +1541,11 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         page_indices = _normalize_pages(pages, doc.page_count)
         _enforce_limits(len(page_indices), None, max_pages, None)
         _walk_page_tree(doc, page_indices)
+        count = doc.page_count  # a damaged file's page count can change as its pages are read
         if wbp is not None:
             _check_words_by_page(wbp, doc.page_count)
-        sources = {p: classify_page_source(doc[p]) for p in page_indices}
+        sources = {p: classify_page_source(_page(doc, p, count)) for p in page_indices}
+        _check_page_count(doc, count)
         if max_mpix is not None:
             mpix = sum(_render_mpix(doc[p], dpi) for p in page_indices if sources[p] == "scanned")
             _enforce_limits(0, mpix, None, max_mpix)
@@ -1193,10 +1557,11 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                        else (ScanConfig.azure_di(), ScanConfig.confidence_free()))
         meta = None
         words, warns = [], []
-        if note := _page_tree_note(doc):
+        for note in _page_tree_notes(doc):
             _warnings.warn(note, stacklevel=2)
             warns.append(note)
-        if getattr(doc, "is_repaired", False):
+        repaired = getattr(doc, "is_repaired", False)
+        if repaired:
             msg = ("the PDF is damaged and MuPDF repaired it to open it; text or drawings may be "
                    "missing, so a page with no strikes found is not proof that it has none")
             _warnings.warn(msg, stacklevel=2)
@@ -1204,7 +1569,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         page_md, page_clean, passages, garbled, pw = [], [], [], [], []
         total = len(page_indices)
         for done, pno in enumerate(page_indices, start=1):
-            page = doc[pno]
+            page = _page(doc, pno, count, repaired)     # a progress callback can add pages
             recs, seq, garb = [], [], []
             # on native pages, the detectors that read U+0336 overlays ('vector', 'both') also
             # drop from clean_text the overlaid characters a record's one span leaves out
@@ -1245,11 +1610,17 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         rgb = _render_rgb(page, page_dpi)
                     try:
                         with _clock(pt, "ocr"):
+                            _check_tall(ocr, rgb)
                             ocr_words = ocr(rgb)
                     except Exception as e:
                         if not _is_shape_error(e):
                             raise
-                        unreadable = f"{rgb.shape[1]} x {rgb.shape[0]} px"
+                        size = f"{rgb.shape[1]} x {rgb.shape[0]} px"
+                        unreadable = (
+                            f"a page more than {_RAPIDOCR_MAX_TALL} times as tall as it is wide "
+                            f"({size}) is not sent to RapidOCR, which reads it slowly or not at all"
+                            if isinstance(e, _TooTall) else
+                            f"RapidOCR cannot read a page this long for its width ({size})")
                     del rgb                                # freed before the page is detected
                     if ocr_words is not None:
                         log.debug("page %d: OCR -> %d word(s) in %.0f ms",
@@ -1275,9 +1646,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
                                for w in ocr_words if (w.text or "").strip()]
                 elif unreadable is not None:
-                    msg = (f"page {pno}: RapidOCR cannot read a page this long for its width "
-                           f"({unreadable}); it was skipped, so no text or strikes are reported "
-                           f"for it")
+                    msg = (f"page {pno}: {unreadable}; it was skipped, so no text or strikes are "
+                           f"reported for it")
                     _warnings.warn(msg, stacklevel=2)
                     warns.append(msg)
                     if pt is not None:
@@ -1285,7 +1655,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 elif (nat_words := page.get_text("words")) and any(
                         w[4].strip() for w in nat_words):
                     # classified scanned but has extractable text (text-bearing scan / OCR-overlay
-                    # / full-bleed born-digital) — run the native detector instead of raising
+                    # / full-bleed born-digital): run the native detector instead of raising
                     msg = (f"page {pno} classified as scanned but has extractable text; ran the "
                            f"native detector on it (no OCR backend, di_result or words_by_page "
                            f"entry covered it)")
@@ -1342,6 +1712,13 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             if progress is not None:
                 progress(done, total, pno)
 
+        _check_page_count(doc, count, repaired)  # a repair as the last page was detected
+        if not repaired and getattr(doc, "is_repaired", False):
+            msg = ("the PDF is damaged and MuPDF repaired it as it read the pages; text or "
+                   "drawings may be missing, so a page with no strikes found is not proof that it "
+                   "has none")
+            _warnings.warn(msg, stacklevel=2)
+            warns.append(msg)
         if garbled:
             _warn_garbled(garbled, on_garbled, include_markdown)
         if isinstance(source, (str, os.PathLike)):

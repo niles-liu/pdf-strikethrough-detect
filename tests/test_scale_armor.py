@@ -3,7 +3,7 @@
 Covers the pure-code groups of the release: high-DPI normalization + pixel-budget guard
 (R-highdpi / R-guard), dashed & flat-bezier native strikes (R-dash), the batch / directory CLI
 mode, malformed-PDF robustness (R-hostile), and layout reading-order edge cases
-(R-layout). All fixtures are synthesized in-process — no data files are checked in.
+(R-layout). All fixtures are synthesized in-process; no data files are checked in.
 """
 import json
 
@@ -67,7 +67,7 @@ def test_downsample_gray_noop_at_reference_dpi():
 
 def test_huge_mediabox_page_does_not_oom():
     # a 40000x40000-pt page must be handled without allocating a gigapixel raster (it classifies
-    # blank here — the point is that detect_pdf returns promptly instead of hanging / OOMing)
+    # blank here; the point is that detect_pdf returns promptly instead of hanging / OOMing)
     doc = fitz.open()
     doc.new_page(width=40000, height=40000)
     res = st.detect_pdf(doc)
@@ -230,14 +230,14 @@ def test_batch_multiprocessing_jobs(tmp_path):
 ])
 def test_malformed_pdf_raises_cleanly(data):
     # pymupdf's FileDataError / EmptyFileError both subclass RuntimeError; the point is a clean,
-    # catchable failure — never a hang, segfault, or bare crash.
+    # catchable failure, never a hang, segfault, or bare crash.
     with pytest.raises(RuntimeError):
         st.detect_pdf(data)
 
 
 @pytest.mark.filterwarnings("ignore:the PDF is damaged:UserWarning")
 def test_truncated_pdf_handled_cleanly():
-    # pymupdf recovers some truncations and rejects others; either is fine — the armor property is
+    # pymupdf recovers some truncations and rejects others; either is fine: the armor property is
     # a well-formed result OR a catchable error, never a hang / crash.
     good = _strike_pdf_bytes("deleted")
     for frac in (0.2, 0.5, 0.75):
@@ -319,7 +319,7 @@ def test_strike_across_hyphenated_line_break_is_one_passage():
 
 # ===== R-cjk (slice 1: horizontal CJK) ========================================================
 def test_cjk_horizontal_strike_detected():
-    # A horizontal strike over horizontally-set CJK text is detected by the vector path — strikes
+    # A horizontal strike over horizontally-set CJK text is detected by the vector path: strikes
     # stay horizontal regardless of script (vertical writing modes remain out of scope). Glosses:
     # 合同 = "contract", 已删除 = "deleted", 条款 = "clause".
     doc = fitz.open()
