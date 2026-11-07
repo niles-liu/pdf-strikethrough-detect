@@ -84,8 +84,10 @@ geometry, OCR word boxes and StrikeNet (the bundled model), and `markdown`, `cle
 `passages` cover both. A scanned page with no OCR raises `OcrRequiredError` (`on_missing_ocr="skip"`
 skips it). A password-protected PDF raises `EncryptedPdfError`, and a file that is not a readable
 PDF (an image, say, or one whose page tree MuPDF cannot walk) raises `InvalidPdfError` before any
-page is detected. An image's dpi comes from its metadata (else 200), and a photo's EXIF rotation
-is applied.
+page is detected. A damaged file whose page count changes as MuPDF repairs it while reading the
+pages raises it too, possibly after some pages are detected. A page tree holding pages MuPDF does
+not read (a `/Count` in it too low) gives a warning with the count. An image's dpi comes from its
+metadata (else 200), and a photo's EXIF rotation is applied.
 
 Every record has a `verdict`: `"struck"`, `"clean"` or `"unsure"`, and `final` is true exactly when
 it is `"struck"`. Born-digital records are always `"struck"`. On a scan, `"clean"` means StrikeNet

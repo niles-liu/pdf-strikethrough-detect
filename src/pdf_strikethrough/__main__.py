@@ -451,6 +451,9 @@ def _emit_result(args, res, overlay_source):
                 try:
                     written = _ov.save_overlays(doc, args.overlay, result=res,
                                                 dpi=args.overlay_dpi)
+                except st.InvalidPdfError as e:   # rendering repaired the damaged file
+                    print(f"error: cannot render the overlay: {e}", file=sys.stderr)
+                    return 1
                 finally:
                     doc.close()
                 print(f"wrote {len(written)} overlay image(s)" +

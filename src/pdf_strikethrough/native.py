@@ -1516,11 +1516,15 @@ def page_strikes(page, page_index, method="vector", words=None, _garbled=None, _
 
 def native_doc_strikes(doc, method="vector"):
     """Struck-word records across every page of an open fitz document, page by page, each page
-    top to bottom then left to right. See :func:`page_strikes` for the `method` options."""
-    out = []
-    for pno in range(doc.page_count):
-        page = doc[pno]
+    top to bottom then left to right. See :func:`page_strikes` for the `method` options. Raises
+    InvalidPdfError when MuPDF repairs the damaged file as it reads the pages and the page count
+    changes."""
+    from .detect import _check_page_count, _page      # detect imports this module
+    out, count = [], doc.page_count
+    for pno in range(count):
+        page = _page(doc, pno, count)
         out.extend(page_strikes(page, pno, method, words=page.get_text("words")))
+    _check_page_count(doc, count)
     return out
 
 

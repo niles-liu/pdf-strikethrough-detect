@@ -59,10 +59,11 @@ def render_overlay(source, result=None, *, dpi=150, pages=None,
         targets = (detect._normalize_pages(pages, doc.page_count) if pages is not None
                    else sorted(by_page))
         detect._walk_page_tree(doc, targets)
+        count = doc.page_count  # a damaged file's page count can change as its pages are read
         lw = max(1, round(dpi / 100))
         out = []
         for pno in targets:
-            img = _page_image(doc[pno], dpi)
+            img = _page_image(detect._page(doc, pno, count) if 0 <= pno < count else doc[pno], dpi)
             draw = ImageDraw.Draw(img)
             W, H = img.size
             recs = by_page.get(pno, [])
@@ -72,6 +73,7 @@ def render_overlay(source, result=None, *, dpi=150, pages=None,
                 draw.rectangle(box, outline=partial_color if w.get("partial") else full_color,
                                width=lw)
             out.append({"page": pno, "image": img, "n_struck": len(recs)})
+        detect._check_page_count(doc, count)
         return out
     finally:
         if owned:
