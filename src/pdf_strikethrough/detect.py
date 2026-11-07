@@ -21,6 +21,7 @@ import logging
 import numbers
 import operator
 import os
+import re
 import sys
 import time
 import traceback
@@ -72,9 +73,12 @@ class EncryptedPdfError(ValueError):
 class InvalidPdfError(ValueError, pymupdf.FileDataError):
     """The source is not a PDF the package can read: MuPDF cannot open it, it opens as another
     format (an image, say), or its page tree cannot be walked (a cycle, a malformed node, a /Count
-    above the file's object count). Raised before any page is detected. A ValueError like the
-    package's other input errors, and a ``pymupdf.FileDataError`` (so a RuntimeError), the error
-    opening a broken file raised before."""
+    above the file's object count). Raised before any page is detected, except when MuPDF repairs
+    a damaged file as it reads the pages and the page count changes: then it is raised as soon as
+    the change shows, before any page is detected if loading or classifying the pages shows it,
+    otherwise at the next page or after the last.
+    A ValueError like the package's other input errors, and a ``pymupdf.FileDataError`` (so a
+    RuntimeError), the error opening a broken file raised before."""
 
 
 class LimitExceededError(ValueError):
@@ -140,15 +144,148 @@ def _drop_frames(error, outer):
         error = error.__cause__ or error.__context__
 
 
+def _ref(text):
+    """The object number an indirect reference's text (``"12 0 R"``) names, or None."""
+    m = re.fullmatch(r"\s*(\d+)\s+\d+\s+R\s*", text)
+    return int(m.group(1)) if m else None
+
+
 def _claimed_pages(doc):
-    """The page count a PDF's page tree claims (the root /Count), or None."""
+    """The page count a PDF's page tree claims (the root /Count, read through a reference to an
+    object holding it), or None."""
     if not doc.is_pdf:
         return None
     try:
         kind, value = doc.xref_get_key(-1, "Root/Pages/Count")
-    except (RuntimeError, ValueError):
+        if kind == "xref" and _ref(value) is not None:
+            value = doc.xref_object(_ref(value)).strip()
+            kind = "int" if re.fullmatch(r"-?\d+", value) else kind
+    except pymupdf.mupdf.FzErrorSystem:     # MuPDF ran out of memory: not the file's fault
+        raise
+    except _TREE_ERRORS:
         return None
     return int(value) if kind == "int" else None
+
+
+_WALK_PAST, _WALK_MOST = 1000, 10_000     # kids _tree_pages reads past MuPDF's count, and in all
+
+
+def _page_map_loaded(doc):
+    """Whether MuPDF built its page map when it loaded the first page. It builds it by reading the
+    whole page tree, every node a /Pages and every page a /Page, and counts the pages it found, so
+    the tree then holds no page MuPDF does not read. Anything else (a node or page of another
+    /Type, a kid that names no object, more pages than the root's /Count) makes it look each page
+    up along the tree's /Count entries instead. Read from MuPDF's document struct: False when this
+    PyMuPDF does not show it."""
+    try:
+        return pymupdf._as_pdf_document(doc).m_internal.fwd_page_map is not None
+    except Exception:            # noqa: BLE001  a PyMuPDF without the field: walk
+        return False
+
+
+def _tree_pages(doc, found):
+    """Walk a page tree MuPDF did not map (:func:`_page_map_loaded`), from the root /Pages along
+    each node's /Kids, for what MuPDF, reading `found` pages, misses. A kid whose /Type is /Pages,
+    or that has /Kids and is not a /Page, is a node; any other kid is a page, one that names no
+    object too (MuPDF reads it as a blank page). MuPDF reads a node of another /Type, or an
+    untyped one with a /MediaBox, as one blank page instead, so the walk counts its pages as a
+    lower bound.
+
+    Returns ``(lost, exact, blank, named)``: the pages the walk reaches at index `found` or past,
+    which MuPDF does not read, and whether that count is exact (not when the walk stopped early or
+    met such a node); the indices below `found` of kids that name no object, and whether MuPDF
+    reads the first ten of them at those indices. None for a tree MuPDF mapped, or one the walk
+    does not compare: an object reached twice (MuPDF reads a page listed twice twice), a /Kids
+    that is not a list of references, a root that is not a node, or an entry it cannot read.
+
+    It reads the kids one at a time through MuPDF's array calls and stops after _WALK_PAST kids
+    past `found`, or _WALK_MOST in all, so a long /Kids or a deep tree costs no more. MuPDF stops
+    reading a tree it cannot map at the first entry it cannot take, then reads only the path to
+    each page it looks up, so the walk reads objects MuPDF has not and can set off a repair:
+    :func:`_settle_page_count` checks the page count after it."""
+    if not doc.is_pdf or _page_map_loaded(doc):
+        return None
+    mu = pymupdf.mupdf
+    errors = (AttributeError, TypeError, *_TREE_ERRORS)     # also a PyMuPDF whose calls differ
+    try:
+        TYPE, KIDS, PAGE, PAGES, BOX = (mu.PdfObj(getattr(mu, f"PDF_ENUM_NAME_{n}"))
+                                        for n in ("Type", "Kids", "Page", "Pages", "MediaBox"))
+        pdf = pymupdf._as_pdf_document(doc)
+        root = mu.pdf_dict_getp(mu.pdf_trailer(pdf), "Root/Pages")
+        if not mu.pdf_is_indirect(root) or mu.pdf_name_eq(mu.pdf_dict_get(root, TYPE), PAGE):
+            return None
+        kids = mu.pdf_dict_get(root, KIDS)
+        if not mu.pdf_is_array(kids):
+            return None
+        size, seen = mu.pdf_xref_len(pdf), {mu.pdf_to_num(root)}
+        budget = min(found + _WALK_PAST, _WALK_MOST)
+        stack, pages, lost, exact, blank = [[kids, 0, mu.pdf_array_len(kids)]], 0, 0, True, []
+        while stack:
+            frame = stack[-1]
+            if frame[1] == frame[2]:
+                stack.pop()
+                continue
+            kid = mu.pdf_array_get(frame[0], frame[1])
+            frame[1] += 1
+            x = mu.pdf_to_num(kid)
+            if not mu.pdf_is_indirect(kid) or x in seen:
+                return None
+            if len(seen) > budget:
+                exact = False
+                break
+            seen.add(x)
+            typ = mu.pdf_dict_get(kid, TYPE) if 0 < x < size else None
+            if typ is None or (not mu.pdf_name_eq(typ, PAGE)
+                               and mu.pdf_is_null(mu.pdf_resolve_indirect(kid))):
+                if pages < found:               # no such object: read as a blank page
+                    blank.append((pages, x))
+                pages += 1
+                continue
+            node = not mu.pdf_name_eq(typ, PAGE)
+            sub = mu.pdf_dict_get(kid, KIDS) if node else None
+            if not node or (not mu.pdf_name_eq(typ, PAGES) and mu.pdf_is_null(sub)):
+                lost += pages >= found
+                pages += 1
+                continue
+            if not mu.pdf_is_array(sub):
+                return None
+            if not mu.pdf_name_eq(typ, PAGES) and not (mu.pdf_is_null(typ)
+                                                     and mu.pdf_is_null(mu.pdf_dict_get(kid, BOX))):
+                exact = False                   # MuPDF reads this node as one blank page
+            stack.append([sub, 0, mu.pdf_array_len(sub)])
+    except errors:
+        return None
+    try:
+        named = bool(blank) and all(mu.pdf_to_num(mu.pdf_lookup_page_obj(pdf, i)) == x
+                                    for i, x in blank[:10])
+    except errors:
+        named = False
+    return lost, exact, [i for i, _ in blank], named
+
+
+def _check_page_count(doc, count, repaired=False):
+    """Raise InvalidPdfError when MuPDF repaired `doc` after it held `count` pages and it no longer
+    holds them, or when it can no longer count them: MuPDF rebuilds a damaged file's
+    cross-reference table when it reads an object it cannot find, and the page tree it then reads
+    can hold other pages. A count that changed with no repair since is the caller's (a page added
+    from a progress callback), as before. `repaired` is whether MuPDF had repaired `doc` when it
+    held `count` pages: it repairs a file once, so it is needed only where the caller can change
+    the count."""
+    outer = sys.exc_info()[1]
+    try:
+        now = doc.page_count
+    except _TREE_ERRORS as e:
+        _drop_frames(e, outer)
+        raise InvalidPdfError(f"not a readable PDF: its page tree is broken ({e})") from e
+    if now != count and not repaired and getattr(doc, "is_repaired", False):
+        raise InvalidPdfError(f"not a readable PDF: its page tree changed from {count} to {now} "
+                              "pages when MuPDF repaired the damaged file while reading it")
+
+
+def _page(doc, pno, count, repaired=False):
+    """``doc[pno]``, after :func:`_check_page_count`."""
+    _check_page_count(doc, count, repaired)
+    return doc[pno]
 
 
 _TREE_ERRORS = (RuntimeError, ValueError, IndexError, pymupdf.mupdf.FzErrorBase)
@@ -161,11 +298,14 @@ def _settle_page_count(doc):
     itself raise (InvalidPdfError here).
 
     MuPDF also rewrites the /Count in memory then, so the first call on a document reads the claim
-    beforehand and keeps detect_pdf's warning on the document when fewer pages are found (a
-    document its caller loaded a page of first has lost the claim, and gets none), with the count
-    found, so the warning is dropped once the caller adds or deletes pages. A first page that does
-    not load is left to _walk_page_tree, an error only where page 0 is processed, unless the
-    failed load leaves MuPDF counting no page."""
+    beforehand and keeps detect_pdf's warnings on the document when fewer pages are found (a
+    document its caller loaded a page of first has lost the claim and gets no such warning), with
+    the count found, so the warnings are dropped once the caller adds or deletes pages. On a tree
+    MuPDF did not map it also walks the tree itself (:func:`_tree_pages`) and warns when it holds
+    pages MuPDF does not read (a /Count in it too low) or names objects that are not in the file;
+    a walk that sets off a repair raises InvalidPdfError when the count changes, and otherwise
+    walks the repaired file again. A first page that does not load is left to _walk_page_tree, an
+    error only where page 0 is processed, unless the failed load leaves MuPDF counting no page."""
     outer = sys.exc_info()[1]
     first = not hasattr(doc, _PAGE_TREE_NOTE)
     claimed = _claimed_pages(doc) if first else None
@@ -181,34 +321,61 @@ def _settle_page_count(doc):
         _drop_frames(e, outer)
         raise InvalidPdfError(f"not a readable PDF: its page tree is broken ({e})") from e
     if first:
-        note = None
-        if claimed is not None and claimed > found:
+        repaired = getattr(doc, "is_repaired", False)
+        held = _tree_pages(doc, found)
+        if getattr(doc, "is_repaired", False) != repaired:     # the walk set off a repair:
+            _check_page_count(doc, found)   # an error if the count changed, else walk the
+            held = _tree_pages(doc, found)  # repaired file (MuPDF repairs a file once)
+        lost, exact, blank, named = held or (0, True, [], False)
+        notes, least, more = [], "" if exact else "at least ", "" if exact else " or more"
+        if lost:
+            reads = "none" if found == 0 else f"only {found}"
+            notes.append(f"the PDF's page tree holds {least}{found + lost} "
+                         f"page{'s' * (found + lost != 1)}, but MuPDF reads {reads}; strikes on "
+                         f"the {lost}{more} page{'s' * (lost != 1 or bool(more))} it does not "
+                         f"read are not reported")
+        elif claimed is not None and claimed > found:
             read = ("no page was read" if found == 0 else
                     "only that page was read" if found == 1 else "only those pages were read")
-            note = (f"the PDF says it has {claimed} pages but its page tree holds {found}; "
-                    f"{read}, so strikes on the missing pages are not reported")
-        setattr(doc, _PAGE_TREE_NOTE, (found, note))
+            notes.append(f"the PDF says it has {claimed} pages but its page tree holds {found}; "
+                         f"{read}, so strikes on the missing pages are not reported")
+        if named:
+            shown = ", ".join(str(p) for p in blank[:10]) + (f" (+{len(blank) - 10} more)"
+                                                              if len(blank) > 10 else "")
+            notes.append(f"page {shown} of the PDF's page tree names no object in the file and "
+                         f"is read as a blank page" if len(blank) == 1 else
+                         f"pages {shown} of the PDF's page tree name no object in the file and "
+                         f"are read as blank pages")
+        elif blank:
+            notes.append("an entry of the PDF's page tree names no object in the file; MuPDF "
+                         "reads it as a blank page" if len(blank) == 1 else
+                         f"{len(blank)} entries of the PDF's page tree name no object in the "
+                         f"file; MuPDF reads each as a blank page")
+        setattr(doc, _PAGE_TREE_NOTE, (found, tuple(notes)))
 
 
-def _page_tree_note(doc):
-    """The warning _settle_page_count kept on `doc` for a page tree holding fewer pages than it
-    claims, or None (also once the caller has added or deleted pages)."""
-    found, note = getattr(doc, _PAGE_TREE_NOTE, (None, None))
-    return note if note and doc.page_count == found else None
+def _page_tree_notes(doc):
+    """The warnings _settle_page_count kept on `doc` for its page tree, or () (also once the caller
+    has added or deleted pages)."""
+    found, notes = getattr(doc, _PAGE_TREE_NOTE, (None, ()))
+    return notes if doc.page_count == found else ()
 
 
 def _walk_page_tree(doc, page_indices=None):
     """Load each page of `page_indices` (default: every page) once, so a page tree MuPDF cannot
     walk raises InvalidPdfError here, before any page is detected, instead of a bare IndexError
-    or MuPDF error partway through. Call _settle_page_count first."""
+    or MuPDF error partway through, as it does when the page count changes as they load
+    (:func:`_check_page_count`). Call _settle_page_count first."""
     outer = sys.exc_info()[1]
+    count = doc.page_count
     try:
-        for pno in range(doc.page_count) if page_indices is None else page_indices:
+        for pno in range(count) if page_indices is None else page_indices:
             if 0 <= pno < doc.page_count:      # one out of range is the caller's IndexError
                 doc.load_page(pno)
     except _TREE_ERRORS as e:
         _drop_frames(e, outer)
         raise InvalidPdfError(f"not a readable PDF: its page tree is broken ({e})") from e
+    _check_page_count(doc, count)
 
 
 def _open_doc(source, walk=True):
@@ -1085,7 +1252,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         source: path, bytes, an open binary file (read once, from its current position), or an
             open fitz document. Encrypted PDFs raise EncryptedPdfError; a file that is not a
             readable PDF, or whose page tree MuPDF cannot walk, raises InvalidPdfError before any
-            page is detected.
+            page is detected, and one whose page count changes as MuPDF repairs it raises it too,
+            possibly after some pages are detected.
         ocr: an OCR backend ``(image_ndarray) -> list[Word]`` (see ``pdf_strikethrough.ocr``).
             Required only if the document has scanned pages and `di_result` is not given.
         scan_config: ``ScanConfig`` for the scanned classifier. Default: Azure-DI calibration
@@ -1156,8 +1324,10 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
     Each word record: page, text, chars, char_span, partial, bbox_frac, tier, verdict, final
     (+ cnn_prob / cnn_agrees on scanned records). ``clean_text`` is assembled from the word
     records (not by stripping the markdown), so the two always agree. A PDF that MuPDF had to
-    repair to open carries a warning: its text or drawings may be incomplete. So does one whose
-    page tree holds fewer pages than it says: ``page_count`` is the pages read.
+    repair, to open it or as it read the pages, carries a warning: its text or drawings may be
+    incomplete. So does one whose page tree holds fewer pages than it says, or pages MuPDF does
+    not read (a /Count in the tree too low): ``page_count`` is the pages read. A page the tree
+    names that is not in the file is read as a blank page, with a warning.
     """
     tel = _Telemetry() if telemetry else None
     method = _resolve_native_method(method, native_method)
@@ -1179,9 +1349,11 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         page_indices = _normalize_pages(pages, doc.page_count)
         _enforce_limits(len(page_indices), None, max_pages, None)
         _walk_page_tree(doc, page_indices)
+        count = doc.page_count  # a damaged file's page count can change as its pages are read
         if wbp is not None:
             _check_words_by_page(wbp, doc.page_count)
-        sources = {p: classify_page_source(doc[p]) for p in page_indices}
+        sources = {p: classify_page_source(_page(doc, p, count)) for p in page_indices}
+        _check_page_count(doc, count)
         if max_mpix is not None:
             mpix = sum(_render_mpix(doc[p], dpi) for p in page_indices if sources[p] == "scanned")
             _enforce_limits(0, mpix, None, max_mpix)
@@ -1193,10 +1365,11 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                        else (ScanConfig.azure_di(), ScanConfig.confidence_free()))
         meta = None
         words, warns = [], []
-        if note := _page_tree_note(doc):
+        for note in _page_tree_notes(doc):
             _warnings.warn(note, stacklevel=2)
             warns.append(note)
-        if getattr(doc, "is_repaired", False):
+        repaired = getattr(doc, "is_repaired", False)
+        if repaired:
             msg = ("the PDF is damaged and MuPDF repaired it to open it; text or drawings may be "
                    "missing, so a page with no strikes found is not proof that it has none")
             _warnings.warn(msg, stacklevel=2)
@@ -1204,7 +1377,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
         page_md, page_clean, passages, garbled, pw = [], [], [], [], []
         total = len(page_indices)
         for done, pno in enumerate(page_indices, start=1):
-            page = doc[pno]
+            page = _page(doc, pno, count, repaired)     # a progress callback can add pages
             recs, seq, garb = [], [], []
             # on native pages, the detectors that read U+0336 overlays ('vector', 'both') also
             # drop from clean_text the overlaid characters a record's one span leaves out
@@ -1342,6 +1515,13 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             if progress is not None:
                 progress(done, total, pno)
 
+        _check_page_count(doc, count, repaired)  # a repair as the last page was detected
+        if not repaired and getattr(doc, "is_repaired", False):
+            msg = ("the PDF is damaged and MuPDF repaired it as it read the pages; text or "
+                   "drawings may be missing, so a page with no strikes found is not proof that it "
+                   "has none")
+            _warnings.warn(msg, stacklevel=2)
+            warns.append(msg)
         if garbled:
             _warn_garbled(garbled, on_garbled, include_markdown)
         if isinstance(source, (str, os.PathLike)):
