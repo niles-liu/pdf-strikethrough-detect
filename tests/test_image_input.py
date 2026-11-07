@@ -128,7 +128,7 @@ def test_file_is_released_after_a_decode_error(tmp_path):
 
 # ----------------------------------------------------------------------- array conversion
 
-@pytest.mark.parametrize("dtype", [np.int32, np.int64, np.uint16, np.uint32])
+@pytest.mark.parametrize("dtype", [np.int16, np.int32, np.int64, np.uint16, np.uint32])
 def test_wide_integer_arrays_holding_8_bit_data(dtype):
     gray, _, _ = _page()
     assert np.array_equal(to_gray_u8(gray.astype(dtype)), gray)
@@ -137,6 +137,14 @@ def test_wide_integer_arrays_holding_8_bit_data(dtype):
 def test_16_bit_data_scales_by_257():
     gray, _, _ = _page()
     assert np.array_equal(to_gray_u8(gray.astype(np.int32) * 257), gray)
+
+
+def test_int16_data_reads_with_32767_as_white():
+    """32767 is white in an int16 page, as in an int16 crop (cnn.std_crop); it read as 127."""
+    gray, _, _ = _page()
+    page = np.round(gray * (32767 / 255)).astype(np.int16)
+    assert np.array_equal(to_gray_u8(page), gray)
+    assert to_gray_u8(np.array([[32767, 0]], np.int16)).tolist() == [[255, 0]]
 
 
 def test_rgba_and_gray_alpha_arrays_composite_over_white():

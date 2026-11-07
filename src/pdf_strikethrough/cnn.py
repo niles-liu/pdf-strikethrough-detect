@@ -44,9 +44,10 @@ PAPER_WHITE_FROM = 255            # std_crop takes a crop's paper (its commonest
                                   # up) to white when it is below this level: below 240 with the
                                   # white point at SHADE_WHITE_FRAC of the paper, from 240 up at the
                                   # paper itself, so near-white paper reaches the net as white
-                                  # paper does. 240 restores 0.14.0, which left paper at 240-254 as
-                                  # a faint grey ground: on it the shipped model called clean words
-                                  # struck near 240 and missed strikes above about 245.
+                                  # paper does. 240 restores 0.14.0's paper step, which left paper
+                                  # at 240-254 as a faint grey ground: on it the shipped model
+                                  # called clean words struck near 240 and missed strikes above
+                                  # about 245.
 
 _MODEL_DIR_OVERRIDE = None        # set via set_model_dir(); wins over the env var
 _META_RECORD = "strike_verdict_cnn.meta.verified.json"  # ensure_model's record: the sha256 of
@@ -220,39 +221,38 @@ def std_crop(crop):
     height-normalized isotropically; width center-cropped or padded. A float crop whose finite
     pixels are all at most 1.0 is read as [0, 1] and rescaled; NaN and +inf read as white and
     -inf as black. An integer crop of a type wider than 8 bits is read by its data's range, as
-    lines.to_gray_u8 reads a page, except that 32767 is white in int16: values up to 255 as they
-    are, up to 65535 as 16-bit (65535 is white), wider data by the type's maximum. The range is
-    the whole crop's, so one pixel above 255 puts all of it on the 16-bit scale. Values are
-    clipped to 0-255, with no mod-256 wraparound. A crop that is not 2-D, or has no pixels, raises
+    lines.to_gray_u8 reads a page: values up to 255 as they are, up to 65535 as 16-bit (65535 is
+    white, or 32767 in int16), wider data by the type's maximum. The range is the whole crop's,
+    so one pixel above 255 puts all of it on the 16-bit scale. Values are clipped to 0-255, with
+    no mod-256 wraparound, and a float or wide-integer crop is rounded to the nearest grey level,
+    as lines.to_gray_u8 rounds a page. A crop that is not 2-D, or has no pixels, raises
     ValueError. A crop more than about CROP_W / CROP_H (5) times as wide as it is tall loses its
     ends, so a strike on only one end of a long word can be cut off.
     The paper (the commonest pixel of 128 and up) is taken to white first when it is below
     PAPER_WHITE_FROM: below 240 with the white point at SHADE_WHITE_FRAC of the paper, from 240 up
-    at the paper itself; paper at or above PAPER_WHITE_FROM is untouched. White read through
-    lines.to_gray_u8's RGB(A) conversion is 254, so it is taken to 255 too."""
+    at the paper itself; paper at or above PAPER_WHITE_FROM is untouched. A crop with no pixel of
+    128 and up has no paper to take."""
     crop = np.asarray(crop)
     if crop.ndim != 2 or 0 in crop.shape:
         raise ValueError(f"std_crop needs a 2-D grey crop with pixels, got shape {crop.shape}")
     if np.issubdtype(crop.dtype, np.floating):
+        crop = crop.astype(np.float64)           # as to_gray_u8 does; float16 is too coarse
         finite = np.isfinite(crop)
         if not finite.all():                     # NaN and +inf as white (-inf clips to black)
             top = float(crop[finite].max()) if finite.any() else 0.0
             crop = np.where(np.isnan(crop) | (crop == np.inf), 255.0 if top > 1.0 else 1.0, crop)
         if float(crop.max()) <= 1.0:
             crop = crop * 255.0
-        crop = np.clip(crop, 0.0, 255.0)
+        crop = np.floor(np.clip(crop + 0.5, 0.0, 255.0))          # the nearest level
     elif crop.dtype != np.uint8 and np.issubdtype(crop.dtype, np.integer):
         # wide integer crops by their data's range; a bare .astype(uint8) below would wrap mod-256
-        k = _scale_to_255(crop)
-        if k == 1 / 257 and np.iinfo(crop.dtype).max < 65535:    # int16: 32767 is white
-            k = 255.0 / np.iinfo(crop.dtype).max
-        crop = np.clip(crop.astype(np.float64) * k, 0.0, 255.0)
+        crop = np.floor(np.clip(crop.astype(np.float64) * _scale_to_255(crop) + 0.5, 0.0, 255.0))
 
     crop = np.asarray(crop, dtype=np.float32)
     light = crop[crop >= 128]
     if light.size:
         bg = float(np.bincount(light.astype(np.intp), minlength=256).argmax())
-        if 120 <= bg < PAPER_WHITE_FROM:        # else paper at or above PAPER_WHITE_FROM
+        if bg < PAPER_WHITE_FROM:               # else paper at or above PAPER_WHITE_FROM
             cut = SHADE_WHITE_FRAC * bg if bg < 240 else bg
             crop = np.where(crop >= cut, 255.0, crop * (255.0 / cut))
     ch, cw = crop.shape
