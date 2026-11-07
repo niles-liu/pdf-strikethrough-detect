@@ -241,6 +241,29 @@ def test_an_open_tiff_is_read_in_place_and_closed_as_any_image_is(limit):
     assert f.closed and png.closed                 # Pillow closes the file it decodes
 
 
+class _NoClose:
+    """A caller's stream that can read, seek and tell, but has no close(), as Pillow allows."""
+
+    def __init__(self, data):
+        self._f = io.BytesIO(data)
+        self.read, self.seek, self.tell = self._f.read, self._f.seek, self._f.tell
+
+
+class _CloseFails(_NoClose):
+    def close(self):
+        raise OSError("cannot close")
+
+
+@pytest.mark.parametrize("stream", [_NoClose, _CloseFails])
+def test_an_open_tiff_that_cannot_close_is_read_as_any_image_is(stream):
+    tiff, words = _tiff(3)
+    png, _ = _redline_image_png()
+    for data in (tiff, png):                       # Pillow closes a file only if it can
+        assert st.detect_image_file(stream(data), ocr=lambda rgb: list(words))["words"]
+    with pytest.raises(st.OcrRequiredError):       # the detection error, not one from closing
+        st.detect_image_file(stream(tiff), words_by_page={0: words})
+
+
 def test_a_refused_open_file_is_left_open_at_its_start(tmp_path):
     tiff, _ = _tiff(3)
     png, _ = _redline_image_png()
