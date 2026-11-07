@@ -353,9 +353,8 @@ def test_no_warning_once_the_caller_changes_the_page_count(recwarn):
 def test_cli_reads_the_pages_a_short_page_tree_holds(tmp_path, capsys):
     path = tmp_path / "short.pdf"
     path.write_bytes(_claims(3))
-    with pytest.warns(UserWarning):
-        assert cli.main(["detect", str(path)]) == 0
-    assert "holds 1" in capsys.readouterr().err
+    assert cli.main(["detect", str(path)]) == 0
+    assert capsys.readouterr().err.count("holds 1") == 1     # once, as the result's warning line
 
 
 def test_a_valid_pdf_opens_as_before():

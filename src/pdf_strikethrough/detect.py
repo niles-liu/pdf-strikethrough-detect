@@ -869,13 +869,34 @@ def _image_frames(source, max_pages=None, max_mpix=None):
             img.close()
 
 
+_PIL_DECODE_ERRORS = (KeyError, SyntaxError, TypeError, ValueError)   # Pillow's on a damaged
+                                  # frame, besides OSError (seek reads its tags, load its pixels)
+
+
 def _decoded_frames(img):
     """Each frame of the open PIL image `img`, decoded as iteration reaches it, as
-    :func:`_image_frames` lists them."""
+    :func:`_image_frames` lists them. A _PIL_DECODE_ERRORS error Pillow raises for a frame
+    becomes an OSError naming the frame, unless ``img.fp`` is None or closed (a closed image or
+    file, not a damaged one), and a frame with no pixels, which is not decoded, raises one too.
+    Pillow's other errors, its OSError and DecompressionBombError among them, are raised as is."""
     from PIL import ImageOps, ImageSequence
 
-    for frame in ImageSequence.Iterator(img):
-        frame.load()                           # a TIFF's orientation is applied (and dropped) here
+    frames, n = ImageSequence.Iterator(img), 0
+    while True:
+        try:
+            frame = next(frames)
+            if 0 not in frame.size:            # a frame with no pixels is not decoded
+                frame.load()                   # a TIFF's orientation is applied (and dropped) here
+        except StopIteration:
+            return
+        except _PIL_DECODE_ERRORS as e:
+            fp = getattr(img, "fp", None)
+            if fp is None or getattr(fp, "closed", False):
+                raise                          # a closed image or file, not a damaged one
+            raise OSError(f"frame {n} cannot be decoded ({type(e).__name__}: {e})") from e
+        if 0 in frame.size:    # its size is left out: Pillow 10.1 gives a turned TIFF frame's
+            raise OSError(f"frame {n} has no pixels")    # as stored, 12.3 and 13 as turned
+        n += 1
         upright = None
         try:
             if frame.getexif().get(0x0112, 1) not in (0, 1):          # EXIF Orientation
@@ -940,7 +961,8 @@ class _TiffFrames:
     def close(self):
         self._close_image()
         if self._fp is not None:
-            self._fp.close()
+            with contextlib.suppress(Exception):    # as Pillow closes an image's file: if it can
+                self._fp.close()                    # (a caller's stream may have no close())
 
 
 def _frames(source, max_pages=None, max_mpix=None):
@@ -1060,6 +1082,12 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     but the frames before it are detected first, so `ocr` is called on them and their warnings are
     given. Any other image is decoded whole first, as are a PIL image you pass and a TIFF with a
     frame over Pillow's decompression-bomb limit (``PIL.Image.MAX_IMAGE_PIXELS``).
+
+    A frame Pillow cannot decode raises OSError: Pillow's own, or, for a TypeError, KeyError,
+    SyntaxError or ValueError Pillow raises on a damaged file, one naming the frame, such as
+    "frame 1 cannot be decoded (KeyError: 9)", with Pillow's error as its cause. A frame with no
+    pixels raises OSError "frame 1 has no pixels". A PIL image or file you closed first raises
+    Pillow's ValueError, as before.
     """
     import numpy as np
 
