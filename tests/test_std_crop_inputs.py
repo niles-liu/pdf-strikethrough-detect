@@ -91,6 +91,20 @@ def test_16_bit_data_in_int16_reads_with_32767_as_white():
                           cnn.std_crop(word))
 
 
+def test_a_crop_between_grey_levels_reads_as_to_gray_u8_reads_its_page():
+    """std_crop rounds a float or wide-integer crop to the nearest grey level, as to_gray_u8 rounds
+    a page (a half level rounds up; an average of two pages has half levels), so a crop handed to
+    it reads as it does once to_gray_u8 has read it."""
+    from pdf_strikethrough.lines import to_gray_u8
+    rng = np.random.default_rng(5)
+    for ground in (255, 250, 239.6, 211):
+        word = np.clip(_word(ground) + rng.normal(0, 3, (40, 200)), 0, 255)
+        for crop in (word, word / 255, (word / 255).astype(np.float16), np.floor(word) + 0.5,
+                     np.round(word * 257).astype(np.uint16),
+                     np.round(word * (32767 / 255)).astype(np.int16)):
+            assert np.array_equal(cnn.std_crop(crop), cnn.std_crop(to_gray_u8(crop))), crop.dtype
+
+
 def test_32_bit_data_reads_with_the_type_maximum_as_white():
     word = _word().astype(np.uint8)
     assert np.array_equal(cnn.std_crop(word.astype(np.uint32) * 16843009), cnn.std_crop(word))

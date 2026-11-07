@@ -56,7 +56,8 @@ def test_ground_is_the_mode_not_a_percentile():
 
 
 def test_dark_scan_is_untouched():
-    """Below the guard this is not a highlight block; rescaling would amplify noise into ink."""
+    """A ground below 128 has no paper to take: it is not a highlight block, and rescaling it would
+    amplify noise into ink."""
     std = cnn.std_crop(_word_on(100))
     assert _bg_level(std) > 0.4
     # the paper is the commonest pixel of 128 and up, so a ground at 127 is left as it is
@@ -113,13 +114,17 @@ def test_white_paper_and_shaded_grounds_are_as_before(monkeypatch):
                                                                          abs=1 / 255)
 
 
-def test_a_colour_image_of_white_paper_reaches_the_net_as_its_grey_twin():
-    """White read through to_gray_u8's RGB conversion is 254, inside the near-white band, so this
-    word from a colour image reaches the net exactly as its greyscale twin does (0.14.0 left it a
-    one-level grey ground)."""
-    from pdf_strikethrough.lines import to_gray_u8
+def test_a_colour_image_of_white_paper_reaches_the_net_as_its_grey_twin(monkeypatch):
+    """A word from a colour image reaches the net exactly as its greyscale twin does. Its white
+    reads 255 through to_gray_u8's RGB conversion; truncating it read 254, inside the near-white
+    band, which std_crop takes to white too (0.14.0 left it a one-level grey ground)."""
+    from pdf_strikethrough import lines
     grey = _word_on(255)
-    rgb = to_gray_u8(np.dstack([grey.astype(np.uint8)] * 3))
+    rgb = lines.to_gray_u8(np.dstack([grey.astype(np.uint8)] * 3))
+    assert rgb.max() == 255
+    assert np.array_equal(cnn.std_crop(rgb), cnn.std_crop(grey))
+    monkeypatch.setattr(lines, "_ROUND", False)
+    rgb = lines.to_gray_u8(np.dstack([grey.astype(np.uint8)] * 3))
     assert rgb.max() == 254
     assert np.array_equal(cnn.std_crop(rgb), cnn.std_crop(grey))
 
@@ -177,6 +182,78 @@ def test_to_gray_u8_grayscale_input_untouched():
     from pdf_strikethrough.lines import to_gray_u8
     a = np.array([[0, 77, 128, 255]], dtype=np.uint8)
     assert np.array_equal(to_gray_u8(a), a)
+
+
+def test_every_grey_level_stored_another_way_reads_as_itself(monkeypatch):
+    """to_gray_u8 rounds to the nearest level. A grey stored as RGB comes back from the sRGB round
+    trip a hair off its level, and truncating that read some levels one lower. Which levels, and
+    how many, depend on how numpy computes the powers and the luminance sum, which varies with its
+    version and the machine, so under truncation only white is pinned: its three weights sum to
+    exactly 1 in any order, and truncating read it as 254."""
+    from PIL import Image
+
+    from pdf_strikethrough import detect, lines
+    g = np.arange(256, dtype=np.uint8).reshape(1, -1)
+    opaque = np.full_like(g, 255)
+    for image in (np.dstack([g] * 3), np.dstack([g, g, g, opaque]), np.dstack([g, opaque]),
+                  g.astype(np.uint16) * 257):
+        assert np.array_equal(lines.to_gray_u8(image), g), image.shape
+    assert lines.to_gray_u8(np.array([[51529, 51528]], np.uint16)).tolist() == [[201, 200]]
+    assert detect._frame_gray(Image.new("1", (4, 4), 1)).min() == 255      # bilevel white
+    monkeypatch.setattr(lines, "_ROUND", False)                            # 0.14.0's truncation
+    old = lines.to_gray_u8(np.dstack([g] * 3))
+    assert old[0, 255] == 254 and (old <= g).all() and (g.astype(int) - old).max() == 1
+
+
+def test_to_gray_u8_rounds_the_final_grey_once(monkeypatch):
+    """The level is rounded once, on the grey the conversion ends with: grey 10 at alpha 200 over
+    white paper is 62.84 and reads 63, as grey or RGBA; pure green's luminance is 219.93 and reads
+    220, pure yellow's 246.73 reads 247; a float page at 0.5 (127.5) reads 128; 200.6 reads 201 as
+    a float in [0, 1] or 0 to 255, grey or RGB, and so does 16-bit 51529 (200.50), grey or RGB.
+    RGBA (0, 17, 17, 200) is 65.76 and reads 66, where rounding each channel over the paper first
+    reads 65. Truncating, as 0.14.0 did, reads each one level lower."""
+    from pdf_strikethrough import lines
+    cases = [(np.array([[[10, 200]]], np.uint8), 63),
+             (np.array([[[10, 10, 10, 200]]], np.uint8), 63),
+             (np.array([[[0, 17, 17, 200]]], np.uint8), 66),
+             (np.array([[[0, 255, 0]]], np.uint8), 220),
+             (np.array([[[255, 255, 0]]], np.uint8), 247),
+             (np.array([[0.5]]), 128),
+             (np.array([[200.6 / 255]]), 201),
+             (np.array([[200.6]]), 201),
+             (np.full((1, 1, 3), 200.6 / 255), 201),
+             (np.full((1, 1, 3), 200.6, np.float32), 201),
+             (np.array([[51529]], np.uint16), 201),
+             (np.full((1, 1, 3), 51529, np.uint16), 201)]
+    for image, level in cases:
+        assert lines.to_gray_u8(image).item() == level, (image, level)
+    monkeypatch.setattr(lines, "_ROUND", False)
+    for image, level in cases:
+        assert lines.to_gray_u8(image).item() == level - 1, (image, level)
+
+
+# --- crops with few light pixels: the paper is the commonest light pixel, however few -----------
+# These keep what std_crop has done since 0.14.0: the paper needs no minimum share of light pixels.
+
+def test_a_noisy_ground_near_128_keeps_its_paper():
+    """A dim scan's paper at 124-128 with noise has under half its pixels at 128 and up. It is
+    still the crop's paper and goes to white; left as a grey ground, the shipped model would score
+    this clean word about 0.6."""
+    rng = np.random.default_rng(0)
+    for ground in (124, 126, 128):
+        crop = np.clip(np.round(_word_on(ground) + rng.normal(0, 6, (40, 120))), 0, 255)
+        assert (crop >= 128).mean() < 0.5
+        assert _bg_level(cnn.std_crop(crop)) == pytest.approx(0.0, abs=1e-6), ground
+
+
+def test_a_word_inked_over_half_its_crop_keeps_its_paper():
+    """Bold display text in a tight box covers more than half its crop; its shaded ground is
+    still its paper."""
+    crop = np.full((40, 120), 211.0, np.float32)
+    for x in range(4, 116, 8):
+        crop[4:36, x:x + 6] = 10.0
+    assert (crop >= 128).mean() < 0.5
+    assert _bg_level(cnn.std_crop(crop)) == pytest.approx(0.0, abs=1e-6)
 
 
 def test_ink_mask_survives_a_shaded_band():
