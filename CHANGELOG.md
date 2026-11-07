@@ -6,35 +6,82 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Detection output changes on scans in two cases, both under Changed: words on light grey paper
-(paper at 240 to 254 of 255), and colour images (image files other than greyscale, and RGB(A)
-arrays), even on white paper. Every other change is to `training/train_strikenet.py`, to the
-files `dump_crops` writes, or to docs.
+## [0.14.2] - 2026-11-07
+
+A patch: the package gains no function, class or argument, and results keep `schema_version` 1; its
+one new public name is the setting `cnn.PAPER_WHITE_FROM`. Detection output changes on scans in
+three cases, all under Changed: words on light grey paper (paper at 240 to 254 of 255); images not
+stored as 8-bit greyscale (colour, palette, bilevel, alpha, 16-bit, 32-bit or float image files,
+and such arrays), even on white paper; and, with `rapidocr_backend()`, pages and image frames more
+than 32 times as tall as they are wide, now skipped with a warning. The rest changes how damaged
+PDFs and image files fail or warn, how a multi-page TIFF is decoded, the CLI's warnings, a new
+warning for a model trained on other crop settings, the `cnn` helpers when called directly,
+`training/train_strikenet.py` and the files `dump_crops` writes, and docs.
 
 ### Changed
 - **Scans on light grey paper:** StrikeNet's scores, and the scanned path's verdicts with them,
   change for words on paper at 240 to 254 of 255: light grey or light-coloured paper, or paper
   under a light highlighter. `cnn.std_crop` now takes such paper to white, as it already took a
-  shaded ground below 240; a PDF or greyscale image with no word on such paper gives the same
-  output. On the faint grey ground 0.14.0 left, the shipped model calls live words struck from
-  240 to about 245 and misses strikes from about 245. On 472 pages of printed text rendered with
-  their paper greyed to 240, 245 or 250, it now finds about as many struck words, and marks about
-  as many live ones, as on white paper; no scan of a printed page was measured. On 218 pages of
-  the training split and 103 of the validation split of BRESSAY (a public dataset of
-  handwriting), where most words sit on such paper, the shipped model now marks 7.4% and 4.6%
-  more live words and finds 3 and 1 more struck words with RapidOCR words. With Azure DI words it
-  marks 14 live words against 9 on 20 of the training pages and 31% more on 50 of the validation
-  pages, and finds no more struck words. `cnn.PAPER_WHITE_FROM = 240` restores 0.14.0. (#107)
-- **Colour images:** an image file other than greyscale (colour, palette, bilevel or with alpha),
-  or an RGB(A) array given to `detect_scanned_image`, `analyze_scanned_page` or `score_word`, has
-  its white paper read as 254, as before. Such paper is now taken to white too, so the output
-  comes closer to the same image's in greyscale: read as colour images, 431 of the 472 pages on
-  white paper give the same output as in greyscale, against 328 with 0.14.0. (#107)
+  shaded ground below 240; a PDF or 8-bit greyscale image with no word on such paper gives the same
+  output. On the faint grey ground 0.14.0 left, the shipped model calls live words struck from 240
+  to about 245 and misses strikes from about 245. On 472 pages of printed text rendered with their
+  paper greyed to 240, 245 or 250, it now finds about as many struck words, and marks about as many
+  live ones, as on white paper; no scan of a printed page was measured. On 218 pages of the
+  training split and 103 of the validation split of BRESSAY (a public dataset of handwriting),
+  where most words sit on such paper, the shipped model now marks 7.4% and 4.6% more live words and
+  finds 3 and 1 more struck words with RapidOCR words. With Azure DI words it marks 14 live words
+  against 9 on 20 of the training pages and 31% more on 50 of the validation pages, and finds no
+  more struck words. `cnn.PAPER_WHITE_FROM = 240` restores 0.14.0's handling of such paper; images
+  not stored as 8-bit greyscale still read as described below. On these handwritten pages the
+  setting marks fewer live words. With Azure DI words it finds as many struck ones, so use it for
+  handwriting read by DI until the model is retrained; with RapidOCR words it finds fewer, in about
+  the same proportion. (#107)
+- **Images not stored as 8-bit greyscale:** `to_gray_u8`, which reads every image file and array
+  the scanned path takes, now rounds each pixel to the nearest grey level; it truncated. Truncating
+  read white as 254 in colour, palette, bilevel and alpha images, and some other greys one level
+  low, which ones depending on the numpy version and machine. An opaque grey stored as colour, in a
+  palette, as bilevel or with an alpha channel now reads as its own level, so such an image gives
+  the same output as in greyscale: with each page's greyscale render stored as an RGB image, all
+  472 printed pages measured for #107 do, against 328 with 0.14.0. Other colours, and 16-bit,
+  32-bit and float levels, read up to one level lighter than before, except the int16 pages below.
+  `cnn.std_crop` now rounds a float or wide-integer crop the same way, so a finite crop given to it
+  reads as the detector reads the same pixels, and a float page given to `score_word` is rounded
+  too; the detector's own crops are whole levels, which this leaves as they are. An int16 page
+  holding values above 255 is read with 32767 as white, as an int16 crop is; 32767 read as 127.
+  None of this changes the output for PDFs or 8-bit greyscale images and arrays. (#118)
+- **Tall, narrow scans:** with `rapidocr_backend()`, the CLI's `--ocr rapidocr` included,
+  `detect_pdf` and `detect_image_file` now skip a page or image frame more than 32 times as tall
+  as it is wide, with a warning, and report no text or strikes for it. RapidOCR reads such a strip
+  slowly: with it, `detect_image_file` took 48 to 51 s on a strip of 10 x 1,300 px and 14 s on a
+  letter page. A strip up to 32 times as tall is still read, and can take as long as a letter page.
+  A tall page RapidOCR cannot resize, skipped since 0.14.0, now gets the new warning. Wide strips,
+  words you supply and other OCR backends are unchanged, so to read such a strip anyway, pass its
+  words or call the backend from a function of your own. (#116)
+- `detect_image_file` decodes a multi-page TIFF file (a path, bytes, or an open file that can seek)
+  one frame at a time, as detection reaches it, so its memory grows with its largest frame, not its
+  frame count; output is unchanged. A damaged file raises the error it would raise decoded whole
+  (see Fixed), but the frames before the damaged one are detected first, so `ocr` is called on
+  them. An open multi-page TIFF is read in place also with `max_pages` or `max_mpix` set, and is
+  closed once detection ends rather than once its frames are decoded. (#117)
+- The package warns when it scores with a model whose meta records `std_crop` settings other than
+  the ones `cnn.PAPER_WHITE_FROM` and `cnn.SHADE_WHITE_FRAC` now give, once per model and settings,
+  naming the setting to restore. A meta from the training script of 0.12.1 to 0.14.0, which
+  recorded none, is taken as made at 240 and 0.85. A meta with no `training` block, such as the
+  shipped model's or one an earlier script wrote, never warns. (#114)
+- `cnn.std_crop` on direct calls: an integer crop holding 0 to 255 in a type wider than 8 bits read
+  as nearly solid ink, one NaN in a [0, 1] crop turned it black, and an empty or non-2-D crop
+  failed with an unrelated error or a solid block. Integer crops are now read by their data's
+  range, as a page is, with 32767 as white in `int16`; NaN and +inf read as white, and a crop that
+  is not 2-D or has no pixels raises `ValueError`. The detector's crops are float32 copies of 8-bit
+  pixels, so detection is unchanged. (#114)
+- `cnn.verdict_of` rounds the score to 3 decimals, as the detector rounds a word's `cnn_prob`, so a
+  raw score that rounds to a threshold, such as 0.8496 at a `p_hi` of 0.85, gets the detector's
+  verdict; it still takes the 1-element array `score_crops` returns for one crop. (#114)
 - **Retraining:** crops dumped with 0.14.0 keep the faint grey ground of paper at 240 to 254, so
   dump scans again before training, into a new directory: a dump replaces the `crops.jsonl` it
-  writes to, labels included. A model you trained on 0.14.0 dumps saw that ground, and the loader
-  does not check the `std_crop` settings a meta records: use such a model with
-  `cnn.PAPER_WHITE_FROM = 240`, or train a new one on a new dump. (#107, #108)
+  writes to, labels included. A model you trained on 0.14.0 dumps saw that ground, and the package
+  warns when it scores with such a model: use it with `cnn.PAPER_WHITE_FROM = 240`, or train a new
+  one on a new dump. (#107, #108, #114)
 - `training/train_strikenet.py` matches a retrained model's thresholds to the model the package
   loads (the shipped model, unless `PDF_STRIKETHROUGH_MODEL_DIR` or `cnn.set_model_dir` points
   at another): `p_hi` is the highest threshold at which the new model calls at least as many
@@ -50,6 +97,32 @@ files `dump_crops` writes, or to docs.
   and keeps the old model when replacing it fails. (#105)
 
 ### Fixed
+- A damaged PDF whose page tree holds pages MuPDF does not read (a `/Count` in it too low, or a
+  root `/Count` of 0 or none) now warns with the count, such as "the PDF's page tree holds 3
+  pages, but MuPDF reads only 2"; it used to warn only when the root claimed more pages than were
+  found. An entry that names no object in the file, which MuPDF reads as a blank page, now gets a
+  warning. A root `/Count` stored as a reference to another object is now read, so its claim is
+  checked too. The page tree is walked only when MuPDF has not read it whole, as it does for a
+  valid PDF, so valid files cost nothing more. (#115)
+- A damaged PDF whose page count changes as MuPDF repairs it while reading the pages raised a bare
+  `IndexError` partway through, or gave a result that mixed the two page trees. `detect_pdf`,
+  `strikethroughs_in_pdf`, `open_pdf`, `render_overlay` and `clean_markdown` now raise
+  `InvalidPdfError`, and so does MuPDF's own error when it cannot count the repaired tree's pages;
+  the CLI exits 1 with the error. When a repair while the pages are detected keeps the page count,
+  `detect_pdf` now warns that text or drawings may be missing, as it does for a repair on
+  opening. (#115)
+- A damaged image file that Pillow opens but cannot decode could raise Pillow's own `TypeError`,
+  `KeyError`, `SyntaxError` or `ValueError`, and for all but the `ValueError` the CLI printed a
+  traceback; a frame with no pixels raised a `ValueError`, an `OSError` or a later error such as a
+  numpy `IndexError`, depending on its codec and how it was read, or, with `rapidocr_backend()`,
+  could be skipped with a warning. `detect_image_file` now raises `OSError` naming the frame, such
+  as "frame 1 cannot be decoded (KeyError: 9)", with Pillow's error as its cause, or "frame 1 has
+  no pixels", and the CLI exits 1 with the error. A PIL image or file closed before the call still
+  raises Pillow's `ValueError`. (#120)
+- Run on one file, the CLI printed most warnings from `detect_pdf` and `detect_image_file`
+  twice, as Python shows them and as "warning:" lines; it now prints each once, as its "warning:"
+  line, or as Python shows it when detection fails. Other warnings, such as Pillow's, are shown as
+  before. (#120)
 - `training/train_strikenet.py` held out random crops, so a page's crops fell on both sides of the
   split and the thresholds came from pages the model had trained on. It now holds out whole pages,
   or whole groups that rows name in a `group` column, so the same dump and seed hold out other
@@ -80,13 +153,25 @@ files `dump_crops` writes, or to docs.
   than struck or clean, such as `1`, is skipped and named in a note of its own, apart from the
   unlabeled count. It stops, naming the line, on a row it cannot read, a crop PNG it cannot open
   or other text that is not UTF-8. (#108)
-- The docstrings of `calibration` and `calibration.conformal_threshold` no longer call a
-  calibrated threshold's recall a guarantee: the conformal bound holds on average over calibration
-  sets, for struck words exchangeable with the calibration words, and words from another writer,
-  scanner or kind of document can fall short of it. `cnn.std_crop`'s docstring now says that a
-  crop more than about 5 times as wide as it is tall loses its ends, so a strike on only one end
-  of a long word can be cut off, and that an integer crop of a type wider than 8 bits is scaled
-  so that the type's maximum is white: pass 0 to 255 values as `uint8`. (#109)
+- When an image editor saved a crop PNG again as 16-bit, `training/train_strikenet.py` read it as
+  blank paper but for its pure-black pixels, and when the editor made its paper transparent over
+  black, as solid ink. It now reads each as the 8-bit crop it holds: a 16-bit crop is scaled as the
+  detector scales a 16-bit image, and transparency is laid over white. (#113)
+- The training script counted pages `1`, `1.0` and `"1"` as three pages, and groups `7` and `7.0`
+  as two, so the crops of one page or group could fall on both sides of the split once a
+  spreadsheet had rewritten some of its rows. They are now one page and one group; a group written
+  as text stays text, so `"7"` is still a different group from `7`. (#113)
+- When the validation split lacks the struck crops the thresholds need or a clean crop, the
+  training script's advice now counts what each side of the split needs: it says no seed can help
+  exactly when no split of that size passes, and then suggests raising or lowering `--val-frac`
+  only when that would pass. It used to suggest another seed for some datasets that no split
+  passes. (#113)
+- The docstrings of `calibration` and `calibration.conformal_threshold` no longer call a calibrated
+  threshold's recall a guarantee: the conformal bound holds on average over calibration sets, for
+  struck words exchangeable with the calibration words, and words from another writer, scanner or
+  kind of document can fall short of it. `cnn.std_crop`'s docstring now says that a crop more than
+  about 5 times as wide as it is tall loses its ends, so a strike on only one end of a long word
+  can be cut off. (#109)
 
 ## [0.14.0] - 2026-11-02
 
