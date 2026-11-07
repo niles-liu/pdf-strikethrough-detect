@@ -6,7 +6,7 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: "0 6 * * 1"   # Mondays 06:00 UTC — the deps-latest early-warning leg
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC, the deps-latest early-warning leg
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -89,7 +89,7 @@ jobs:
 
   extras:
     # The optional-dependency backends (rapidocr / tesseract / torch / markdown) have zero test
-    # coverage and that adapter surface has broken before — smoke-test that each imports and the
+    # coverage and that adapter surface has broken before; smoke-test that each imports and the
     # adapter factory it feeds is reachable.
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -123,7 +123,7 @@ jobs:
   deps-latest:
     # Early warning against upstream churn: install the newest deps INCLUDING pre-releases and run
     # the suite. PyMuPDF is the one that bit before (the fitz -> pymupdf rename), so bump it --pre
-    # explicitly. Scheduled/manual only — a green PR shouldn't wait on unreleased upstream builds;
+    # explicitly. Scheduled/manual only: a green PR shouldn't wait on unreleased upstream builds;
     # a red run here is a heads-up, not a merge blocker.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

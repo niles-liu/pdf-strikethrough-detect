@@ -1,6 +1,6 @@
 """OCR-free geometric strike-line detection on rasterized (scanned) pages.
 
-This is the engine that finds the physical strokes — it needs no OCR and no PDF; give it a
+This is the engine that finds the physical strokes: it needs no OCR and no PDF; give it a
 grayscale image and it returns the near-horizontal straight-ish lines (strikes, underlines,
 rules) with per-line geometry (fill, stroke run-thickness, angle, length).
 
@@ -74,7 +74,7 @@ def otsu_threshold(gray):
 
 def _scale_to_255(a):
     """Multiplier that puts array `a` on the 0..255 scale, decided over the whole array: floats in
-    [0, 1] scale up; integers wider than 8 bits scale by their DATA range — 8-bit values held in a
+    [0, 1] scale up; integers wider than 8 bits scale by their DATA range: 8-bit values held in a
     wider type pass through, 16-bit data divides by 257, anything wider by the dtype maximum."""
     if np.issubdtype(a.dtype, np.floating):
         return 255.0 if a.size and float(a.max()) <= 1.0 else 1.0
@@ -312,7 +312,7 @@ def _spine_straightness(ink, center, u, length, run_px):
     """RMS perpendicular wobble (px) of the local ink centroid about the straight spine, sampled
     along the major axis. A printed rule rides a dead-straight path (~0-1 px); a pen or typed
     strike crossing raised glyphs on a degraded scan wanders more. Returned in raw px at the
-    caller's dpi — normalize to RENDER_DPI outside so a threshold is resolution-independent.
+    caller's dpi. Normalize to RENDER_DPI outside so a threshold is resolution-independent.
 
     Returns ``inf`` when the wobble is not measurable (non-finite `run_px`, or fewer than
     ``STRAIGHTNESS_MIN_SAMPLES`` ink-bearing samples). ``inf`` is the fail-SAFE direction: the
@@ -334,7 +334,7 @@ def _spine_straightness(ink, center, u, length, run_px):
     win = max(3, int(round(run_px * 2)))
     offs = np.arange(-win, win + 1)
     # Sample the whole (n x 2*win+1) perpendicular neighbourhood in one shot. This runs on the
-    # DEFAULT path for every detected line — a per-sample Python loop cost ~37% of strike_lines.
+    # DEFAULT path for every detected line; a per-sample Python loop cost ~37% of strike_lines.
     cx = center[0] + ts * u[0]
     cy = center[1] + ts * u[1]
     xs = np.clip(np.round(cx[:, None] + offs[None, :] * v[0]), 0, W - 1).astype(np.intp)
@@ -500,8 +500,8 @@ def strike_lines(gray, dpi=RENDER_DPI, ink=None):
     page raster (uint8 HxW ndarray). Returns dicts:
         {bbox_px, ends_px, len_in, angle_deg, fill, run_px, straightness}
     `straightness` is perpendicular ink wobble in px normalized to RENDER_DPI, or **None** when it
-    is not measurable — treat None as "unknown", never as "straight" (see `_spine_straightness`).
-    `dpi` is the raster's px-per-inch — pass the DPI the image was rendered at; both the length
+    is not measurable; treat None as "unknown", never as "straight" (see `_spine_straightness`).
+    `dpi` is the raster's px-per-inch: pass the DPI the image was rendered at; both the length
     tunables and the pixel-space tunables (calibrated at 200 dpi) rescale from it. Pass `ink`
     (a bool mask) to reuse a precomputed binarization.
 

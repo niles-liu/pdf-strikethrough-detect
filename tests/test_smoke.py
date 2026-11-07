@@ -102,7 +102,7 @@ def test_detect_pdf_extracts_words_once_per_native_page(monkeypatch):
     """Under method='both', a native page extracts get_text('words') once and threads
     it through the vector + flag detectors and the markdown match, instead of re-extracting per
     call (was up to four extractions/page). classify's own light-image-branch extraction is the
-    only other one, so the page totals two — not four."""
+    only other one, so the page totals two, not four."""
     import pymupdf
     doc = _synthetic_native_pdf()
     calls = {"words": 0}
@@ -192,7 +192,7 @@ def test_strike_lines_json_serializable_and_positive_area():
 
 
 def test_dpi_scaling_still_detects():
-    """Pixel tunables now rescale with dpi — a 400-dpi render must not lose the strike."""
+    """Pixel tunables now rescale with dpi; a 400-dpi render must not lose the strike."""
     H, W = 800, 1600                                    # same page geometry at 2x resolution
     gray = np.full((H, W), 255, np.uint8)
     for x in range(200, 1000, 24):
@@ -312,7 +312,7 @@ def test_encrypted_pdf_raises_dedicated_error():
 
 
 def test_model_dir_override_is_read_at_load_time(tmp_path):
-    """PDF_STRIKETHROUGH_MODEL_DIR / set_model_dir take effect at load time — they used to be read
+    """PDF_STRIKETHROUGH_MODEL_DIR / set_model_dir take effect at load time; they used to be read
     once at import, so the documented 'set it then import' override silently no-op'd."""
     from pdf_strikethrough import cnn
     try:
@@ -516,7 +516,7 @@ def test_cli_writes_non_cp1252_output_without_crashing(tmp_path, monkeypatch):
     non-cp1252 char in the markdown / clean-text / JSON. All three opens are now utf-8."""
     import json
     from pdf_strikethrough import __main__ as cli
-    nonlatin = "ﬁle café → π"                      # U+FB01, é, arrow, pi — not all in cp1252
+    nonlatin = "ﬁle café → π"                      # U+FB01, é, arrow, pi; not all in cp1252
     fake = {"source": None, "page_count": 1, "page_sources": ["native"], "n_struck_final": 1,
             "warnings": [], "markdown": f"~~{nonlatin}~~", "clean_text": nonlatin, "passages": [],
             "words": [{"page": 0, "text": nonlatin, "chars": nonlatin,
@@ -588,7 +588,7 @@ def test_clean_text_immune_to_literal_tildes():
 # --------------------------------------------------------------------- v0.5.0 surface
 
 def test_strikethroughs_in_pdf_warns_on_scanned():
-    """A scanned page yields a silent [] for that page — warn so the caller knows to route it
+    """A scanned page yields a silent [] for that page; warn so the caller knows to route it
     through detect_pdf(ocr=...)."""
     import warnings
     doc = _mixed_native_scanned_pdf()
@@ -758,7 +758,7 @@ def test_confidence_free_ignores_confidence():
 # --------------------------------------------------------------------- verdict consistency
 
 def test_auto_record_verdict_not_struck_when_cnn_drops(monkeypatch):
-    """An 'auto' word the CNN votes down (final=False) must not keep verdict='struck' — that
+    """An 'auto' word the CNN votes down (final=False) must not keep verdict='struck'; that
     contradicts the ship decision. Report the CNN's read instead; a confirmed word stays
     'struck'."""
     from pdf_strikethrough import cnn, detect
@@ -816,7 +816,7 @@ def test_detect_pdf_method_alias_deprecated_but_honored():
 
 def test_vector_records_carry_stroke_color_and_width():
     """Native vector records report the dominant contributing stroke's color + width
-    (RGB in [0,1], width in pt) — pen-color conventions are evidence in legal review."""
+    (RGB in [0,1], width in pt); pen-color conventions are evidence in legal review."""
     import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
@@ -892,7 +892,7 @@ def test_page_strikes_annot_method_and_both_union():
 def test_both_grafts_annotation_forensics_onto_covering_record():
     """A /StrikeOut annotation's appearance stream is also caught by the vector path, so under
     method='both' the vector record covers it. The union must GRAFT the annotation's author/color
-    onto that record rather than drop it — otherwise the forensics are lost."""
+    onto that record rather than drop it; otherwise the forensics are lost."""
     import pymupdf as fitz
     doc = fitz.open()
     page = doc.new_page(width=400, height=200)

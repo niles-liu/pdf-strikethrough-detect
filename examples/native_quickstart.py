@@ -1,4 +1,4 @@
-"""Native (born-digital) quick start — no assets to download.
+"""Native (born-digital) quick start: no assets to download.
 
 Builds a small redline PDF in memory (a line with two vector strikethroughs), then runs the exact
 native detector on it and prints the struck words, the surviving clean text, and the ~~markdown~~.
@@ -14,7 +14,7 @@ import pdf_strikethrough as st
 
 def build_redline_pdf() -> bytes:
     """A one-page PDF: 'The quick brown fox jumps over the lazy dog' with 'brown' and 'lazy' struck
-    through with vector lines — exactly what a redline/track-changes export produces."""
+    through with vector lines, exactly what a redline/track-changes export produces."""
     doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 120), "The quick brown fox jumps over the lazy dog", fontsize=14)

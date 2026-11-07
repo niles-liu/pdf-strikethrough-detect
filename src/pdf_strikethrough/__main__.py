@@ -1,7 +1,7 @@
 """CLI: `pdf-strikethrough detect FILE [--ocr rapidocr] [--json out.json]`.
 
 FILE may be a PDF, a raster image (``.png/.jpg/.tiff``, incl. multi-page TIFF), or a Word
-``.docx`` — the input kind is inferred from the extension. Native PDFs need nothing extra;
+``.docx``; the input kind is inferred from the extension. Native PDFs need nothing extra;
 scanned PDFs and image files need an OCR backend (``--ocr rapidocr`` / ``--ocr tesseract``) or a
 pre-fetched cloud result (``--di-result`` Azure DI, ``--textract-result`` AWS Textract,
 ``--docai-result`` Google DocAI); without any, scanned pages are skipped with a warning while
@@ -164,7 +164,7 @@ def _is_glob(arg):
 def _expand_inputs(patterns):
     """Expand the FILE args into a sorted, de-duplicated list of input paths. Each arg may be a
     literal file, a directory (its top-level PDFs / images / .docx), or a glob (``*.pdf``, and
-    ``**`` recurses — expanded here too, so it works on shells that don't glob, e.g. Windows); a
+    ``**`` recurses), expanded here too so it works on shells that don't glob (e.g. Windows); a
     glob keeps only the files of those kinds, like a directory. '-' (stdin) passes through, alone.
     Returns None after printing an error when an arg matches nothing."""
     import glob as _glob
@@ -712,7 +712,7 @@ def _cmd_detect_batch(args, inputs):
 
 def main(argv=None):
     # Console output can carry non-cp1252 chars (struck ﬁ, é, → ...). Never let a
-    # print(...!r) crash on a narrow console encoding — replace unencodable chars instead.
+    # print(...!r) crash on a narrow console encoding; replace unencodable chars instead.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(errors="replace")

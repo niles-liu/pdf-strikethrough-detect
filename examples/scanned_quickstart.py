@@ -1,4 +1,4 @@
-"""Scanned quick start — no assets to download.
+"""Scanned quick start: no assets to download.
 
 Builds the same redline PDF, rasterizes it to an image-only page (a synthetic "scan" with no text
 layer), then runs the geometry -> OCR -> CNN pipeline on it and prints the struck words.
@@ -20,7 +20,7 @@ from native_quickstart import build_redline_pdf
 
 
 def rasterize_to_scan(pdf_bytes: bytes, dpi: int = 200) -> bytes:
-    """Render each page to an image and place it on a fresh page with NO text layer — i.e. what a
+    """Render each page to an image and place it on a fresh page with NO text layer, i.e. what a
     flatbed scan of a printed redline looks like to the detector."""
     src = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     out = pymupdf.open()
@@ -36,7 +36,7 @@ def main() -> int:
     # crash on a narrow console encoding (a piped Windows stdout is cp1252).
     sys.stdout.reconfigure(errors="replace")
     try:
-        import rapidocr  # noqa: F401 — eager check; the backend imports it lazily otherwise
+        import rapidocr  # noqa: F401 (eager check; the backend imports it lazily otherwise)
     except ImportError:
         print('this example needs the rapidocr extra: '
               'pip install "pdf-strikethrough-detect[rapidocr]"', file=sys.stderr)

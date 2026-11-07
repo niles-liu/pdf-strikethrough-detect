@@ -16,7 +16,7 @@ HF MODEL CARD for StrikeNet. Published copy lives at https://huggingface.co/nile
 numbers change. The weights every release has shipped (version "v3-corpus") are what is hosted.
 -->
 
-# StrikeNet — strike/clean word classifier
+# StrikeNet: strike/clean word classifier
 
 StrikeNet is the 79k-parameter CNN that [`pdf-strikethrough-detect`](https://github.com/niles-liu/pdf-strikethrough-detect)
 uses to resolve pixel-ambiguous strikethrough cases on **scanned** document pages. A thin strike
@@ -69,7 +69,7 @@ documents published after July 2026, or a retrain on a recorded labeled set.
 ## Usage
 
 The package runs on ONNX Runtime with no torch dependency. Download is digest-verified before the
-graph is ever loaded — a tampered host cannot swap the model.
+graph is ever loaded; a tampered host cannot swap the model.
 
 ```python
 import pdf_strikethrough as st

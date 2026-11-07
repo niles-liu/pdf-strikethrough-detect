@@ -1,8 +1,8 @@
-"""Overlay + forensics quick start — no assets to download.
+"""Overlay + forensics quick start: no assets to download.
 
 Builds a small redline PDF (a vector strike plus an explicit /StrikeOut annotation with an author),
-then (1) prints the evidence each record carries — stroke color/width for the vector strike, and
-author/color for the annotation — and (2) writes an overlay image of each struck page with the
+then (1) prints the evidence each record carries (stroke color/width for the vector strike, and
+author/color for the annotation) and (2) writes an overlay image of each struck page with the
 detected strikes boxed.
 
     python examples/overlay_quickstart.py [OUT_DIR]

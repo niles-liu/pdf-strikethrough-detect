@@ -382,7 +382,7 @@ def _open_doc(source, walk=True):
     """Open `source` (path, bytes, an open binary file, or an already-open fitz document) as a
     fitz document, applying the encryption gate, settling the page count and, with `walk`, loading
     every page (detect_pdf loads only the pages it will process). Returns ``(doc,
-    owned)`` — `owned` is True when we opened it and the caller must close it. A source we open
+    owned)``: `owned` is True when we opened it and the caller must close it. A source we open
     must be a PDF (InvalidPdfError otherwise); a document the caller opened is used as it is. On
     EncryptedPdfError or InvalidPdfError a doc WE opened is closed before raising, so no handle
     leaks (which would lock the file on Windows)."""
@@ -421,7 +421,7 @@ def _open_doc(source, walk=True):
 
 def _image_coverage(page, grid=64):
     """Fraction of the page covered by raster images, UNIONED on a coarse boolean grid. Summing
-    per-image bbox areas over-counts overlaps and repeats — the same 30%-of-page image placed
+    per-image bbox areas over-counts overlaps and repeats: the same 30%-of-page image placed
     three times would read as 90% coverage and misroute a born-digital page to 'scanned'. Image
     boxes arrive in unrotated space and are turned into the page's rotated frame first."""
     import numpy as np
@@ -446,7 +446,7 @@ def _image_coverage(page, grid=64):
 
 def _text_visibility(page):
     """(has_visible_text, has_invisible_text) from the text render modes reported by
-    get_texttrace(). Render mode 3 (and zero opacity) is invisible — the hallmark of a scanned
+    get_texttrace(). Render mode 3 (and zero opacity) is invisible, the hallmark of a scanned
     page's OCR text overlay; modes 0/1/2/4/5/6 actually paint ink and mean born-digital text."""
     visible = invisible = False
     for span in page.get_texttrace():
@@ -467,9 +467,9 @@ def classify_page_source(page, words=None):
     Heavy raster-image coverage alone is not a scan: a born-digital page can carry a full-bleed
     background image behind real, visible text. It is routed 'scanned' only when that coverage
     coincides with an invisible OCR text overlay (render mode 3) or with no visible text over
-    real vector drawings. Away from heavy image coverage, real text means 'native' — sparse
-    pages (signatures, cover sheets) stay native — unless all of it is an invisible OCR layer over
-    a raster (a scan filling only part of the page is still a scan).
+    real vector drawings. Away from heavy image coverage, real text means 'native' (so sparse
+    pages, such as signatures and cover sheets, stay native) unless all of it is an invisible OCR
+    layer over a raster (a scan filling only part of the page is still a scan).
 
     ``words`` optionally supplies this page's ``get_text("words")`` output so a caller that also
     detects on the page extracts it once (default None = extract here, only on the light-image
@@ -494,7 +494,7 @@ def classify_page_source(page, words=None):
 def _working_dpi(width_in, height_in, requested_dpi):
     """Effective raster DPI for one page, honoring both resolution guards. Returns
     ``(dpi, note_or_None)``: `note` is a caller-facing warning string set only when the pixel
-    budget forced a resolution below what was requested (the perf normalization is silent — it is
+    budget forced a resolution below what was requested (the perf normalization is silent: it is
     accuracy-neutral). See HIGH_DPI_CAP / MAX_RENDER_MPIX."""
     dpi = float(requested_dpi)
     if dpi > HIGH_DPI_CAP:                          # accuracy-neutral, so no warning
@@ -1028,11 +1028,11 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
                       dpi=None, meta=None, include_markdown=True, telemetry=False,
                       page_words=False, max_pages=None, max_mpix=None, _crop_sink=None):
     """Detect strikethroughs in a standalone raster image (``.png/.jpg/.tiff``, incl. multi-page
-    TIFF) — a photo/scan/fax that never was a PDF.
+    TIFF): a photo/scan/fax that never was a PDF.
 
     `source` is a path, bytes, an open binary file, or a PIL image. Every frame is a scanned page,
     so it needs OCR words: pass an `ocr` backend (run per frame), a `words` list (a single-frame
-    image), or `words_by_page` (``{0-based frame: list[Word]}`` — e.g.
+    image), or `words_by_page` (``{0-based frame: list[Word]}``, e.g.
     ``words_from_textract(resp)``). DPI drives the geometry tunables: an explicit `dpi=` wins;
     otherwise it's read from the image metadata, falling back to 200, also when the metadata says
     less than MIN_META_DPI (the 72/96 placeholder cameras and screenshot tools write; a warning
@@ -1072,7 +1072,7 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
     if scan_config is None:
         # An image has no Azure-DI calibration source; every realistic word source here (rapidocr/
         # tesseract via ocr=, Textract/DocAI via words_by_page, a raw words= list) carries
-        # confidences the classifier isn't calibrated to — so default to confidence-free.
+        # confidences the classifier isn't calibrated to, so default to confidence-free.
         scan_config = ScanConfig.confidence_free()
     if isinstance(source, (bytes, bytearray)):
         src_name = None
@@ -1426,19 +1426,19 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             classifier (as in ``detect_image_file`` and the CLI).
         dpi: raster resolution for scanned pages (detector tunables rescale automatically;
             calibrated/validated at 200). Must be positive.
-        di_result: a pre-fetched Azure Document Intelligence analyze result as a DICT — the REST
+        di_result: a pre-fetched Azure Document Intelligence analyze result as a DICT: the REST
             JSON, an {'analyzeResult': ...} envelope, or ``sdk_result.as_dict()``. When given,
             its per-page words are used instead of running `ocr` (and `scan_config` defaults to
             Azure-DI calibration on those pages). Pages are matched by their ``pageNumber``, so a
             result for a page range lines up with the PDF.
         words_by_page: pre-fetched OCR words as ``{0-based page: list[Word]}`` (or a sequence
-            indexed by page) — the provider-neutral counterpart to `di_result` for any cloud/OCR
+            indexed by page), the provider-neutral counterpart to `di_result` for any cloud/OCR
             engine, e.g. ``words_from_textract(resp)`` / ``words_from_docai(doc)``. Used for the
             scanned pages it covers, in preference to running `ocr`. Keys outside the document
             raise ValueError; pass at most one of `di_result` / `words_by_page`.
         include_markdown: also assemble struck-aware ``markdown``, surviving ``clean_text``, and
             grouped deletion ``passages`` (cheap; reuses the words already extracted).
-        method: native-page detector — 'vector' (default), 'flag', 'annot', or 'both' — see
+        method: native-page detector: 'vector' (default), 'flag', 'annot', or 'both'; see
             :func:`pdf_strikethrough.native.page_strikes`.
         native_method: DEPRECATED alias for ``method``, kept for 0.5.x compatibility; emits a
             ``DeprecationWarning``. Passing both with different values raises ``ValueError``.
@@ -1446,7 +1446,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
             `words_by_page` entry for it:
             'raise' (default) raises OcrRequiredError; 'skip' skips the page, records a warning
             in the result, and still returns everything from the other pages.
-        pages: restrict work to a subset — an iterable of 0-based page indices (negatives index
+        pages: restrict work to a subset, an iterable of 0-based page indices (negatives index
             from the end). Only those pages are classified and processed; a 300-page scan need
             not OCR every page. Out-of-range indices raise IndexError. When given, the result
             gains a ``pages`` key (the processed indices) and ``page_sources`` is aligned to it;
@@ -1627,7 +1627,7 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                 elif (nat_words := page.get_text("words")) and any(
                         w[4].strip() for w in nat_words):
                     # classified scanned but has extractable text (text-bearing scan / OCR-overlay
-                    # / full-bleed born-digital) — run the native detector instead of raising
+                    # / full-bleed born-digital): run the native detector instead of raising
                     msg = (f"page {pno} classified as scanned but has extractable text; ran the "
                            f"native detector on it (no OCR backend, di_result or words_by_page "
                            f"entry covered it)")

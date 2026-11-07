@@ -4,9 +4,9 @@ Scanned, tightly-ruled tables and forms (via Azure DI) over-flagged clean text: 
 table rule rode high spine-fill straight to tier 'auto', and StrikeNet saturates (prob -> 1.0) on
 faint scans so it confirmed nearly everything. Two fixes, issue #4·B and #4·A:
 
-  Fix B (geometry) — an in-band, long, solid line with ink on only ONE side is a table rule /
+  Fix B (geometry): an in-band, long, solid line with ink on only ONE side is a table rule /
     underline, not a strike; reject it instead of accepting on fill alone.
-  Fix A (verdict)  — on the calibrated-confidence (DI) path, downgrade a struck candidate that
+  Fix A (verdict):  on the calibrated-confidence (DI) path, downgrade a struck candidate that
     OCRs above ``max_clean_conf`` AND lacks corroborating strike geometry.
 
 The originating corpus is private; these use synthetic rasters that reproduce the same geometry.
@@ -37,7 +37,7 @@ def test_fix_b_rejects_in_band_one_sided_table_rule():
 
 def test_fix_b_keeps_two_sided_through_strike():
     """Positive control: a strike through the middle of a full-height glyph block (ink on BOTH
-    sides) is still detected — Fix B only rejects one-sided lines."""
+    sides) is still detected; Fix B only rejects one-sided lines."""
     gray = _blank()
     _glyphs(gray, 100, 700, 160, 240)          # glyphs fill the whole box height
     gray[198:201, 100:700] = 0                  # strike through the x-height centre
@@ -83,7 +83,7 @@ def test_fix_a_crisp_strike_on_clean_ocr_survives_veto(monkeypatch):
 
 
 def test_fix_a_veto_off_on_confidence_free_path(monkeypatch):
-    """The same high-confidence word is NOT vetoed under ``confidence_free`` — weak-confidence
+    """The same high-confidence word is NOT vetoed under ``confidence_free``: weak-confidence
     engines (RapidOCR etc.) must not regress; detection there rests on geometry + the CNN."""
     _saturated_cnn(monkeypatch)
     gray = _blank()
@@ -109,7 +109,7 @@ def test_fix_a_corroborated_high_conf_word_survives_veto(monkeypatch):
     H, W = gray.shape
     word = Word("struck", (100 / W, 160 / H, 700 / W, 240 / H), confidence=0.99)
     # a second, OCR-damaged word makes the page read as pen-edited (edit_prior), so the marginal-
-    # fill strike survives the glyph-chain gate — matching a real page that carries edits.
+    # fill strike survives the glyph-chain gate, matching a real page that carries edits.
     decoy = Word("edited", (100 / W, 350 / H, 300 / W, 400 / H), confidence=0.55)
     words = [word, decoy]
     _tagged, struck = analyze_scanned_page(gray, words, config=ScanConfig.azure_di(), dpi=DPI)
