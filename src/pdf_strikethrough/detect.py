@@ -838,7 +838,7 @@ def _image_frames(source, max_pages=None, max_mpix=None):
     its frames are decoded."""
     import io
 
-    from PIL import Image, ImageOps, ImageSequence
+    from PIL import Image
 
     limited = max_pages is not None or max_mpix is not None
     if limited and not isinstance(source, Image.Image):
@@ -859,23 +859,7 @@ def _image_frames(source, max_pages=None, max_mpix=None):
                          else source)
         owned = True
     try:
-        frames = []
-        for frame in ImageSequence.Iterator(img):
-            frame.load()                       # a TIFF's orientation is applied (and dropped) here
-            upright = None
-            try:
-                if frame.getexif().get(0x0112, 1) not in (0, 1):      # EXIF Orientation
-                    upright = _frame_gray(ImageOps.exif_transpose(frame))
-            except Exception:                  # malformed EXIF: read the frame as stored
-                upright = None
-            dpi = frame.info.get("dpi") or img.info.get("dpi")
-            xdpi = None
-            if dpi:
-                try:
-                    xdpi = int(round(float(dpi[0]))) or None
-                except (TypeError, ValueError, IndexError):
-                    xdpi = None
-            frames.append((_frame_gray(frame), upright, xdpi))
+        frames = list(_decoded_frames(img))
         if limited:
             _enforce_limits(len(frames), sum(gray.size for gray, _u, _d in frames) / 1e6,
                             max_pages, max_mpix)
@@ -883,6 +867,155 @@ def _image_frames(source, max_pages=None, max_mpix=None):
     finally:
         if owned:
             img.close()
+
+
+def _decoded_frames(img):
+    """Each frame of the open PIL image `img`, decoded as iteration reaches it, as
+    :func:`_image_frames` lists them."""
+    from PIL import ImageOps, ImageSequence
+
+    for frame in ImageSequence.Iterator(img):
+        frame.load()                           # a TIFF's orientation is applied (and dropped) here
+        upright = None
+        try:
+            if frame.getexif().get(0x0112, 1) not in (0, 1):          # EXIF Orientation
+                upright = _frame_gray(ImageOps.exif_transpose(frame))
+        except Exception:                      # malformed EXIF: read the frame as stored
+            upright = None
+        dpi = frame.info.get("dpi") or img.info.get("dpi")
+        xdpi = None
+        if dpi:
+            try:
+                xdpi = int(round(float(dpi[0]))) or None
+            except (TypeError, ValueError, IndexError):
+                xdpi = None
+        yield _frame_gray(frame), upright, xdpi
+
+
+_TIFF_MAGIC = (b"II*\0", b"MM\0*", b"II+\0", b"MM\0+")     # TIFF and BigTIFF, either byte order
+
+
+class _KeptOpen:
+    """The caller's open binary file `f`, which Pillow reads through this as it reads `f` itself,
+    except that ``close()`` leaves it open: ``Image.close()`` closes the file an image was read
+    from, and one file serves the header walk and then the decode."""
+
+    def __init__(self, f):
+        self._f = f
+
+    def __getattr__(self, name):
+        return getattr(self._f, name)
+
+    def close(self):
+        pass
+
+
+class _TiffFrames:
+    """The frames of a multi-page TIFF file, decoded one at a time as iteration reaches them
+    (:func:`_frames`), so its memory grows with its largest frame, not its frame count. ``len()``
+    is the frame count read from their headers; each frame is what :func:`_image_frames` gives for
+    it. The image is opened when iteration starts and closed when it ends or by ``close()``, which
+    also closes `fp`, the caller's open file it is read from, as decoding any other image closes
+    it."""
+
+    def __init__(self, open_image, count, fp=None):
+        self._open, self.count, self._fp, self._img = open_image, count, fp, None
+
+    def __len__(self):
+        return self.count
+
+    def __iter__(self):
+        self._close_image()
+        self._img = self._open()
+        try:
+            yield from _decoded_frames(self._img)
+        finally:
+            self._close_image()
+
+    def _close_image(self):
+        if self._img is not None:
+            self._img.close()
+            self._img = None
+
+    def close(self):
+        self._close_image()
+        if self._fp is not None:
+            self._fp.close()
+
+
+def _frames(source, max_pages=None, max_mpix=None):
+    """The frames of the raster image `source` for :func:`detect_image_file`. A TIFF file of more
+    than one frame (a path, bytes, or an open binary file that can seek, read in place) is
+    :class:`_TiffFrames`: its frame headers are read first, on an image of their own, to count the
+    frames and to check `max_pages` and `max_mpix` as :func:`_check_frame_sizes` checks them.
+    Anything else is listed by :func:`_image_frames`, decoded whole: a PIL image, which keeps the
+    frames it holds; a GIF or APNG (Pillow decodes each frame to reach the next); a single-frame
+    file; a TIFF whose frame headers Pillow cannot walk, which raises what it raises decoded
+    whole; and a TIFF with a frame over Pillow's decompression-bomb limit
+    (``PIL.Image.MAX_IMAGE_PIXELS``), so Pillow warns or raises before any frame is detected. An
+    open file refused over a limit is left open at its start, as :func:`_image_frames` leaves
+    one."""
+    import io
+
+    from PIL import Image, ImageSequence
+
+    if isinstance(source, Image.Image):
+        return _image_frames(source, max_pages, max_mpix)
+    fp = None
+    if isinstance(source, (bytes, bytearray)):
+        data = bytes(source)
+
+        def open_image():
+            return Image.open(io.BytesIO(data))
+    elif isinstance(source, (str, os.PathLike)):
+        def open_image():
+            return Image.open(source)
+    else:                                      # an open file: only a TIFF is walked, in place
+        tiff = False
+        try:
+            at = source.tell()
+            source.seek(0)
+            tiff = source.read(4) in _TIFF_MAGIC
+            source.seek(at)
+        except (AttributeError, OSError, ValueError):
+            tiff = False
+        if not tiff:
+            return _image_frames(source, max_pages, max_mpix)
+        fp = source
+
+        def open_image():
+            return Image.open(_KeptOpen(fp))
+    img = None
+    try:
+        img = open_image()
+    except Exception:                          # left to the decode, which raises what it raises
+        pass
+    if img is None:
+        return _image_frames(source, max_pages, max_mpix)
+    n = px = 0
+    bomb = Image.MAX_IMAGE_PIXELS
+    try:
+        if img.format == "TIFF":
+            for frame in ImageSequence.Iterator(img):
+                n += 1
+                w, h = frame.size
+                px += w * h
+                _enforce_limits(n, px / 1e6, max_pages, max_mpix, at_least=True)
+                if bomb is not None and max(w, 1) * max(h, 1) > bomb:
+                    n = 0                      # Pillow's decompression-bomb check: decoded
+                    break                      # whole, so it warns or raises before detection
+    except LimitExceededError:
+        raise
+    except Exception:                          # a damaged file: decoded whole, as before
+        n = 0
+    finally:
+        img.close()
+        if fp is not None:
+            with contextlib.suppress(OSError, ValueError):
+                fp.seek(0)                     # where _image_frames leaves a file it refuses
+    if n < 2:
+        return _image_frames(source, max_pages, max_mpix)
+    return _TiffFrames(open_image, n, fp)
 
 
 def _check_dpi(dpi, name="dpi"):
@@ -916,8 +1049,17 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
 
     `max_pages` and `max_mpix` refuse an image with more frames, or more megapixels in all (each
     frame as stored), with ``LimitExceededError``. An image file's frames are read only up to the
-    first one over a limit, before any is decoded for detection; a PIL image is checked once
-    decoded. Default None: no limit.
+    first one over a limit, before any is decoded for detection (with `max_mpix` alone, a file of
+    many small frames is read to its last header); a PIL image is checked once decoded. Default
+    None: no limit.
+
+    A multi-page TIFF file (a path, bytes, or an open file that can seek) is decoded one frame at
+    a time, as detection reaches it, so its memory grows with its largest frame, not its frame
+    count. The file, an open one you pass included, is closed once detection ends. If a frame
+    cannot be decoded, its decode error is raised even when detection failed on an earlier frame,
+    but the frames before it are detected first, so `ocr` is called on them and their warnings are
+    given. Any other image is decoded whole first, as are a PIL image you pass and a TIFF with a
+    frame over Pillow's decompression-bomb limit (``PIL.Image.MAX_IMAGE_PIXELS``).
     """
     import numpy as np
 
@@ -926,12 +1068,7 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         _check_dpi(dpi)
     _check_limits(max_pages, max_mpix)
     wbp = _normalize_words_by_page(words_by_page)
-    frames = _image_frames(source, max_pages, max_mpix)
-    if words is not None and len(frames) > 1 and wbp is None:
-        raise ValueError("words= covers a single-frame image; for a multi-page TIFF pass an ocr "
-                         "backend or words_by_page={frame: [...]}")
-    if wbp is not None:
-        _check_words_by_page(wbp, len(frames), "frame")
+    frames = _frames(source, max_pages, max_mpix)       # a TIFF file: one frame at a time
     if scan_config is None:
         # An image has no Azure-DI calibration source; every realistic word source here (rapidocr/
         # tesseract via ocr=, Textract/DocAI via words_by_page, a raw words= list) carries
@@ -946,93 +1083,115 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
         src_name = str(name) if name else None
 
     all_words, warns, page_md, page_clean, passages, pw = [], [], [], [], [], []
-    for pno, (gray, upright, meta_dpi) in enumerate(frames):
-        if dpi is not None:
-            use_dpi = dpi
-        elif meta_dpi is not None and meta_dpi < MIN_META_DPI:
-            use_dpi = RENDER_DPI
-            note = (f"frame {pno}: the image metadata says {meta_dpi} dpi, a placeholder value "
-                    f"rather than a scan resolution; read as {RENDER_DPI} dpi (pass dpi= if the "
-                    f"image really is {meta_dpi} dpi)")
-            _warnings.warn(note, stacklevel=2)
-            warns.append(note)
-        else:
-            use_dpi = meta_dpi or RENDER_DPI
-        if wbp is not None and pno in wbp:
-            frame_words = wbp[pno]
-        elif words is not None and len(frames) == 1:
-            frame_words = words
-        elif ocr is not None:
-            frame_words = None
-            if upright is not None:
-                gray = upright                             # OCR and detection on the shown image
-        else:
-            raise OcrRequiredError(
-                f"image frame {pno} has no OCR words; pass ocr=rapidocr_backend(), a words= list "
-                f"(single-frame), or words_by_page={{{pno}: [...]}}")
-        if frame_words is not None and upright is not None:
-            note = (f"frame {pno} carries an EXIF rotation; the supplied word boxes are read "
-                    f"against the frame as stored, not as displayed")
-            _warnings.warn(note, stacklevel=2)
-            warns.append(note)
-        gray, use_dpi, note = _downsample_gray(gray, use_dpi)
-        if note:
-            _warnings.warn(note, stacklevel=2)
-            warns.append(note)
-        pt = tel.page(pno, "scanned") if tel else None
-        if frame_words is None:
-            t0 = time.perf_counter()
-            try:
-                with _clock(pt, "ocr"):
-                    _check_tall(ocr, gray)
-                    frame_words = ocr(np.stack([gray] * 3, axis=-1))
-            except Exception as e:
-                if not _is_shape_error(e):
-                    raise
-                size = f"{gray.shape[1]} x {gray.shape[0]} px"
-                why = (f"an image more than {_RAPIDOCR_MAX_TALL} times as tall as it is wide "
-                       f"({size}) is not sent to RapidOCR, which reads it slowly or not at all"
-                       if isinstance(e, _TooTall) else
-                       f"RapidOCR cannot read an image this long for its width ({size})")
-                note = (f"frame {pno}: {why}; it was skipped, so no text or strikes are reported "
-                        f"for it")
+    unread, failed = iter(frames), None
+    try:
+        if words is not None and len(frames) > 1 and wbp is None:
+            raise ValueError("words= covers a single-frame image; for a multi-page TIFF pass an "
+                             "ocr backend or words_by_page={frame: [...]}")
+        if wbp is not None:
+            _check_words_by_page(wbp, len(frames), "frame")
+        for pno, (gray, upright, meta_dpi) in enumerate(unread):
+            if dpi is not None:
+                use_dpi = dpi
+            elif meta_dpi is not None and meta_dpi < MIN_META_DPI:
+                use_dpi = RENDER_DPI
+                note = (f"frame {pno}: the image metadata says {meta_dpi} dpi, a placeholder value "
+                        f"rather than a scan resolution; read as {RENDER_DPI} dpi (pass dpi= if "
+                        f"the image really is {meta_dpi} dpi)")
                 _warnings.warn(note, stacklevel=2)
                 warns.append(note)
-                if tel is not None:
-                    pt["skipped"] = True
-                    tel.end_page(pt, [])
-                if page_words:
-                    pw.append(_page_words_entry(pno, [], [], len(all_words), False))
-                if include_markdown:
-                    page_md.append("")
-                    page_clean.append("")
-                continue
-            log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
-                      pno, len(frame_words), (time.perf_counter() - t0) * 1e3)
-        if meta is None:
-            meta = cnn.get_model_meta()
-        with _clock(pt, "detect"), _layer1_tiers(pt):
-            recs = detect_scanned_image(gray, frame_words, config=scan_config, meta=meta,
-                                        dpi=use_dpi, crop_sink=_crop_sink)
-        if tel is not None:
-            tel.scanned_page(pt, use_dpi, frame_words)
-            tel.end_page(pt, recs)
-        for r in recs:
-            r["page"] = pno
-        base = len(all_words)
-        all_words.extend(recs)
-        if include_markdown or page_words:
-            by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
-            seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
-                   for w in frame_words if (w.text or "").strip()]
-        if page_words:
-            pw.append(_page_words_entry(pno, seq, recs, base, False))
-        if include_markdown:
-            page_md.append(_md.page_markdown(seq))
-            page_clean.append(_md.page_clean_text(seq))
-            for ps in _md.group_passages(seq):
-                ps["page"] = pno
-                passages.append(ps)
+            else:
+                use_dpi = meta_dpi or RENDER_DPI
+            if wbp is not None and pno in wbp:
+                frame_words = wbp[pno]
+            elif words is not None and len(frames) == 1:
+                frame_words = words
+            elif ocr is not None:
+                frame_words = None
+                if upright is not None:
+                    gray = upright                         # OCR and detection on the shown image
+            else:
+                raise OcrRequiredError(
+                    f"image frame {pno} has no OCR words; pass ocr=rapidocr_backend(), a words= "
+                    f"list (single-frame), or words_by_page={{{pno}: [...]}}")
+            if frame_words is not None and upright is not None:
+                note = (f"frame {pno} carries an EXIF rotation; the supplied word boxes are read "
+                        f"against the frame as stored, not as displayed")
+                _warnings.warn(note, stacklevel=2)
+                warns.append(note)
+            gray, use_dpi, note = _downsample_gray(gray, use_dpi)
+            if note:
+                _warnings.warn(note, stacklevel=2)
+                warns.append(note)
+            pt = tel.page(pno, "scanned") if tel else None
+            if frame_words is None:
+                t0 = time.perf_counter()
+                try:
+                    with _clock(pt, "ocr"):
+                        _check_tall(ocr, gray)
+                        frame_words = ocr(np.stack([gray] * 3, axis=-1))
+                except Exception as e:
+                    if not _is_shape_error(e):
+                        raise
+                    size = f"{gray.shape[1]} x {gray.shape[0]} px"
+                    why = (f"an image more than {_RAPIDOCR_MAX_TALL} times as tall as it is wide "
+                           f"({size}) is not sent to RapidOCR, which reads it slowly or not at all"
+                           if isinstance(e, _TooTall) else
+                           f"RapidOCR cannot read an image this long for its width ({size})")
+                    note = (f"frame {pno}: {why}; it was skipped, so no text or strikes are "
+                            f"reported for it")
+                    _warnings.warn(note, stacklevel=2)
+                    warns.append(note)
+                    if tel is not None:
+                        pt["skipped"] = True
+                        tel.end_page(pt, [])
+                    if page_words:
+                        pw.append(_page_words_entry(pno, [], [], len(all_words), False))
+                    if include_markdown:
+                        page_md.append("")
+                        page_clean.append("")
+                    continue
+                log.debug("frame %d: OCR -> %d word(s) in %.0f ms",
+                          pno, len(frame_words), (time.perf_counter() - t0) * 1e3)
+            if meta is None:
+                meta = cnn.get_model_meta()
+            with _clock(pt, "detect"), _layer1_tiers(pt):
+                recs = detect_scanned_image(gray, frame_words, config=scan_config, meta=meta,
+                                            dpi=use_dpi, crop_sink=_crop_sink)
+            if tel is not None:
+                tel.scanned_page(pt, use_dpi, frame_words)
+                tel.end_page(pt, recs)
+            for r in recs:
+                r["page"] = pno
+            base = len(all_words)
+            all_words.extend(recs)
+            if include_markdown or page_words:
+                by_key = {(r["bbox_frac"], r["text"]): r for r in recs}
+                seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
+                       for w in frame_words if (w.text or "").strip()]
+            if page_words:
+                pw.append(_page_words_entry(pno, seq, recs, base, False))
+            if include_markdown:
+                page_md.append(_md.page_markdown(seq))
+                page_clean.append(_md.page_clean_text(seq))
+                for ps in _md.group_passages(seq):
+                    ps["page"] = pno
+                    passages.append(ps)
+    except Exception as e:
+        if not isinstance(frames, _TiffFrames):
+            raise
+        failed = e                      # raised below, out of this handler, so nothing chains
+    finally:
+        if failed is None and isinstance(frames, _TiffFrames):
+            frames.close()
+    if failed is not None:
+        try:
+            for _frame in unread:       # decode the frames not yet reached: a damaged frame's
+                pass                    # decode error wins, as when every frame is decoded first
+            raise failed
+        finally:
+            failed = None
+            frames.close()
 
     result = {
         "schema_version": SCHEMA_VERSION,

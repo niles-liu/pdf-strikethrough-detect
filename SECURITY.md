@@ -26,7 +26,7 @@ A few defensive choices worth knowing:
 ## Resource limits
 
 Rendering a scanned page allocates a raster of `page_size × dpi²` pixels, so a hostile
-document (a huge mediabox, or an absurd requested DPI) could otherwise exhaust memory. Three
+document (a huge mediabox, or an absurd requested DPI) could otherwise exhaust memory. Four
 guards bound this:
 
 - **Per-page raster budget (128 Mpix).** A page that would exceed it is rendered at a
@@ -35,10 +35,15 @@ guards bound this:
 - **High-DPI normalization.** Rasters above ~300 dpi are worked at 200 dpi internally (the
   detector's calibration point); extra resolution adds cost without accuracy.
 - **Limits you set.** `max_pages=` and `max_mpix=` on `detect_pdf` and `detect_image_file`
-  refuse a document with more pages to read, or more megapixels to hold in all, with
+  refuse a document with more pages to read, or more megapixels in all, with
   `LimitExceededError`, before any page is detected: a scanned PDF page counts as rendered, an
   image frame as stored. An image file's frames are read only up to the first one over a
-  limit.
+  limit, so `max_pages=` bounds how many frame headers are read; with `max_mpix=` alone, a file
+  of many small frames is read to its last header.
+- **One TIFF frame at a time.** A multi-page TIFF file (a path, bytes, or an open file that can
+  seek, read in place) is decoded one frame at a time, as detection reaches it, so its memory
+  grows with its largest frame, not with its frame count. Other images, a PIL image you pass, and
+  a TIFF with a frame over the decompression-bomb limit below are decoded whole first.
 
 Image files are additionally subject to Pillow's decompression-bomb guard
 (`PIL.Image.MAX_IMAGE_PIXELS`), which raises on a maliciously large image before it is decoded.
