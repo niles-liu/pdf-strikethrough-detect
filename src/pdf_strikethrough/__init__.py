@@ -54,7 +54,7 @@ from .types import DetectResult, GarbledWord, PageWords, Passage, StruckWord, Te
 # ``warnings`` stays reserved for caller-facing hazards (silent-[] on scans, scanned-fallback, ...).
 _logging.getLogger("pdf_strikethrough").addHandler(_logging.NullHandler())
 
-__version__ = "0.14.0"
+__version__ = "0.14.2"
 
 __all__ = [
     # high-level

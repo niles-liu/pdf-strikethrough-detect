@@ -234,7 +234,7 @@ middle. Reading order is column-aware.
 | Two-column pages, struck table rows, strikes across hyphenated line breaks | handled |
 | CJK text-layer PDFs | handled: a strike is horizontal whatever the script |
 | CJK scans | many false strikes: 13 to 29% of unstruck Korean, Chinese and Japanese words on synthetic 200 dpi sans-serif scans (a serif Chinese font more than doubled it), from horizontal strokes inside characters; check `markdown` before trusting `clean_text` |
-| Handwritten strikes | mostly missed: under 5% of struck words found on BRESSAY's pages (a public dataset of handwriting) |
+| Handwritten strikes | mostly missed: under 5% of struck words found on BRESSAY's pages (a public dataset of handwriting); on such pages `st.cnn.PAPER_WHITE_FROM = 240` marks fewer live words, for as many struck ones with Azure DI words and fewer with RapidOCR words (CHANGELOG, 0.14.2) |
 | Dashed strikes | often found only in part |
 | Strikes steeper than 12° (PDF) or 25° (scan) | not found |
 | Thin or light-colored strokes on scans | may be missed |
