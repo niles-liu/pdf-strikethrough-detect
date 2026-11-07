@@ -124,7 +124,8 @@ class PageTelemetry(TypedDict, total=False):
                                  # included, which the CNN pass drops), the records on a native one
     final: int                   # its words reported struck
     skipped: bool                # present (True) when on_missing_ocr="skip" skipped it, or
-                                 # RapidOCR could not read a page that long for its width
+                                 # RapidOCR could not read a page that long for its width, or
+                                 # it was over 32 times as tall as wide, so not sent to RapidOCR
 
 
 class CnnProbHistogram(TypedDict):

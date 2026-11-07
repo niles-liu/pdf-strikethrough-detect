@@ -130,7 +130,9 @@ process, set by the engine built last). The default model can read a small mark 
 (`(a)` as `(斗)`), so on a page with no run of CJK text it removes lone CJK characters, real ones
 included (`100 円` loses the unit); `drop_lone_cjk=False` keeps them, and the CLI always removes
 them. Word boxes past the page edge are clamped to it. A page RapidOCR cannot resize, one too long
-for its width, is skipped with a warning.
+for its width, is skipped with a warning. So is one more than 32 times as tall as it is wide, which
+RapidOCR reads slowly or not at all (a strip 10 x 1,300 px takes it more than three times as long
+as a letter page); an OCR backend of your own is handed every page.
 
 **Operating points.** `ScanConfig.recall_first()` catches more deletions at the cost of more review;
 `ScanConfig.precision_first()` avoids dropping live text (RAG, indexing). Fit a threshold to your

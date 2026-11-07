@@ -31,7 +31,7 @@ import pymupdf
 
 from . import cnn, markdown as _md, native
 from .lines import RENDER_DPI
-from .ocr import _is_shape_error, words_from_azure_di
+from .ocr import _RAPIDOCR_MAX_TALL, _check_tall, _is_shape_error, _TooTall, words_from_azure_di
 from .scanned import ScanConfig, _glyph_ink, _own_stroke, analyze_scanned_page
 from .types import SCHEMA_VERSION
 
@@ -984,13 +984,18 @@ def detect_image_file(source, ocr=None, words=None, words_by_page=None, scan_con
             t0 = time.perf_counter()
             try:
                 with _clock(pt, "ocr"):
+                    _check_tall(ocr, gray)
                     frame_words = ocr(np.stack([gray] * 3, axis=-1))
             except Exception as e:
                 if not _is_shape_error(e):
                     raise
-                note = (f"frame {pno}: RapidOCR cannot read an image this long for its width "
-                        f"({gray.shape[1]} x {gray.shape[0]} px); it was skipped, so no text or "
-                        f"strikes are reported for it")
+                size = f"{gray.shape[1]} x {gray.shape[0]} px"
+                why = (f"an image more than {_RAPIDOCR_MAX_TALL} times as tall as it is wide "
+                       f"({size}) is not sent to RapidOCR, which reads it slowly or not at all"
+                       if isinstance(e, _TooTall) else
+                       f"RapidOCR cannot read an image this long for its width ({size})")
+                note = (f"frame {pno}: {why}; it was skipped, so no text or strikes are reported "
+                        f"for it")
                 _warnings.warn(note, stacklevel=2)
                 warns.append(note)
                 if tel is not None:
@@ -1418,11 +1423,17 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         rgb = _render_rgb(page, page_dpi)
                     try:
                         with _clock(pt, "ocr"):
+                            _check_tall(ocr, rgb)
                             ocr_words = ocr(rgb)
                     except Exception as e:
                         if not _is_shape_error(e):
                             raise
-                        unreadable = f"{rgb.shape[1]} x {rgb.shape[0]} px"
+                        size = f"{rgb.shape[1]} x {rgb.shape[0]} px"
+                        unreadable = (
+                            f"a page more than {_RAPIDOCR_MAX_TALL} times as tall as it is wide "
+                            f"({size}) is not sent to RapidOCR, which reads it slowly or not at all"
+                            if isinstance(e, _TooTall) else
+                            f"RapidOCR cannot read a page this long for its width ({size})")
                     del rgb                                # freed before the page is detected
                     if ocr_words is not None:
                         log.debug("page %d: OCR -> %d word(s) in %.0f ms",
@@ -1448,9 +1459,8 @@ def detect_pdf(source, ocr=None, scan_config=None, dpi=RENDER_DPI, di_result=Non
                         seq = [(w.text, w.bbox, by_key.get((w.bbox, w.text)))
                                for w in ocr_words if (w.text or "").strip()]
                 elif unreadable is not None:
-                    msg = (f"page {pno}: RapidOCR cannot read a page this long for its width "
-                           f"({unreadable}); it was skipped, so no text or strikes are reported "
-                           f"for it")
+                    msg = (f"page {pno}: {unreadable}; it was skipped, so no text or strikes are "
+                           f"reported for it")
                     _warnings.warn(msg, stacklevel=2)
                     warns.append(msg)
                     if pt is not None:
