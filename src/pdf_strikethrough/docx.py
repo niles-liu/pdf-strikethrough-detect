@@ -1,14 +1,14 @@
-"""Strikethrough detection for Word ``.docx`` files — the redline sibling of the PDF path.
+"""Strikethrough detection for Word ``.docx`` files, the redline sibling of the PDF path.
 
 A .docx has no geometry (pagination is a render-time concern), so its struck text is read from
-the markup, not from ink: a run carrying the ``w:strike`` / ``w:dstrike`` character format —
-directly, or through its character style, its paragraph style or the document defaults — and
+the markup, not from ink: a run carrying the ``w:strike`` / ``w:dstrike`` character format
+(directly, or through its character style, its paragraph style or the document defaults) and
 tracked deletions (``w:del``, which move the text into ``w:delText`` and record who deleted it and
-when — the same "who struck this, and when" forensics as a PDF ``/StrikeOut`` annotation).
+when, the same "who struck this, and when" forensics as a PDF ``/StrikeOut`` annotation).
 
 Records share the package's struck-word schema but with ``tier="docx"`` and no ``bbox_frac`` /
 ``page`` (there is none); the paragraph index is reported as ``para`` instead. This is stdlib-only
-(a .docx is a zip of XML) — no new dependency.
+(a .docx is a zip of XML), no new dependency.
 
     import pdf_strikethrough as st
     for w in st.strikethroughs_in_docx("contract.docx"):
@@ -71,7 +71,7 @@ def _resolve(styles, style_id):
 
 
 def _run_text(run):
-    """The run's own literal text — ``w:t`` (live) and ``w:delText`` (tracked-deleted) children.
+    """The run's own literal text: ``w:t`` (live) and ``w:delText`` (tracked-deleted) children.
     A text box anchored in the run is NOT its text; its paragraphs are walked on their own."""
     return "".join(n.text or "" for n in run if _local(n.tag) in ("t", "delText"))
 
@@ -151,7 +151,7 @@ def strikethroughs_in_docx(source) -> "list[dict]":
 
     Catches both strike character formatting (``w:strike``/``w:dstrike``, set on the run or
     inherited from its character style, its paragraph style or the document defaults) and tracked
-    deletions (``w:del`` — carrying ``docx_author``/``docx_date``). Each record has
+    deletions (``w:del``, carrying ``docx_author``/``docx_date``). Each record has
     ``tier="docx"``, a ``para`` index (no page/geometry), ``docx_change`` ('format' |
     'deletion'), and ``chars`` == ``text`` (a run is struck as a whole). Reads the main document
     body, text boxes included; transitional and Strict OOXML. A file that is not a readable

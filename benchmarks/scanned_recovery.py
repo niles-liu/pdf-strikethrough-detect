@@ -1,4 +1,4 @@
-"""Scanned-path recovery — how much of a known strike set survives the OCR + geometry + CNN path.
+"""Scanned-path recovery: how much of a known strike set survives the OCR + geometry + CNN path.
 
 The confirmation-rate corpus is born-digital, so its strikes are found by the *native* detector.
 We reuse that: rasterize the most-struck born-digital pages into an image-only PDF (a genuine

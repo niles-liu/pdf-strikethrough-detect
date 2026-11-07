@@ -16,7 +16,7 @@ dataset and fetched and verified the same way, so that benchmark needs no Azure 
 | Script | Reproduces | Needs |
 |---|---|---|
 | [`fetch_corpus.py`](fetch_corpus.py) | *(setup)* downloads every file the manifest lists into `corpus/` and verifies its sha256 | network access |
-| [`confirmation_rate.py`](confirmation_rate.py) | "99.8% of vector detections confirmed by the flag signal (99.6–100% per doc)" (README + `native.py`) | just the PDFs |
+| [`confirmation_rate.py`](confirmation_rate.py) | "99.8% of vector detections confirmed by the flag signal (99.6 to 100% per doc)" (README + `native.py`) | just the PDFs |
 | [`scanned_recovery.py`](scanned_recovery.py) | the "Choosing an OCR backend" recovery table: RapidOCR, and Azure DI under its default calibration and `confidence_free()` | the PDFs + the cached DI results + `[rapidocr]` |
 | [`prep_scanned_di.py`](prep_scanned_di.py) | *(one-time asset generator for the above)* rasterizes struck pages, runs Azure DI once, caches the result | an Azure DI key in the repo `.env` |
 | [`confidence_veto.py`](confidence_veto.py) | the ruled-forms precision numbers (issues #4, #7): `--ab` scores the printed-rule veto, `--switches` scores all four combinations of the two provisional switches | a **private** ruled-form corpus + per-doc `di-result.json` + a `ground-truth.json` label set |

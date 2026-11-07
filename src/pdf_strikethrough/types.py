@@ -1,5 +1,5 @@
 """Typed shapes for the public record dicts, so ``StruckWord``/``DetectResult`` can be imported
-and annotated against. These are the *documented* keys — the dicts are plain ``dict`` at runtime
+and annotated against. These are the *documented* keys; the dicts are plain ``dict`` at runtime
 (no validation, no cost), and ``total=False`` throughout because the key set is tier-dependent:
 
   native  (tier 'vector' / 'flag' / 'annot')  ->  carries ``coverage``; no CNN fields
@@ -8,7 +8,7 @@ and annotated against. These are the *documented* keys — the dicts are plain `
 
 ``page`` is present on every record that flows through ``detect_pdf``; the low-level
 per-page detectors (``native_page_strikes`` etc.) already stamp it too. Consumers should treat
-tier-specific keys as optional and branch on ``tier`` — or use ``.get(...)``.
+tier-specific keys as optional and branch on ``tier``, or use ``.get(...)``.
 """
 from __future__ import annotations
 
@@ -50,13 +50,13 @@ class StruckWord(TypedDict, total=False):
     # U+0336 overlays alone strike the word)
     stroke_color: Tuple[float, float, float]   # RGB in [0, 1]; unset paint reads as black
     stroke_width: float          # stroke line width (pt), or bar height for a filled-rect strike
-    # native 'annot' only — /StrikeOut annotation forensics (present when the annotation supplies)
+    # native 'annot' only: /StrikeOut annotation forensics (present when the annotation supplies)
     annot_author: Optional[str]     # /T   "who struck this"
     annot_created: Optional[str]    # /CreationDate (PDF date string)
     annot_modified: Optional[str]   # /M           (PDF date string)  "...and when"
     annot_color: Optional[Tuple[float, float, float]]    # annotation stroke color, RGB in [0, 1]
     annot_id: Optional[str]         # /NM annotation name/id
-    # docx only (tier 'docx') — no bbox/page; ``para`` is the paragraph index
+    # docx only (tier 'docx'): no bbox/page; ``para`` is the paragraph index
     para: int
     docx_change: Literal["format", "deletion"]   # strike formatting vs a tracked w:del deletion
     docx_double: bool            # True for double-strike (w:dstrike)

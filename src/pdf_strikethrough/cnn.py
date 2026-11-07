@@ -1,4 +1,4 @@
-"""StrikeNet — a tiny (79k-param) CNN that answers the physical question
+"""StrikeNet: a tiny (79k-param) CNN that answers the physical question
 "is there a strike through this word crop?" from pixels alone.
 
 It is OCR- and domain-independent: the input is a grayscale word crop, the output is a
@@ -81,7 +81,7 @@ def ensure_model(url, sha256, *, meta_url=None, meta_sha256=None, meta=None,
     """Download a StrikeNet model to a local cache, VERIFY its sha256, and point the loader at it.
 
     `url` is the ONNX model and `sha256` its expected hex digest (any case). The bytes are hashed
-    after download and a mismatch raises ``ValueError`` (nothing is written) — so a tampered host or
+    after download and a mismatch raises ``ValueError`` (nothing is written), so a tampered host or
     a man-in-the-middle cannot swap the graph you run; nothing unverified is ever loaded. The ONNX
     loader also needs a meta JSON (thresholds + crop geometry): supply it as `meta_url` with its
     required `meta_sha256` (the thresholds decide what counts as struck), or as a `meta` dict
@@ -290,7 +290,7 @@ def _build_torch_net():
 def _check_geometry(meta):
     """The shipped meta records the crop/pad geometry the model was trained with. If a
     retrained model ships different values than the code constants, preprocessing would silently
-    feed off-distribution crops — fail loudly instead."""
+    feed off-distribution crops; fail loudly instead."""
     for key, const in (("crop_h", CROP_H), ("crop_w", CROP_W), ("pad_x", PAD_X), ("pad_y", PAD_Y)):
         if key in meta and meta[key] != const:
             raise ValueError(

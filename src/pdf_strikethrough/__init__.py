@@ -104,12 +104,12 @@ def render_page_gray(page, dpi=lines.RENDER_DPI):
 
 def strikethroughs_in_pdf(source, method="vector") -> "list[StruckWord]":
     """Struck-word records for a born-digital PDF (path/bytes/binary file/fitz doc), all pages, page
-    by page and each page top to bottom. Exact — driven by the PDF's own strike drawings. `method`:
+    by page and each page top to bottom. Exact, driven by the PDF's own strike drawings. `method`:
     'vector' (stroke geometry, precise partial-char spans; default), 'flag' (MuPDF's strikeout span
     flag), 'annot' (/StrikeOut annotations, with author/date forensics), or 'both' (union of all
     three, maximum recall).
 
-    Scanned PDFs have no vector strikes, so this returns [] for them — and emits a
+    Scanned PDFs have no vector strikes, so this returns [] for them, and emits a
     ``UserWarning`` naming the scanned pages, because a silent [] on a scan (the package's own
     README opens with one) is the most dangerous confusion it can produce. Route scans through
     ``detect_pdf(..., ocr=...)`` instead."""
@@ -179,7 +179,7 @@ def clean_markdown(source) -> str:
 def provenance_text(result, template="[deleted: {}]") -> str:
     """Audit-preserving text from a ``detect_pdf``/``detect_image_file`` result: struck spans are
     replaced with ``[deleted: …]`` markers instead of removed (contrast ``clean_text``, which drops
-    them). For RAG / indexing where a silent deletion is the hazard — the deleted text stays
+    them). For RAG / indexing where a silent deletion is the hazard: the deleted text stays
     visible-as-deleted so a downstream index records that something *was* struck.
 
     `result` must carry ``markdown`` (i.e. ``include_markdown=True``, the default; ValueError
