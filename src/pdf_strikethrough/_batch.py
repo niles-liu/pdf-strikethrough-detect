@@ -16,7 +16,7 @@ import warnings
 
 from .types import SCHEMA_VERSION  # one version for the Python result and the CLI payloads
 
-# evidence fields surfaced in --json/--jsonl — present-when-set, so a consumer sees *why* a word was
+# evidence fields surfaced in --json/--jsonl: present-when-set, so a consumer sees *why* a word was
 # flagged (native coverage/forensics, scanned score/cnn, docx change/author), not just that it was.
 _JSON_EVIDENCE = ("page", "para", "text", "chars", "char_span", "partial", "bbox_frac", "tier",
                   "verdict", "coverage", "garbled", "stroke_color", "stroke_width",
@@ -31,7 +31,7 @@ def _check_ocr_available(name):
     without paying to build a backend the parent won't use."""
     if name == "rapidocr":
         try:
-            import rapidocr  # noqa: F401 — eager check so the error comes before any work
+            import rapidocr  # noqa: F401 (eager check so the error comes before any work)
         except ImportError:
             raise SystemExit('--ocr rapidocr requires the rapidocr extra: '
                              'pip install "pdf-strikethrough-detect[rapidocr]"')
@@ -111,7 +111,7 @@ def _open_document(source):
 
 def _detect_payload(path, opts):
     """Detect on one file and return a JSON-serializable payload (or an ``error`` one). Never
-    raises — a batch of many files must not abort on one unreadable member (cloud-result flags,
+    raises: a batch of many files must not abort on one unreadable member (cloud-result flags,
     which are single-result, don't apply in batch, so this path only uses the --ocr backend).
     With ``opts["telemetry"]`` the payload carries ``telemetry`` too."""
     import pdf_strikethrough as st

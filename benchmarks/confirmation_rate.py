@@ -1,4 +1,4 @@
-"""Confirmation rate — the headline native-detection claim, made reproducible.
+"""Confirmation rate: the headline native-detection claim, made reproducible.
 
 For every PDF in the corpus, run the vector detector and the flag detector independently and
 report what fraction of vector-detected struck words are also flagged by MuPDF's own strikeout
@@ -9,7 +9,7 @@ is a strong falsifiable check on the vector path.
 
 Backs the "99.8% of vector detections are independently confirmed by the flag signal, on 10
 public redline PDFs (55.7k struck words; 99.6-100% per document)" claim in the README and
-native.py. Needs only the PDFs — no OCR, no cloud.
+native.py. Needs only the PDFs: no OCR, no cloud.
 """
 from __future__ import annotations
 

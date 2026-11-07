@@ -6,7 +6,7 @@ Reads every manifest entry's ``url`` and ``sha256`` (and, on an entry with a cac
 ``scanned_di_url`` and ``scanned_di_sha256``), downloads any file not already present (or whose
 hash doesn't match), and verifies the digest after download so a drifted source fails loudly.
 Files already present with a matching hash are skipped. This is the "collect the corpus" step for
-the benchmarks (`confirmation_rate.py` et al.) and the model/calibration program — populate
+the benchmarks (`confirmation_rate.py` et al.) and the model/calibration program; populate
 `manifest.json` (name/file/url/sha256 per entry; see benchmarks/README.md) and run this once.
 
 A file with no URL in the manifest (one you must obtain by hand) is reported and skipped rather

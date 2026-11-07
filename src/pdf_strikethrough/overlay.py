@@ -1,4 +1,4 @@
-"""Render pages with the detected strikes drawn on top — a visual overlay.
+"""Render pages with the detected strikes drawn on top: a visual overlay.
 
 For debugging / ScanConfig tuning and for the before/after documentation figure. Full strikes are
 boxed in red, partial strikes in orange. No new dependency (PyMuPDF renders, Pillow draws).
@@ -36,9 +36,9 @@ def render_overlay(source, result=None, *, dpi=150, pages=None,
         source: path, bytes, open binary file, or open fitz document (as for ``detect_pdf``).
         result: a ``detect_pdf(...)`` result dict whose ``words`` drive the boxes. When None,
             ``detect_pdf(source, include_markdown=False, pages=pages)`` is run (native pages need
-            nothing extra; scanned pages come out empty without an OCR result — pass a `result`
+            nothing extra; scanned pages come out empty without an OCR result: pass a `result`
             you computed with an OCR backend to overlay those).
-        dpi: render resolution for the page images (default 150 — figure-friendly).
+        dpi: render resolution for the page images (default 150, figure-friendly).
         pages: 0-based indices to render (negatives index from the end). Default None = every page
             that carries at least one struck word.
         full_color / partial_color: RGB outline colors for full vs partial strikes.

@@ -1,7 +1,7 @@
 """Regression tests for ``ScanConfig.rescue_clean_chains`` (issue #7 follow-up).
 
 The chain gate in :func:`pdf_strikethrough.scanned.classify_lines` rejects a marginal-fill line
-whose every word OCRs CLEANLY as a glyph chain — a real pen strike corrupts what it crosses, so
+whose every word OCRs CLEANLY as a glyph chain: a real pen strike corrupts what it crosses, so
 undamaged OCR on every hit is the glyph-chain signature. The gate has an escape: on a page that
 looks pen-edited it spares the line anyway and lets the CNN decide.
 
@@ -41,7 +41,7 @@ def _clean_chain_page():
 
 def test_escape_on_by_default_marks_the_clean_chain_twin():
     """Default config: the escape fires, so the clean-OCR line is stamped twin and survives layer 1
-    for the CNN to judge. This is the recall safeguard — a real strike that happens to leave OCR
+    for the CNN to judge. This is the recall safeguard: a real strike that happens to leave OCR
     undamaged must not be dropped on confidence alone."""
     gray, words = _clean_chain_page()
     _tagged, struck = analyze_scanned_page(gray, words, config=ScanConfig.azure_di(), dpi=DPI)

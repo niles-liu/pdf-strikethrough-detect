@@ -2,7 +2,7 @@
 
 The confirmation-rate corpus is born-digital (vector strikes), so its pages route to the *native*
 detector and never exercise the scanned path (OCR words + geometry + CNN). To benchmark that path
-reproducibly we rasterize the born-digital pages into an image-only PDF — a genuine "scan" whose
+reproducibly we rasterize the born-digital pages into an image-only PDF: a genuine "scan" whose
 *exact* strike set we already know from the native detector on the born-digital original. That known
 set is the ground truth; the scanned path (fed DI or RapidOCR word boxes) is scored against it.
 

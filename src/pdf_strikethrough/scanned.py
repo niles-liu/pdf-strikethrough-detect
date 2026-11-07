@@ -146,7 +146,7 @@ class ScanConfig:
     Use it for engines whose confidence doesn't separate struck from clean text (e.g. RapidOCR);
     detection then rests on geometry + the CNN alone.
 
-    ``recall_first()`` / ``precision_first()`` pick the CNN *operating point* — the strike/clean
+    ``recall_first()`` / ``precision_first()`` pick the CNN *operating point*: the strike/clean
     decision threshold applied to StrikeNet's probability. ``cnn_p_hi``/``cnn_p_lo`` (None = the
     model's shipped thresholds) override it; calibrate them from labeled data with
     :mod:`pdf_strikethrough.calibration`.
@@ -216,9 +216,9 @@ class ScanConfig:
         printed forms or tables) where a faint table/form rule crossing text mimics a pen strike and
         the CNN over-fires on it. Turns on the printed-rule veto (:func:`_is_printed_rule`): any
         detected line that is solid and/or dead-straight is treated as printed furniture rather than
-        a strike. In practice most of what it removes is short solid/straight *fragments* — glyph
-        strokes and pieces of rules thrown off by a degraded scan — not just full-width rules. Off
-        by default because on a CLEAN scan a real strike is ALSO solid and straight — enable this
+        a strike. In practice most of what it removes is short solid/straight *fragments* (glyph
+        strokes and pieces of rules thrown off by a degraded scan), not just full-width rules. Off
+        by default because on a CLEAN scan a real strike is ALSO solid and straight. Enable this
         only when inputs are known-degraded ruled forms and precision matters more than catching a
         pristine strike. See issue #7.
 
@@ -244,7 +244,7 @@ class ScanConfig:
     def recall_first(cls, cnn_p_hi=0.50, **kw):
         """Recall-first operating point (legal / audit review): bias toward catching every
         deletion. Lowers the CNN's struck-confirmation bar so a borderline strike still counts as
-        struck — more false positives and more manual review, but a deleted word is not silently
+        struck: more false positives and more manual review, but a deleted word is not silently
         missed. Combine with ``confidence_gating=False`` for a confidence-free OCR engine."""
         return cls(cnn_p_hi=cnn_p_hi, **kw)
 
@@ -623,7 +623,7 @@ def _is_printed_rule(ln):
     """A detected line whose appearance is a drawn rule (solid and/or dead-straight), not a strike.
     Keyed on stored line geometry only (no raster access). See the PRINTED_RULE_* constants.
 
-    A True answer DROPS the detection, so a missing or None metric must read as "not a rule" — both
+    A True answer DROPS the detection, so a missing or None metric must read as "not a rule"; both
     directions here fail safe. ``classify_lines`` accepts caller-built line dicts, where reading an
     absent `fill` as a high number would discard every detection.
     """
@@ -678,8 +678,8 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
     tagged, struck_words = [], []
     for li, ln in enumerate(lines):
         # Decided before any attribution work: a drawn rule gets no words, so there is nothing to
-        # attribute. NOTE `tagged` must stay index-aligned with `lines` — score_struck() looks lines
-        # up as tagged[line_idx] — so every branch appends exactly one entry per input line.
+        # attribute. NOTE `tagged` must stay index-aligned with `lines` (score_struck() looks lines
+        # up as tagged[line_idx]), so every branch appends exactly one entry per input line.
         if config.veto_printed_rules and _is_printed_rule(ln):
             tagged.append({**ln, "label": "rule", "struck": [], "rel": None, "words": []})
             continue
@@ -688,7 +688,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
         lx0, lx1 = x0 / pix_w, x1 / pix_w
         llen = max(lx1 - lx0, 1e-9)
         # endpoints for interpolating the stroke-y over each word, at the center of its overlap with
-        # the line (a sloped strike sits at a different height over each word — a single global
+        # the line (a sloped strike sits at a different height over each word; a single global
         # center mis-attributes them all).
         ends = ln.get("ends_px") or ((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2))
         (sx, sy), (ex, ey) = ends
@@ -756,7 +756,7 @@ def classify_lines(lines, words, gray, ink=None, config=ScanConfig.confidence_fr
                 # read as ink beside it.
                 one_sided = _one_sided(*_ink_above_below(ink, wends, run_px, wpx))
             if (not in_band) or short_line:
-                # OCR damage is the tiebreaker — only meaningful when confidences are calibrated,
+                # OCR damage is the tiebreaker, only meaningful when confidences are calibrated,
                 # so the rescue is off under confidence_free()
                 rescue = (config.confidence_gating and in_band
                           and conf is not None and conf <= config.inkfail_max_conf)
@@ -1017,7 +1017,7 @@ def score_struck(rec, tagged, use_conf=True):
 
 def promote_context_orphans(struck, words):
     """Visual-row consistency pass: when nearly everything in a row is struck, promote the few
-    survivor words to tier='review' (orphan=True) so the CNN inspects them — they carry no line
+    survivor words to tier='review' (orphan=True) so the CNN inspects them; they carry no line
     evidence of their own and never go 'auto'."""
     MIN_GROUP, ORPHAN_MIN_FRAC, ORPHAN_EDGE_FRAC, ORPHAN_MAX_RUN = 5, 0.65, 0.80, 4
     ws = [(w.bbox, w.text or "", w.confidence) for w in words if (w.text or "").strip()]
